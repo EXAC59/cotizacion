@@ -184,3 +184,4 @@ URLs típicas:
 
 - API: http://cotizacion.test/api/health
 - Frontend: http://localhost:5173
+# cotizacion
