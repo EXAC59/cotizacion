@@ -1,0 +1,321 @@
+{
+  "name": "Comparador precios",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "comparador-precios",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "cmp-webhook-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "comparador-precios-cotizacion"
+    },
+    {
+      "parameters": {
+        "url": "http://nginx/api/n8n/mayoristas?active=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cmp-mayoristas-002",
+      "name": "Listar mayoristas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('Webhook').first().json;\nconst body = webhook.body ?? webhook;\nconst jobId = body.job_id;\nconst partNumber = (body.part_number || body.partNumber || '').trim();\nconst quantity = Number(body.quantity || 1);\nconst preferredWarehouse = (body.preferred_warehouse || body.preferredWarehouse || '').toString().trim().toUpperCase() || null;\nconst demoMode = body.demo_mode === true || body.use_mock === true;\n\nif (!jobId || !partNumber) {\n  throw new Error('Faltan job_id o part_number en el webhook');\n}\n\nconst catalog = $('Listar mayoristas').first().json;\nconst mayoristas = (catalog.data || []).filter((w) => w.active && (demoMode || w.configured));\n\nreturn [{\n  json: {\n    job_id: jobId,\n    part_number: partNumber,\n    quantity,\n    preferred_warehouse: preferredWarehouse,\n    demo_mode: demoMode,\n    mayoristas,\n  },\n}];"
+      },
+      "id": "cmp-context-003",
+      "name": "Contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "demo-check",
+              "leftValue": "={{ $json.demo_mode }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cmp-if-demo-004",
+      "name": "Modo demo",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Contexto').first().json;\nconst { job_id, part_number, quantity, mayoristas } = ctx;\n\nconst baseCosts = {\n  'C9200L-24T-4G-E': 28500,\n  'KVR16N11S8/16': 890,\n  'U6-PLUS': 4200,\n  'WD19': 3200,\n  'LAT5540': 24500,\n  'CAT6-305': 1850,\n};\n\nconst base = baseCosts[part_number] ?? (1500 + (part_number.length * 120));\nconst variants = [1.0, 1.04, 0.97, 1.02, 1.06, 0.95];\nconst warehouses = ['CDMX', 'MTY', 'GDL'];\n\nconst offers = mayoristas.map((w, i) => ({\n  wholesalerId: w.id,\n  wholesalerCode: w.code,\n  wholesalerName: w.name,\n  partNumber: part_number,\n  cost: Math.round(base * variants[i % variants.length] * 100) / 100,\n  stock: Math.max(0, Math.floor(14 - i * 2 - quantity * 0.5)),\n  warehouse: warehouses[i % warehouses.length],\n  leadDays: i % 3,\n  availabilityType: i % 3 === 0 ? 'import' : 'local',\n}));\n\nreturn [{ json: { job_id, offers, demo_mode: true } }];"
+      },
+      "id": "cmp-mock-005",
+      "name": "Generar ofertas mock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Contexto').first().json;\nconst mayoristas = ctx.mayoristas || [];\n\nreturn mayoristas.map((w) => ({\n  json: {\n    job_id: ctx.job_id,\n    part_number: ctx.part_number,\n    quantity: ctx.quantity,\n    preferred_warehouse: ctx.preferred_warehouse || null,\n    wholesalerId: w.id,\n    wholesalerCode: w.code,\n    wholesalerName: w.name,\n    configured: w.configured === true,\n  },\n}));"
+      },
+      "id": "cmp-fanout-006",
+      "name": "Fan-out mayoristas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://nginx/api/n8n/mayoristas/{{ $json.wholesalerId }}/consultar",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { partNumber: $json.part_number, quantity: $json.quantity, preferredWarehouse: $json.preferred_warehouse || undefined } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "cmp-consultar-007",
+      "name": "Consultar mayorista",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Contexto').first().json;\nconst items = $input.all();\nconst offers = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const fromApi = data.offers;\n  if (Array.isArray(fromApi)) {\n    for (const offer of fromApi) {\n      if (offer && !offer.error) offers.push(offer);\n    }\n  }\n}\n\nreturn [{ json: { job_id: ctx.job_id, offers, demo_mode: false } }];"
+      },
+      "id": "cmp-merge-008",
+      "name": "Unir ofertas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nginx/api/n8n/comparador",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { job_id: $json.job_id, offers: $json.offers, demo_mode: $json.demo_mode } }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "cmp-callback-009",
+      "name": "Laravel callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Listar mayoristas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar mayoristas": {
+      "main": [
+        [
+          {
+            "node": "Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contexto": {
+      "main": [
+        [
+          {
+            "node": "Modo demo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modo demo": {
+      "main": [
+        [
+          {
+            "node": "Generar ofertas mock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fan-out mayoristas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar ofertas mock": {
+      "main": [
+        [
+          {
+            "node": "Laravel callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan-out mayoristas": {
+      "main": [
+        [
+          {
+            "node": "Consultar mayorista",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar mayorista": {
+      "main": [
+        [
+          {
+            "node": "Unir ofertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unir ofertas": {
+      "main": [
+        [
+          {
+            "node": "Laravel callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

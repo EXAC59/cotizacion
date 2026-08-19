@@ -1,0 +1,506 @@
+{
+  "name": "Lectura cotizacion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lectura-docling",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a1b2c3d4-webhook-0001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "lectura-docling-cotizacion"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://docling-serve:5001/v1/convert/file",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "archivo"
+            },
+            {
+              "name": "to_formats",
+              "value": "md"
+            },
+            {
+              "name": "do_ocr",
+              "value": "={{ $json.body.do_ocr === 'false' ? 'false' : 'true' }}"
+            },
+            {
+              "name": "force_ocr",
+              "value": "false"
+            },
+            {
+              "name": "table_mode",
+              "value": "accurate"
+            },
+            {
+              "name": "ocr_lang",
+              "value": "es"
+            },
+            {
+              "name": "abort_on_error",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "b2c3d4e5-docling-0002",
+      "name": "Docling convert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const wh = $('Webhook').first();\nif (!wh.binary?.archivo) {\n  throw new Error('Falta el archivo binario \"archivo\" en el webhook. Sube PDF/Excel/Word/.txt desde la app o usa: curl -F archivo=@ruta.pdf ...');\n}\nreturn [{\n  json: wh.json,\n  binary: wh.binary,\n}];"
+      },
+      "id": "a9b8c7d6-pasar-0007",
+      "name": "Pasar archivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        140,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const wh = $('Pasar archivo').first();\nconst root = wh.json || {};\nconst body = root.body || root;\n\nfunction pickField(obj, key) {\n  const v = obj?.[key];\n  if (v == null || v === '') return null;\n  if (Array.isArray(v)) return v[0] ?? null;\n  return String(v);\n}\n\nconst source = pickField(body, 'source') || pickField(root, 'source') || '';\nconst extension = (pickField(body, 'extension') || pickField(root, 'extension') || '').toLowerCase();\nconst fileName = (pickField(body, 'nombre_original') || pickField(root, 'nombre_original') || '').toLowerCase();\nconst isText = source === 'text' || extension === 'txt' || fileName.endsWith('.txt') || fileName.includes('texto-libre');\n\nreturn [{\n  json: {\n    ...root,\n    is_text: isText,\n  },\n  binary: wh.binary,\n}];"
+      },
+      "id": "d1e2t3e4-detect-0011",
+      "name": "Detectar texto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-is-text",
+              "leftValue": "={{ $json.is_text }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "i1s2t3e4-if-0012",
+      "name": "Es texto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const wh = $('Pasar archivo').first();\nconst root = wh.json || {};\nconst body = root.body || root;\n\nfunction pickField(obj, key) {\n  const v = obj?.[key];\n  if (v == null || v === '') return null;\n  if (Array.isArray(v)) return v[0] ?? null;\n  return String(v);\n}\n\nconst bin = wh.binary?.archivo;\nif (!bin?.data) {\n  throw new Error('Falta el archivo binario para texto libre');\n}\n\nconst text = Buffer.from(bin.data, 'base64').toString('utf8');\nconst request_id = pickField(body, 'request_id') || pickField(root, 'request_id') || pickField(root.query || {}, 'request_id');\n\nreturn [{\n  json: {\n    markdown: text,\n    request_id,\n    file_name: pickField(body, 'nombre_original') || pickField(root, 'nombre_original') || 'texto-libre.txt',\n    source: 'text',\n    extension: 'txt',\n  },\n}];"
+      },
+      "id": "e1x2t3e4-text-0013",
+      "name": "Extraer texto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const docling = $input.first().json;\nconst wh = $('Webhook').first().json;\nconst body = wh.body || wh || {};\n\nfunction pick(...keys) {\n  const objs = [body, wh, wh.query || {}];\n  for (const key of keys) {\n    for (const obj of objs) {\n      const v = obj?.[key];\n      if (v == null || v === '') continue;\n      if (Array.isArray(v)) return String(v[0] ?? '');\n      return String(v);\n    }\n  }\n  return null;\n}\n\nlet md = '';\nif (docling.document?.md_content) md = docling.document.md_content;\nelse if (docling.md_content) md = docling.md_content;\nelse if (Array.isArray(docling.documents) && docling.documents[0]?.md_content) {\n  md = docling.documents[0].md_content;\n}\n\nconst request_id = pick('request_id');\nconst extension = (pick('extension') || '').toLowerCase();\nconst fileName = (pick('nombre_original') || '').toLowerCase();\nlet source = pick('source');\nif (!source && (extension === 'txt' || fileName.endsWith('.txt') || fileName.includes('texto-libre'))) {\n  source = 'text';\n}\nif (!source) source = 'pdf';\n\nreturn [{\n  json: {\n    markdown: md,\n    request_id,\n    file_name: pick('nombre_original') || 'archivo',\n    source,\n    extension,\n  }\n}];"
+      },
+      "id": "c3d4e5f6-code-0003",
+      "name": "Extraer markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nginx/api/solicitudes/interpretar",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { markdown: $json.markdown, request_id: $json.request_id, file_name: $json.file_name, source: $json.source, extension: $json.extension } }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "d4e5f6a7-interpret-0004",
+      "name": "Laravel interpretar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst body = (item.body && typeof item.body === 'object') ? item.body : item;\nconst lineas = Array.isArray(body.lineas) ? body.lineas : [];\nconst lineasCount = Number(body.lineas_count ?? lineas.length ?? 0);\nlet errorMessage = body.message ?? item.message ?? null;\nconst columnas = body.errors?.columnas_faltantes;\nif (Array.isArray(columnas) && columnas.length) {\n  errorMessage = `El archivo debe incluir columnas: ${columnas.join(', ')}.`;\n}\nlet requestId = body.request_id ?? null;\nif (!requestId) {\n  try { requestId = $('Extraer texto').first().json.request_id; } catch (e) {}\n}\nif (!requestId) {\n  try { requestId = $('Extraer markdown').first().json.request_id; } catch (e) {}\n}\nlet source = body.source ?? 'pdf';\nreturn [{\n  json: {\n    ...body,\n    lineas,\n    lineas_count: lineasCount,\n    request_id: requestId,\n    source,\n    error_message: errorMessage,\n  }\n}];"
+      },
+      "id": "n1o2r3m4-normalizar-0010",
+      "name": "Normalizar interpretar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-lineas-ok",
+              "leftValue": "={{ $json.lineas_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b1c2d3e4-if-0008",
+      "name": "Lineas OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nginx/api/marcas/resolver",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { lineas: $('Normalizar interpretar').first().json.lineas } }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "f6a7b8c9-marca-0006",
+      "name": "Resolver marcas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nginx/api/n8n/lectura",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fuente: 'n8n', tipo: 'solicitud_cotizacion', contenido: { lineas: $('Resolver marcas').first().json.lineas, interpretacion_via: 'parser' }, metadata: { request_id: $('Normalizar interpretar').first().json.request_id, source: $('Normalizar interpretar').first().json.source, interpretacion_via: 'parser', lineas_count: $('Resolver marcas').first().json.lineas.length } } }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "e5f6a7b8-laravel-0005",
+      "name": "Laravel callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nginx/api/n8n/lectura",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fuente: 'n8n', tipo: 'solicitud_cotizacion', contenido: { lineas: [] }, metadata: { request_id: $('Normalizar interpretar').first().json.request_id, source: $('Normalizar interpretar').first().json.source, error: $json.error_message || $json.message || 'El archivo no cumple el formato requerido.', interpretacion_via: 'parser' } } }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "c2d3e4f5-error-0009",
+      "name": "Laravel callback error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Pasar archivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pasar archivo": {
+      "main": [
+        [
+          {
+            "node": "Detectar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar texto": {
+      "main": [
+        [
+          {
+            "node": "Es texto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Es texto?": {
+      "main": [
+        [
+          {
+            "node": "Extraer texto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Docling convert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer texto": {
+      "main": [
+        [
+          {
+            "node": "Laravel interpretar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docling convert": {
+      "main": [
+        [
+          {
+            "node": "Extraer markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer markdown": {
+      "main": [
+        [
+          {
+            "node": "Laravel interpretar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Laravel interpretar": {
+      "main": [
+        [
+          {
+            "node": "Normalizar interpretar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar interpretar": {
+      "main": [
+        [
+          {
+            "node": "Lineas OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lineas OK?": {
+      "main": [
+        [
+          {
+            "node": "Resolver marcas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Laravel callback error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolver marcas": {
+      "main": [
+        [
+          {
+            "node": "Laravel callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,183 @@
+﻿Documentación Funcional y Técnica - Sistema Inteligente de Cotizaciones B2B
+Fecha: 26/05/2026Objetivo: Diseñar una plataforma web inteligente para automatizar el proceso de cotizaciones, integración con mayoristas y envío automático de propuestas comerciales.
+1. Objetivo General
+Crear una aplicación web que automatice el flujo completo de cotización:
+- Recepción de solicitudes
+- Lectura automática de archivos PDF, Excel y Word
+- Consulta de precios y stock con mayoristas
+- Comparación automática de proveedores
+- Cálculo automático de utilidad (profit)
+- Generación de cotizaciones profesionales
+- Envío por correo y WhatsApp
+- Administración de clientes y usuarios
+2. Usuarios del Sistema
+Roles principales:
+- Administrador
+- Gerente de Compras
+- Personal de Ventas
+- Gerencia
+Permisos:
+- Crear cotizaciones
+- Editar márgenes
+- Consultar inventarios
+- Enviar cotizaciones
+- Ver reportes
+3. Dashboard Principal
+El sistema deberá mostrar:
+- Cotizaciones recientes
+- Solicitudes pendientes
+- Utilidad total mensual
+- Productos más cotizados
+- Estado de cotizaciones
+- Alertas de inventario
+4. Recepción de Solicitudes
+La aplicación deberá permitir:
+- Subir archivos PDF
+- Subir archivos Excel
+- Subir archivos Word
+- Copiar y pegar texto libre
+Ejemplo:
+5 Cisco C9200L-24T-4G-E
+10 Memoria Kingston 16GB DDR4
+3 Access Point Ubiquiti U6+
+5. Motor Inteligente OCR + IA
+El sistema deberá interpretar automáticamente:
+- Cantidad
+- Producto
+- Número de parte
+- Marca
+- Descripción
+- Unidad
+La IA deberá organizar automáticamente la información en filas y columnas.
+6. Integración con Mayoristas
+El sistema deberá conectarse con mayoristas mediante:
+- API REST
+- XML
+- CSV
+- FTP
+- Automatización Web
+- Web Scraping (si no existe API)
+Mayoristas potenciales:
+- Ingram Micro
+- CT Internacional
+- CVA
+- Syscom
+- PCH
+- Team
+- Exel del Norte
+7. Comparador Inteligente
+La plataforma deberá:
+- Consultar precios automáticamente
+- Comparar múltiples mayoristas
+- Elegir mejor precio
+- Mostrar disponibilidad
+- Mostrar almacenes disponibles
+- Sugerir mejor opción de surtido
+8. Constructor de Cotizaciones
+La cotización deberá incluir:
+- Cantidad
+- Producto
+- Número de parte
+- Costo
+- Profit
+- Precio de venta
+- Importe
+- Almacén de surtido
+El sistema deberá calcular automáticamente:
+- Profit por partida
+- Profit total
+- IVA
+- Totales generales
+9. Profit Dinámico
+El sistema deberá:
+- Aplicar 30% por defecto
+- Permitir cambiar el margen por producto
+- Permitir modificar margen global
+- Mostrar utilidad en porcentaje y en pesos
+10. Módulo de Clientes
+El sistema deberá permitir:
+- Alta de clientes
+- Edición de clientes
+- Importación masiva desde Excel
+- Historial de cotizaciones
+Campos:
+- Empresa
+- RFC
+- Dirección
+- Contacto
+- Correo
+- WhatsApp
+- Condiciones de pago
+11. Diseño Profesional de Cotización
+La cotización deberá contener:
+- Logo
+- Datos fiscales
+- Folio
+- Fecha
+- Vigencia
+- Tabla de productos
+- Totales
+- IVA
+- Firma
+- Términos y condiciones
+12. Envío Automático
+El sistema deberá enviar cotizaciones mediante:
+- Correo electrónico
+- WhatsApp Business API
+Opciones:
+- Adjuntar PDF automáticamente
+- Mensajes predeterminados
+- Historial de envío
+13. Estados de Cotización
+Estados:
+- Pendiente
+- En revisión
+- Enviada
+- Aprobada
+- Rechazada
+- Comprada
+14. Reportes y Analítica
+El sistema deberá generar:
+- Reportes de ventas
+- Reportes de utilidad
+- Productos más cotizados
+- Cotizaciones ganadas/perdidas
+- Mayoristas más utilizados
+15. Tecnologías Recomendadas
+Frontend:
+- React
+- Next.js
+- Tailwind CSS
+Backend:
+- Laravel o Node.js
+Base de datos:
+- PostgreSQL o MySQL
+IA y OCR:
+- OpenAI
+- Google Vision
+- AWS Textract
+- Azure OCR
+16. Fases de Desarrollo
+FASE 1:
+- Login
+- Clientes
+- Subida de documentos
+- OCR
+- Cotización básica
+- Generación PDF
+FASE 2:
+- APIs de mayoristas
+- Comparador automático
+- WhatsApp
+FASE 3:
+- IA avanzada
+- Dashboard ejecutivo
+- ERP
+- Automatizaciones avanzadas
+17. Conclusión
+El proyecto funcionará como:
+- ERP comercial
+- Sistema inteligente de compras
+- Automatizador de cotizaciones
+- CRM comercial
+El objetivo es reducir tiempos operativos, mejorar precisión de cotizaciones y aumentar rentabilidad.

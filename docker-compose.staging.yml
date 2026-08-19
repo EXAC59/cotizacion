@@ -1,0 +1,212 @@
+# Staging en VPS: subdominio único, frontend público, API interna, colas
+# Uso: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+# o: make staging
+
+services:
+  postgres:
+    # Debe estar en la misma red que api/nginx (el base compose a veces no lo trae en VPS antiguo)
+    # Solo red Docker interna (no publicar 5432 en el host)
+    ports: !reset []
+    networks:
+      - cotizacion
+
+  api:
+    environment:
+      APP_ENV: staging
+      APP_DEBUG: "false"
+      APP_DEMO_MODE: "false"
+      SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS:-}
+      SESSION_DOMAIN: ${SESSION_DOMAIN:-}
+      SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-true}
+      SESSION_ENCRYPT: ${SESSION_ENCRYPT:-true}
+      WHOLESALER_DEMO_OFFERS: ${WHOLESALER_DEMO_OFFERS:-false}
+      WHOLESALER_COMPARE_CODES: ${WHOLESALER_COMPARE_CODES:-}
+      # CT: autocomplete/UI por SKU (numParte); lookup interno SKU→clave. PREFER_SKU=true por defecto.
+      WHOLESALER_CT_BASE_URL: ${WHOLESALER_CT_BASE_URL:-http://connect.ctonline.mx:3001}
+      WHOLESALER_CT_API_KEY: ${WHOLESALER_CT_API_KEY:-}
+      WHOLESALER_CT_EMAIL: ${WHOLESALER_CT_EMAIL:-}
+      WHOLESALER_CT_CLIENTE: ${WHOLESALER_CT_CLIENTE:-}
+      WHOLESALER_CT_RFC: ${WHOLESALER_CT_RFC:-}
+      WHOLESALER_CT_LOOKUP_PATH: ${WHOLESALER_CT_LOOKUP_PATH:-/existencia/promociones/{part_number}}
+      WHOLESALER_CT_SOURCE_IP: ${WHOLESALER_CT_SOURCE_IP:-}
+      WHOLESALER_CT_TIMEOUT: ${WHOLESALER_CT_TIMEOUT:-20}
+      WHOLESALER_CT_AUTH_HEADER: ${WHOLESALER_CT_AUTH_HEADER:-}
+      WHOLESALER_CT_FTP_HOST: ${WHOLESALER_CT_FTP_HOST:-}
+      WHOLESALER_CT_FTP_USER: ${WHOLESALER_CT_FTP_USER:-}
+      WHOLESALER_CT_FTP_PASSWORD: ${WHOLESALER_CT_FTP_PASSWORD:-}
+      WHOLESALER_CT_FTP_PATH: ${WHOLESALER_CT_FTP_PATH:-/catalogo_xml/productos.json}
+      WHOLESALER_CT_CATALOG_TTL: ${WHOLESALER_CT_CATALOG_TTL:-15}
+      WHOLESALER_CT_PREFER_SKU: ${WHOLESALER_CT_PREFER_SKU:-true}
+      WHOLESALER_CT_PART_ALIASES: ${WHOLESALER_CT_PART_ALIASES:-}
+      WHOLESALER_CVA_BASE_URL: ${WHOLESALER_CVA_BASE_URL:-https://apicvaservices.grupocva.com/api/v2}
+      WHOLESALER_CVA_USER: ${WHOLESALER_CVA_USER:-}
+      WHOLESALER_CVA_PASSWORD: ${WHOLESALER_CVA_PASSWORD:-}
+      WHOLESALER_CVA_TIMEOUT: ${WHOLESALER_CVA_TIMEOUT:-20}
+      WHOLESALER_CVA_SYNC_TIMEOUT: ${WHOLESALER_CVA_SYNC_TIMEOUT:-90}
+      WHOLESALER_CVA_FX: ${WHOLESALER_CVA_FX:-}
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_WABA_ID: ${WHATSAPP_WABA_ID:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      MAIL_MAILER: ${MAIL_MAILER:-smtp}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Cotizacion}
+
+  nginx:
+    # Sin puerto público: la API solo se expone vía frontend (evita conflicto con APP_PORT)
+    ports: !reset []
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    # Solo localhost: host nginx (80/443) hace proxy_pass a 127.0.0.1:APP_PORT.
+    # No publicar 0.0.0.0:8080 (HTTP legacy accesible desde Internet).
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:80"
+    volumes: !reset []
+    environment: !reset {}
+    depends_on:
+      nginx:
+        condition: service_started
+    networks:
+      - cotizacion
+
+  queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: cotizacion_queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+    volumes:
+      - .:/var/www/html
+      - vendor_data:/var/www/html/vendor
+    environment:
+      APP_ENV: staging
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:-}
+      APP_URL: ${APP_URL:-http://localhost}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-cotizacion}
+      DB_USERNAME: ${DB_USERNAME:-cotizacion}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      QUEUE_CONNECTION: database
+      WHOLESALER_DEMO_OFFERS: ${WHOLESALER_DEMO_OFFERS:-false}
+      WHOLESALER_COMPARE_CODES: ${WHOLESALER_COMPARE_CODES:-}
+      WHOLESALER_CT_BASE_URL: ${WHOLESALER_CT_BASE_URL:-http://connect.ctonline.mx:3001}
+      WHOLESALER_CT_API_KEY: ${WHOLESALER_CT_API_KEY:-}
+      WHOLESALER_CT_EMAIL: ${WHOLESALER_CT_EMAIL:-}
+      WHOLESALER_CT_CLIENTE: ${WHOLESALER_CT_CLIENTE:-}
+      WHOLESALER_CT_RFC: ${WHOLESALER_CT_RFC:-}
+      WHOLESALER_CT_LOOKUP_PATH: ${WHOLESALER_CT_LOOKUP_PATH:-/existencia/promociones/{part_number}}
+      WHOLESALER_CT_SOURCE_IP: ${WHOLESALER_CT_SOURCE_IP:-}
+      WHOLESALER_CT_TIMEOUT: ${WHOLESALER_CT_TIMEOUT:-20}
+      WHOLESALER_CT_FTP_HOST: ${WHOLESALER_CT_FTP_HOST:-}
+      WHOLESALER_CT_FTP_USER: ${WHOLESALER_CT_FTP_USER:-}
+      WHOLESALER_CT_FTP_PASSWORD: ${WHOLESALER_CT_FTP_PASSWORD:-}
+      WHOLESALER_CT_FTP_PATH: ${WHOLESALER_CT_FTP_PATH:-/catalogo_xml/productos.json}
+      WHOLESALER_CT_CATALOG_TTL: ${WHOLESALER_CT_CATALOG_TTL:-15}
+      WHOLESALER_CT_PREFER_SKU: ${WHOLESALER_CT_PREFER_SKU:-true}
+      WHOLESALER_CT_PART_ALIASES: ${WHOLESALER_CT_PART_ALIASES:-}
+      WHOLESALER_CVA_BASE_URL: ${WHOLESALER_CVA_BASE_URL:-https://apicvaservices.grupocva.com/api/v2}
+      WHOLESALER_CVA_USER: ${WHOLESALER_CVA_USER:-}
+      WHOLESALER_CVA_PASSWORD: ${WHOLESALER_CVA_PASSWORD:-}
+      WHOLESALER_CVA_TIMEOUT: ${WHOLESALER_CVA_TIMEOUT:-20}
+      WHOLESALER_CVA_SYNC_TIMEOUT: ${WHOLESALER_CVA_SYNC_TIMEOUT:-90}
+      WHOLESALER_CVA_FX: ${WHOLESALER_CVA_FX:-}
+      MAIL_MAILER: ${MAIL_MAILER:-smtp}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Cotizacion}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_WABA_ID: ${WHATSAPP_WABA_ID:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - cotizacion
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: cotizacion_scheduler
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: php artisan schedule:work
+    volumes:
+      - .:/var/www/html
+      - vendor_data:/var/www/html/vendor
+    environment:
+      APP_ENV: staging
+      APP_KEY: ${APP_KEY:-}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-cotizacion}
+      DB_USERNAME: ${DB_USERNAME:-cotizacion}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      CACHE_STORE: database
+      WHOLESALER_CT_BASE_URL: ${WHOLESALER_CT_BASE_URL:-http://connect.ctonline.mx:3001}
+      WHOLESALER_CT_API_KEY: ${WHOLESALER_CT_API_KEY:-}
+      WHOLESALER_CT_EMAIL: ${WHOLESALER_CT_EMAIL:-}
+      WHOLESALER_CT_CLIENTE: ${WHOLESALER_CT_CLIENTE:-}
+      WHOLESALER_CT_RFC: ${WHOLESALER_CT_RFC:-}
+      WHOLESALER_CT_SOURCE_IP: ${WHOLESALER_CT_SOURCE_IP:-}
+      WHOLESALER_CT_TIMEOUT: ${WHOLESALER_CT_TIMEOUT:-20}
+      WHOLESALER_CT_FTP_HOST: ${WHOLESALER_CT_FTP_HOST:-}
+      WHOLESALER_CT_FTP_USER: ${WHOLESALER_CT_FTP_USER:-}
+      WHOLESALER_CT_FTP_PASSWORD: ${WHOLESALER_CT_FTP_PASSWORD:-}
+      WHOLESALER_CT_FTP_PATH: ${WHOLESALER_CT_FTP_PATH:-/catalogo_xml/productos.json}
+      WHOLESALER_CVA_BASE_URL: ${WHOLESALER_CVA_BASE_URL:-https://apicvaservices.grupocva.com/api/v2}
+      WHOLESALER_CVA_USER: ${WHOLESALER_CVA_USER:-}
+      WHOLESALER_CVA_PASSWORD: ${WHOLESALER_CVA_PASSWORD:-}
+      WHOLESALER_CVA_TIMEOUT: ${WHOLESALER_CVA_TIMEOUT:-20}
+      WHOLESALER_CVA_SYNC_TIMEOUT: ${WHOLESALER_CVA_SYNC_TIMEOUT:-90}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - cotizacion
+
+  n8n:
+    profiles:
+      - integrations
+    # Solo localhost del host (nginx/HTTPS); UFW sigue denegando 5678 público
+    ports: !override
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    environment:
+      N8N_HOST: ${N8N_HOST:-${STAGING_DOMAIN:-localhost}}
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${N8N_WEBHOOK_BASE:-http://localhost:5678}
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: ${N8N_BLOCK_ENV_ACCESS_IN_NODE:-false}
+  docling-serve:
+    profiles:
+      - integrations
+    # Solo red Docker interna (no publicar 5001)
+    ports: !reset []

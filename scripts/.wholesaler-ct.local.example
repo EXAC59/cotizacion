@@ -1,0 +1,21 @@
+# Copiar a scripts/.wholesaler-ct.local (no se sube a git)
+# Usado por scripts/apply-ct-credentials.ps1 para VPS y pruebas locales.
+#
+# Opción A — token fijo (recomendado si CT ya te dio x-auth):
+# WHOLESALER_CT_API_KEY=tu_token_jwt
+#
+# Opción B — generación de token (POST /cliente/token):
+# WHOLESALER_CT_EMAIL=tu@empresa.com
+# WHOLESALER_CT_CLIENTE=HMO0001
+# WHOLESALER_CT_RFC=XXXXXXXXXXXX
+#
+# FTP catálogo (opcional, mapeo numParte → clave CT):
+# WHOLESALER_CT_FTP_HOST=216.70.82.104
+# WHOLESALER_CT_FTP_USER=PAZ0074
+# WHOLESALER_CT_FTP_PASSWORD=
+# WHOLESALER_CT_FTP_PATH=/catalogo_xml/productos.json
+
+WHOLESALER_CT_API_KEY=
+# WHOLESALER_CT_EMAIL=
+# WHOLESALER_CT_CLIENTE=
+# WHOLESALER_CT_RFC=

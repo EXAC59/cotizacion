@@ -1,0 +1,7 @@
+# Copiar a scripts/.wholesaler-cva.local (no se sube a git)
+# Credenciales API CVA — https://apicvaservices.grupocva.com/documentation/#autenticacion
+
+WHOLESALER_CVA_USER=
+WHOLESALER_CVA_PASSWORD=
+WHOLESALER_CVA_BASE_URL=https://apicvaservices.grupocva.com/api/v2
+WHOLESALER_CVA_TIMEOUT=20

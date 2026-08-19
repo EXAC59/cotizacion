@@ -1,0 +1,14 @@
+# Producción: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  api:
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+
+  frontend:
+    build:
+      target: production
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    volumes: []
+    environment: {}

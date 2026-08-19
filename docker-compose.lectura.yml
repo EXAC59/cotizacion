@@ -1,0 +1,53 @@
+# Solo lectura de documentos (Laragon + PostgreSQL local, sin levantar API/nginx).
+#
+#   docker compose -f docker-compose.lectura.yml up -d
+#   docker compose -f docker-compose.lectura.yml down
+#
+# URLs:
+#   Docling UI  → http://localhost:5001/ui
+#   Docling API → http://localhost:5001/docs
+#   n8n         → http://localhost:5678
+
+services:
+  docling-serve:
+    image: ghcr.io/docling-project/docling-serve-cpu:latest
+    container_name: cotizacion_docling
+    restart: unless-stopped
+    ports:
+      - "${DOCLING_PORT:-5001}:5001"
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "1"
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "false"
+    volumes:
+      - docling_cache:/root/.cache
+    networks:
+      - lectura
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cotizacion_n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${N8N_WEBHOOK_BASE:-http://localhost:5678}
+      GENERIC_TIMEZONE: ${APP_TIMEZONE:-America/Mexico_City}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - docling-serve
+    networks:
+      - lectura
+
+networks:
+  lectura:
+    driver: bridge
+
+volumes:
+  docling_cache:
+  n8n_data:

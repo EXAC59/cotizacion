@@ -1,0 +1,11 @@
+# Copiar a scripts/.mail.local (gitignored) y completar para aplicar SMTP en el VPS.
+# Uso: .\scripts\apply-mail-env.ps1
+
+MAIL_MAILER=smtp
+MAIL_HOST=smtp.tudominio.com
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS=cotizaciones@exacto.com.mx
+MAIL_FROM_NAME=Exacto Cotizaciones

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature: Revisión de Solicitudes - Bug Fix Report</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reset.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/theme/league.min.css">
+    <style>
+        .code-block { font-size: 0.75em; line-height: 1.4; }
+        .bug { color: #e74c3c; font-weight: bold; }
+        .fix { color: #27ae60; font-weight: bold; }
+        .pass { color: #27ae60; }
+        .fail { color: #e74c3c; }
+        table { font-size: 0.8em; }
+        th, td { padding: 0.3em 0.6em; }
+        .highlight { background: #fff3cd; padding: 0.1em 0.3em; border-radius: 3px; }
+        .slide-number { font-size: 0.6em; opacity: 0.5; }
+    </style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+    <h1>Feature: Revisión de Solicitudes</h1>
+    <h3>Bug Fix en Migración y Tests</h3>
+    <p><strong>Proyecto:</strong> Cotización (Laravel 11 + Vue 3 + TypeScript)</p>
+    <p><strong>Fecha:</strong> 2026-08-12</p>
+    <p class="slide-number">1 / 9</p>
+</section>
+
+<!-- Slide 2: Contexto -->
+<section>
+    <h2>Contexto</h2>
+    <ul>
+        <li>Feature: Sistema de revisión de solicitudes de cotización</li>
+        <li>Migración de hoy: <code>2026_08_11_100000_add_reviewed_columns_to_quote_requests</code></li>
+        <li>Columnas añadidas: <code>reviewed_by</code> (FK a users), <code>reviewed_at</code> (timestamp)</li>
+        <li>Lógica: "El primer revisor gana" (idempotente)</li>
+        <li>Test fallando: <code>SolicitudRevisionTest::el_primer_revisor_gana</code></li>
+    </ul>
+    <p class="slide-number">2 / 9</p>
+</section>
+
+<!-- Slide 3: Arquitectura -->
+<section>
+    <h2>Arquitectura de la Feature</h2>
+    <table>
+        <thead><tr><th>Capa</th><th>Componente</th><th>Responsabilidad</th></tr></thead>
+        <tbody>
+            <tr><td rowspan="3">Backend</td><td><code>SolicitudLecturaService::marcarRevisada()</code></td><td>Marca revisada (idempotente)</td></tr>
+            <tr><td><code>SolicitudController::show()</code></td><td>Dispara revisión al abrir detalle</td></tr>
+            <tr><td><code>DashboardAnalyticsService::pendingReviewRequests()</code></td><td>Lista solicitudes sin revisar</td></tr>
+            <tr><td rowspan="2">Frontend</td><td><code>solicitudes-api.ts</code></td><td>Tipos: reviewed_by, reviewed_by_name, reviewed_at</td></tr>
+            <tr><td><code>DashboardPage.tsx</code></td><td>Alertas "Solicitudes pendientes"</td></tr>
+            <tr><td>DB</td><td>Migración + Modelo <code>QuoteRequest</code></td><td>FK reviewed_by → users.id</td></tr>
+        </tbody>
+    </table>
+    <p class="slide-number">3 / 9</p>
+</section>
+
+<!-- Slide 4: El Bug -->
+<section>
+    <h2>El Bug: Síntoma</h2>
+    <pre class="code-block"><code class="fail">Tests\Feature\SolicitudRevisionTest::el_primer_revisor_gana
+Failed asserting that <span class="highlight">'1'</span> is identical to <span class="highlight">1</span>.</code></pre>
+    <ul>
+        <li><code>assertSame('1', 1)</code> falla: string vs int</li>
+        <li>El test compara <code>reviewed_by</code> (del JSON) con <code>user->id</code> (int)</li>
+    </ul>
+    <p class="slide-number">4 / 9</p>
+</section>
+
+<!-- Slide 5: Causa Raíz -->
+<section>
+    <h2>Causa Raíz: Migración Incorrecta</h2>
+    <pre class="code-block"><code class="bug">// INCORRECTO - migración original
+$table->uuid('reviewed_by')->nullable()->after('status');
+$table->foreign('reviewed_by')->references('id')->on('users')->nullOnDelete();</code></pre>
+    <h3>Problemas:</h3>
+    <ol>
+        <li><code>users.id</code> es <strong>BIGINT</strong> (<code>$table->id()</code>)</li>
+        <li><code>quote_requests.created_by</code> usa correctamente <code>foreignId()</code> (BIGINT)</li>
+        <li><code>reviewed_by</code> como <strong>UUID (VARCHAR)</strong> → <span class="bug">mismatch de tipos</span></li>
+        <li>FK de UUID → BIGINT <span class="bug">no se crea</span> en Postgres/MySQL</li>
+        <li>SQLite en memoria (tests) lo permite, pero BD real falla</li>
+        <li>Al leer: <code>'1'</code> (string) vs <code>1</code> (int)</li>
+    </ol>
+    <p class="slide-number">5 / 9</p>
+</section>
+
+<!-- Slide 6: La Solución -->
+<section>
+    <h2>La Solución: Migración Corregida</h2>
+    <pre class="code-block"><code class="fix">// CORRECTO - después del fix
+Schema::table('quote_requests', function (Blueprint $table) {
+    if (! Schema::hasColumn('quote_requests', 'reviewed_by')) {
+        $table->foreignId('reviewed_by')        // BIGINT UNSIGNED
+              ->nullable()
+              ->after('status')
+              ->constrained('users')             // FK automática a users.id
+              ->nullOnDelete();
+    }
+    if (! Schema::hasColumn('quote_requests', 'reviewed_at')) {
+        $table->timestamp('reviewed_at')->nullable()->after('reviewed_by');
+    }
+});</code></pre>
+    <h3>Cambios clave:</h3>
+    <ul>
+        <li><code>uuid()</code> → <code>foreignId()</code> (coherente con <code>created_by</code>)</li>
+        <li><code>foreign()</code> manual → <code>constrained('users')</code> (convención Laravel)</li>
+        <li>Tipo: <strong>BIGINT UNSIGNED</strong> → coincide con <code>users.id</code></li>
+    </ul>
+    <p class="slide-number">6 / 9</p>
+</section>
+
+<!-- Slide 7: Verificación Tests Feature -->
+<section>
+    <h2>Verificación: Tests de la Feature (6 tests)</h2>
+    <table>
+        <thead><tr><th>Test</th><th>Antes</th><th>Después</th></tr></thead>
+        <tbody>
+            <tr><td><code>se_crea_sin_revisor</code></td><td class="pass">✅ PASS</td><td class="pass">✅ PASS</td></tr>
+            <tr><td><code>marca_como_revisada_al_abrir_el_detalle</code></td><td class="pass">✅ PASS</td><td class="pass">✅ PASS</td></tr>
+            <tr><td><code class="highlight"><strong>el_primer_revisor_gana</strong></code></td><td class="fail"><strong>❌ FAIL</strong></td><td class="pass"><strong>✅ PASS</strong></td></tr>
+            <tr><td><code>el_dashboard_lista_solo_las_sin_revisar</code></td><td class="pass">✅ PASS</td><td class="pass">✅ PASS</td></tr>
+            <tr><td><code>el_dashboard_lista_solo_las_en_elaboracion</code></td><td class="pass">✅ PASS</td><td class="pass">✅ PASS</td></tr>
+            <tr><td><code>no_permite_editar_lineas_una_vez_enviada</code></td><td class="pass">✅ PASS</td><td class="pass">✅ PASS</td></tr>
+            <tr><td><code>permite_editar_lineas_en_elaboracion</code></td><td class="pass">✅ PASS</td><td class="pass">✅ PASS</td></tr>
+        </tbody>
+    </table>
+    <p class="slide-number">7 / 9</p>
+</section>
+
+<!-- Slide 8: Suite Completa -->
+<section>
+    <h2>Suite Completa (250 tests)</h2>
+    <div style="text-align: center; font-size: 2em; margin: 0.5em 0;">
+        <span class="pass">247 ✅ PASS</span> &nbsp;|&nbsp; <span class="fail">3 ❌ FAIL</span>
+    </div>
+    <h3>3 fallos PREEXISTENTES (no relacionados con revisión):</h3>
+    <table>
+        <thead><tr><th>Test</th><th>Dominio</th><th>Causa probable</th></tr></thead>
+        <tbody>
+            <tr><td><code>CvaConnectorTest::test_maps_precios_stock...</code></td><td>Comparador CVA</td><td>Case-sensitivity: "CEDIS Guadalajara" vs "GUADALAJARA"</td></tr>
+            <tr><td><code>ApiAuthorizationTest::ventas_can_dispatch_comparator...</code></td><td>Auth/Comparador</td><td>Permiso: 403 vs 202 esperado</td></tr>
+            <tr><td><code>ComparatorSettingsTest::it_manages_user_comparator_preferences</code></td><td>Settings/Comparador</td><td>Permiso: 403 vs 200 esperado</td></tr>
+        </tbody>
+    </table>
+    <p><em>Confirmados en <code>.phpunit.result.cache</code> de corrida anterior</em></p>
+    <p class="slide-number">8 / 9</p>
+</section>
+
+<!-- Slide 9: Resumen y Lecciones -->
+<section>
+    <h2>Resumen y Lecciones</h2>
+    <h3>Impacto del Fix</h3>
+    <table>
+        <tr><td>Líneas cambiadas</td><td>1 migración (3 líneas efectivas)</td></tr>
+        <tr><td>Test recuperado</td><td>1 (<code>el_primer_revisor_gana</code>)</td></tr>
+        <tr><td>Regresiones</td><td>0</td></tr>
+        <tr><td>Tiempo</td><td>< 10 min</td></tr>
+    </table>
+    <h3>Lecciones / Buenas Prácticas</h3>
+    <ol>
+        <li><strong>Consistencia FK</strong>: Siempre <code>foreignId()</code> cuando la tabla referenciada usa <code>$table->id()</code></li>
+        <li><strong>Convención Laravel</strong>: <code>constrained('users')</code> > <code>foreign()</code> manual</li>
+        <li><strong>Verificar en BD real</strong>: SQLite en memoria permite tipos que Postgres/MySQL rechazan</li>
+        <li><strong>Test de idempotencia</strong>: Valida regla de negocio crítica ("primer revisor gana")</li>
+    </ol>
+    <p class="slide-number">9 / 9</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.js"></script>
+<script>
+    Reveal.initialize({
+        hash: true,
+        slideNumber: true,
+        controls: true,
+        progress: true,
+        center: false,
+        transition: 'slide',
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>API CVA — guía fácil</title>
+  <style>
+    @page { size: A4; margin: 18mm 16mm; }
+    body {
+      font-family: "Segoe UI", "DejaVu Sans", Arial, sans-serif;
+      font-size: 12pt;
+      line-height: 1.5;
+      color: #1a1a1a;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 22pt; margin: 0 0 8px; }
+    h2 {
+      font-size: 14pt;
+      margin: 22px 0 8px;
+      border-bottom: 2px solid #333;
+      padding-bottom: 4px;
+    }
+    .sub { color: #555; font-size: 11pt; margin-bottom: 16px; }
+    .box {
+      background: #fff8e8;
+      border-left: 5px solid #c47f00;
+      padding: 12px 14px;
+      margin: 14px 0;
+      border-radius: 0 8px 8px 0;
+    }
+    .box.blue {
+      background: #eef4ff;
+      border-left-color: #0b57d0;
+    }
+    .box.green {
+      background: #eefaf0;
+      border-left-color: #1a7f37;
+    }
+    ol.pasos { padding-left: 22px; }
+    ol.pasos li { margin-bottom: 10px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 16px;
+      font-size: 11pt;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0f0f0; }
+    .num {
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      line-height: 28px;
+      text-align: center;
+      background: #333;
+      color: #fff;
+      border-radius: 50%;
+      font-weight: 700;
+      font-size: 12pt;
+      margin-right: 6px;
+    }
+    ul.simple { padding-left: 20px; }
+    ul.simple li { margin-bottom: 6px; }
+    .footer { margin-top: 28px; color: #777; font-size: 9.5pt; }
+    strong.tag { color: #0b57d0; }
+  </style>
+</head>
+<body>
+
+  <h1>API CVA — guía fácil</h1>
+  <p class="sub">
+    Qué es, para qué sirve y cómo usarla (sin tecnicismos).
+  </p>
+
+  <div class="box">
+    <strong>En una frase</strong><br />
+    La API de CVA es un “catálogo en línea” de productos del mayorista CVA:
+    te deja consultar <strong>precios, existencias, fotos y pedidos</strong>
+    desde tu sistema (por ejemplo Exacto).
+  </div>
+
+  <h2>¿Para qué la usamos?</h2>
+  <ul class="simple">
+    <li>Buscar un producto y ver su <strong>precio</strong></li>
+    <li>Ver si hay <strong>stock</strong> (en tu sucursal o en el almacén grande de Guadalajara)</li>
+    <li>Ver <strong>promociones</strong></li>
+    <li>(Opcional) <strong>Hacer pedidos</strong> a CVA desde el sistema</li>
+  </ul>
+
+  <h2>Cómo funciona (5 pasos)</h2>
+  <ol class="pasos">
+    <li>
+      <strong>Entrar</strong> — Con usuario y contraseña CVA pides un “pase”
+      (token). Dura <strong>12 horas</strong>. Sin ese pase no puedes consultar nada.
+    </li>
+    <li>
+      <strong>Guardar el catálogo</strong> — Mejor bajar productos a tu base de datos
+      de noche o varias veces al día. <em>No</em> pedir todo el catálogo cada vez
+      que alguien abre una pantalla (puede pesar ~90 MB y se pone lento).
+    </li>
+    <li>
+      <strong>Consultar 1 producto</strong> — Cuando cotizas, preguntas solo por
+      esa clave: precio y stock al momento.
+    </li>
+    <li>
+      <strong>Pedir (si tienen crédito)</strong> — Se puede crear un pedido a CVA;
+      necesitan línea de crédito con ellos.
+    </li>
+    <li>
+      <strong>Envío</strong> — Se puede cotizar flete (Paquetexpress) y, con permiso
+      especial, registrar guías.
+    </li>
+  </ol>
+
+  <div class="box green">
+    <strong>Regla de oro</strong><br />
+    Catálogo grande → sincronizar en segundo plano.<br />
+    Precio/stock de un producto → consultar en el momento.
+  </div>
+
+  <h2>Dos formas de buscar un producto</h2>
+  <table>
+    <thead>
+      <tr><th>Buscas por…</th><th>Significado</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>clave</strong> (ej. PR-2586)</td>
+        <td>Código interno de CVA. Es el más seguro.</td>
+      </tr>
+      <tr>
+        <td><strong>codigo</strong> (número de parte)</td>
+        <td>Código del fabricante (como en la caja del producto).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Stock: ¿dónde hay piezas?</h2>
+  <table>
+    <thead>
+      <tr><th>Campo</th><th>En español</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>disponible</td>
+        <td>Piezas en <strong>tu sucursal</strong> CVA</td>
+      </tr>
+      <tr>
+        <td>disponibleCD</td>
+        <td>Piezas en el <strong>CEDIS Guadalajara</strong> (almacén central)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    También puedes pedir que solo te muestren lo que sí tiene existencia
+    (en sucursal, en CEDIS, o en ambos).
+  </p>
+
+  <h2>Lo que más se usa (mapa corto)</h2>
+  <table>
+    <thead>
+      <tr><th>Necesito…</th><th>Qué pedir</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Entrar</td>
+        <td>Login → token</td>
+      </tr>
+      <tr>
+        <td>Lista / ficha de productos</td>
+        <td>lista_precios</td>
+      </tr>
+      <tr>
+        <td>Solo precios y stock (rápido)</td>
+        <td>precios_stock_ofertas</td>
+      </tr>
+      <tr>
+        <td>Marcas, grupos, sucursales…</td>
+        <td>Catálogos auxiliares</td>
+      </tr>
+      <tr>
+        <td>Crear un pedido</td>
+        <td>crear_orden (con crédito)</td>
+      </tr>
+      <tr>
+        <td>Ver mis pedidos</td>
+        <td>lista_pedidos / consultar_pedido</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Pedidos — lo básico</h2>
+  <ul class="simple">
+    <li>Hace falta <strong>crédito con CVA</strong>.</li>
+    <li>Mandas: sucursal, productos (clave + cantidad) y si lleva flete o no.</li>
+    <li>
+      Tipos de flete:
+      <strong>SF</strong> = sin flete ·
+      <strong>FF</strong> = flete en la factura ·
+      <strong>FS</strong> = flete asegurado.
+    </li>
+    <li>
+      Hay modo <strong>prueba</strong> (<code>test</code>) para no generar pedidos reales.
+    </li>
+  </ul>
+
+  <div class="box blue">
+    <strong>¿Qué NO hacer?</strong><br />
+    No descargar el catálogo completo en cada cotización.<br />
+    No depender solo de la API sin guardar datos en Exacto:<br />
+    si CVA está lento o caído, tu sistema también se siente lento.
+  </div>
+
+  <h2>Datos útiles</h2>
+  <ul class="simple">
+    <li>Dirección base: <strong>apicvaservices.grupocva.com/api/v2</strong></li>
+    <li>Respuestas en <strong>JSON</strong> (formato de datos para programas)</li>
+    <li>Token válido <strong>12 horas</strong></li>
+    <li>Listados grandes vienen por <strong>páginas</strong> (aprox. 36 productos)</li>
+    <li>
+      Manual oficial:
+      <a href="https://apicvaservices.grupocva.com/documentation/#introduccion">
+        documentación CVA
+      </a>
+    </li>
+  </ul>
+
+  <p class="footer">
+    Guía resumida para Exacto · basada en la documentación oficial de Grupo CVA.
+  </p>
+
+</body>
+</html>

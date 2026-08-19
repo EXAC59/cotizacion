@@ -1,0 +1,12 @@
+# Copiar a scripts/.vps-deploy.local (NO se sube a git)
+# Luego: chmod 600 scripts/.vps-deploy.local
+# o: ./scripts/harden-local-secrets.sh
+#
+# Preferí llave SSH (sin password en disco):
+# VPS_HOST=root@2.25.78.222
+# VPS_HOSTKEY=SHA256:...
+# VPS_REMOTE_PATH=/var/www/cotizacion
+# VPS_SSH_KEY=/home/TU_USUARIO/.ssh/id_ed25519_exacto_vps
+#
+# Solo si no hay llave (evitar si puedes):
+# VPS_PASSWORD=

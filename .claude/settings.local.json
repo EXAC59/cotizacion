@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v '.pdf$')",
+      "Bash(sed 's/\\\\\\(PASSWORD=\\\\\\).*/\\\\1<oculto>/; s/\\\\\\(password *= *\\\\\\).*/\\\\1<oculto>/')",
+      "Read(//home/dulce123/.ssh/**)",
+      "Bash(grep -n 'HasUuids\\\\|$casts\\\\|primaryKey\\\\|keyType' /home/dulce123/cotizacion/app/Models/User.php)",
+      "Bash(php artisan *)"
+    ]
+  }
+}

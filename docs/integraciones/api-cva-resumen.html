@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>API CVA — resumen de punta a punta</title>
+  <style>
+    @page { size: A4; margin: 16mm 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "DejaVu Sans", Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.45;
+      color: #1a1a1a;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 8px;
+    }
+    h1 { font-size: 20pt; margin: 0 0 6px; }
+    h2 {
+      font-size: 13pt;
+      margin: 22px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 1.5px solid #333;
+      page-break-after: avoid;
+    }
+    h3 { font-size: 11pt; margin: 14px 0 8px; page-break-after: avoid; }
+    .meta { color: #555; font-size: 9.5pt; margin-bottom: 14px; }
+    .meta a { color: #0b57d0; }
+    .stats {
+      display: flex;
+      gap: 10px;
+      margin: 14px 0;
+      flex-wrap: wrap;
+    }
+    .stat {
+      flex: 1;
+      min-width: 140px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 10px 12px;
+      text-align: center;
+    }
+    .stat .v { font-size: 16pt; font-weight: 700; }
+    .stat .l { font-size: 8.5pt; color: #555; margin-top: 2px; }
+    .callout {
+      border-left: 4px solid #c47f00;
+      background: #fff8e8;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 0 6px 6px 0;
+      page-break-inside: avoid;
+    }
+    .callout.info {
+      border-left-color: #0b57d0;
+      background: #eef4ff;
+    }
+    .callout strong { display: block; margin-bottom: 4px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px;
+      font-size: 9.5pt;
+      page-break-inside: auto;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0f0f0; font-weight: 600; }
+    tr { page-break-inside: avoid; }
+    .card {
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 10px 0;
+      page-break-inside: avoid;
+    }
+    .card .hdr {
+      font-weight: 700;
+      font-size: 9.5pt;
+      margin-bottom: 6px;
+      color: #333;
+    }
+    .pill {
+      display: inline-block;
+      border: 1px solid #999;
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 9pt;
+      margin-right: 6px;
+    }
+    code {
+      font-family: "DejaVu Sans Mono", Consolas, monospace;
+      font-size: 9pt;
+      background: #f3f3f3;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .muted { color: #555; font-size: 9.5pt; }
+    .grid2 { display: flex; gap: 10px; }
+    .grid2 .card { flex: 1; }
+    .footer { margin-top: 24px; color: #777; font-size: 8.5pt; }
+  </style>
+</head>
+<body>
+
+  <h1>API CVA — resumen de punta a punta</h1>
+  <p class="meta">
+    Base: <a href="https://apicvaservices.grupocva.com/api/v2">https://apicvaservices.grupocva.com/api/v2</a>
+    · Docs: <a href="https://apicvaservices.grupocva.com/documentation/#introduccion">documentación oficial</a>
+    · Formato: JSON · Sucesora del Web Service CVA anterior
+  </p>
+
+  <div class="stats">
+    <div class="stat"><div class="v">12 h</div><div class="l">Vida del token</div></div>
+    <div class="stat"><div class="v">36</div><div class="l">Ítems / página (lista)</div></div>
+    <div class="stat"><div class="v">~90 MB</div><div class="l">Catálogo completo (evitar)</div></div>
+    <div class="stat"><div class="v">Bearer</div><div class="l">Auth header</div></div>
+  </div>
+
+  <div class="callout">
+    <strong>Modelo de uso recomendado</strong>
+    No uses el API como fuente on-demand masiva en runtime. Sincroniza catálogo a tu BD con jobs ETL;
+    consulta en tiempo real solo producto individual (precio, stock, promo). Precios/existencias pueden cambiar sin aviso.
+  </div>
+
+  <h2>1. Flujo general</h2>
+  <table>
+    <thead><tr><th>Paso</th><th>Qué hacer</th></tr></thead>
+    <tbody>
+      <tr><td>1. Login</td><td><code>POST /user/login</code> → token Bearer (12 h)</td></tr>
+      <tr><td>2. Auxiliares</td><td>Catálogos: marcas, grupos, soluciones, ciudades, sucursales, paqueterías</td></tr>
+      <tr><td>3. Sync catálogo</td><td>ETL: <code>lista_precios</code> + <code>precios_stock_ofertas</code> (paginado)</td></tr>
+      <tr><td>4. Tiempo real</td><td>Misma ruta con <code>?clave=</code> o <code>?codigo=</code> para 1 producto</td></tr>
+      <tr><td>5. Pedidos</td><td><code>crear_orden</code> (requiere crédito) → listar / consultar / factura</td></tr>
+      <tr><td>6. Envíos</td><td>Cotizar flete (Paquetexpress) · Guías (token aparte + Vo.Bo.)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2. Autenticación</h2>
+  <div class="card">
+    <div class="hdr">POST /user/login</div>
+    Body: <code>{"user":"USUARIO","password":"CONTRASEÑA"}</code>
+    → <code>id_cliente</code>, <code>clave_cliente</code>, <code>usuario</code>, <code>token</code>.
+    Header en rutas protegidas: <code>Authorization: Bearer TU_API_TOKEN</code>
+  </div>
+
+  <h2>3. Paginación</h2>
+  <p>
+    Listados: máx. <strong>36</strong> por página (<code>lista_precios</code>). Query <code>?page=N</code> (default 1).
+    Respuesta incluye <code>paginacion.total_paginas</code> y <code>paginacion.pagina</code>.
+    Página inexistente → <code>{ message: "No se encontraron productos." }</code>
+  </p>
+  <p class="muted">
+    <code>precios_stock_ofertas</code> usa batch: SM=50, MD=150, LG=500, XL=1500 (default SM).
+  </p>
+
+  <h2>4. Productos — endpoint principal</h2>
+  <p>
+    <code>GET /catalogo_clientes/lista_precios</code> — catálogo, filtros y enriquecer campos con flags booleanos en query.
+  </p>
+
+  <h3>Filtros de búsqueda</h3>
+  <table>
+    <thead><tr><th>Parámetro</th><th>Uso</th></tr></thead>
+    <tbody>
+      <tr><td>(sin params)</td><td>Catálogo completo paginado — evitar si puedes</td></tr>
+      <tr><td>clave</td><td>Clave CVA (prioridad alta) → 1 producto</td></tr>
+      <tr><td>codigo</td><td>Núm. de parte fabricante → 1 producto</td></tr>
+      <tr><td>marca</td><td>Filtra por marca (case-insensitive)</td></tr>
+      <tr><td>grupo</td><td>Filtra por nombre de grupo</td></tr>
+      <tr><td>grupo2</td><td>ID(s) de grupo, ej. 268 o 268,15462</td></tr>
+      <tr><td>desc</td><td>Búsqueda libre en descripción</td></tr>
+      <tr><td>Solucion</td><td>ID de solución (ver catálogo)</td></tr>
+      <tr><td>completos=1 + images=1</td><td>Solo productos con imágenes HQ</td></tr>
+      <tr><td>exist</td><td>0–4: filtro de disponibilidad (ver abajo)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Disponibilidad (exist)</h3>
+  <table>
+    <thead><tr><th>exist</th><th>Regla</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>Sin filtro (default)</td></tr>
+      <tr><td>1</td><td>Solo stock en tu sucursal</td></tr>
+      <tr><td>2</td><td>Solo stock en CEDIS (Guadalajara)</td></tr>
+      <tr><td>3</td><td>Sucursal o CEDIS</td></tr>
+      <tr><td>4</td><td>Disponible en todas las sucursales</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">
+    Campos: <code>disponible</code> = tu sucursal · <code>disponibleCD</code> = CEDIS GDL ·
+    <code>disponibilidad_sucursales</code> = total nacional (con flag).
+  </p>
+
+  <h3>Parámetros adicionales (flags)</h3>
+  <table>
+    <thead><tr><th>Flag</th><th>Qué agrega / hace</th></tr></thead>
+    <tbody>
+      <tr><td>TipoCompra=true</td><td>Precio especial ME</td></tr>
+      <tr><td>porcentaje=N</td><td>Suma % de utilidad al precio</td></tr>
+      <tr><td>promos=true</td><td>Nodo promociones (+ vencimiento)</td></tr>
+      <tr><td>MonedaPesos=true</td><td>Precios en MXN (deprecado en lista)</td></tr>
+      <tr><td>TipoProducto=true</td><td>Producto vs paquete</td></tr>
+      <tr><td>sucursales=true</td><td>Stock por sucursal</td></tr>
+      <tr><td>subgpo=true</td><td>Subgrupo</td></tr>
+      <tr><td>tc=true</td><td>Tipo de cambio</td></tr>
+      <tr><td>tipo=true</td><td>Tipo de producto</td></tr>
+      <tr><td>depto=true</td><td>Departamento</td></tr>
+      <tr><td>dt / dc=true</td><td>Descripción técnica / comercial</td></tr>
+      <tr><td>upc=true</td><td>Código UPC</td></tr>
+      <tr><td>pdf=true</td><td>URL ficha técnica PDF</td></tr>
+      <tr><td>codigosat=true</td><td>Datos SAT</td></tr>
+      <tr><td>images=true</td><td>Galería de imágenes</td></tr>
+      <tr><td>dimen=true</td><td>Dimensiones / peso</td></tr>
+      <tr><td>procesador=true</td><td>Info de CPU si aplica</td></tr>
+      <tr><td>trans=true</td><td>Tránsito a sucursal</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <strong>Campos típicos de un artículo</strong>
+    id, clave, codigo_fabricante, descripcion, principal, grupo, disponible, marca, garantia,
+    clase, moneda, precio, imagen, disponibleCD (+ nodos opcionales según flags).
+  </div>
+
+  <h2>5. Precios, stock y ofertas (sync liviano)</h2>
+  <div class="card">
+    <div class="hdr">GET /catalogo_clientes/precios_stock_ofertas · ETL recomendado</div>
+    Catálogo paginado solo con precio, moneda, promoción e inventario por almacén.
+    Ideal para refrescar varias veces al día.
+    <p class="muted" style="margin:6px 0 0">Params: batch, MonedaPesos, TipoCompra, porcentaje, clave, codigo</p>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <div class="hdr">Info técnica</div>
+      <code>GET .../informacion_tecnica?clave=</code>
+    </div>
+    <div class="card">
+      <div class="hdr">Imágenes HQ</div>
+      <code>GET .../imagenes_alta?clave=</code> — más fresco que caché de lista_precios
+    </div>
+  </div>
+
+  <h2>6. Catálogos auxiliares</h2>
+  <table>
+    <thead><tr><th>Ruta</th><th>Para qué</th></tr></thead>
+    <tbody>
+      <tr><td>/catalogo_clientes/marcas</td><td>Nombres de marca</td></tr>
+      <tr><td>/catalogo_clientes/marcas2</td><td>Marcas con ID</td></tr>
+      <tr><td>/catalogo_clientes/grupos</td><td>Grupos / categorías</td></tr>
+      <tr><td>/catalogo_clientes/soluciones</td><td>IDs de solución</td></tr>
+      <tr><td>/catalogo_clientes/ciudades</td><td>IDs ciudad + estado (flete)</td></tr>
+      <tr><td>/catalogo_clientes/sucursales</td><td>codigo_sucursal del pedido</td></tr>
+      <tr><td>/catalogo_clientes/paqueteria</td><td>IDs de paquetería</td></tr>
+    </tbody>
+  </table>
+
+  <h2>7. Pedidos web</h2>
+  <div class="callout">
+    <strong>Requisito</strong>
+    Crear pedidos exige línea de crédito activa con CVA (solicitar al gerente de sucursal).
+  </div>
+  <table>
+    <thead><tr><th>Endpoint</th><th>Método</th><th>Función</th></tr></thead>
+    <tbody>
+      <tr><td>/pedidos_web/crear_orden</td><td>POST</td><td>Alta de pedido (test=1 = sandbox)</td></tr>
+      <tr><td>/pedidos_web/lista_pedidos</td><td>GET</td><td>Listado de tus pedidos</td></tr>
+      <tr><td>/pedidos_web/pedido_orden_compra</td><td>POST</td><td>Buscar por num. OC</td></tr>
+      <tr><td>/pedidos_web/consultar_factura</td><td>POST</td><td>Datos de factura</td></tr>
+      <tr><td>/pedidos_web/consultar_pedido</td><td>POST</td><td>Detalle / estatus (serie-folio)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>crear_orden — cuerpo clave</h3>
+  <table>
+    <thead><tr><th>Campo</th><th>Notas</th></tr></thead>
+    <tbody>
+      <tr><td>test</td><td>Pedidos falsos; emails @grupocva.test = no productivo</td></tr>
+      <tr><td>num_oc</td><td>Tu referencia / OC interna</td></tr>
+      <tr><td>codigo_sucursal</td><td>Del catálogo sucursales</td></tr>
+      <tr><td>observaciones</td><td>Texto libre</td></tr>
+      <tr><td>tipo_flete</td><td>SF sin flete · FF en factura · FS asegurado</td></tr>
+      <tr><td>cotiza_flete</td><td>Incluye cotización (solo Paquetexpress)</td></tr>
+      <tr><td>flete {...}</td><td>Obligatorio si tipo ≠ SF (calle, cp, ciudad, etc.)</td></tr>
+      <tr><td>productos[]</td><td>clave + cantidad (≥1)</td></tr>
+    </tbody>
+  </table>
+  <div class="card">
+    <div class="hdr">Cotizar flete (aparte)</div>
+    <code>POST https://www.grupocva.com/api/paqueteria_service/</code> — sin token ·
+    solo Paquetexpress (id 4) · cp + cp_sucursal + productos
+  </div>
+
+  <h2>8. Guías de envío (acceso restringido)</h2>
+  <p>Token propio distinto al de catálogo; requiere Vo.Bo. de CVA.</p>
+  <table>
+    <thead><tr><th>Ruta</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td>POST /waybill</td><td>Adjuntar guías (order_number, waybills|, carrier, PDF base64)</td></tr>
+      <tr><td>GET /waybill?order_number=</td><td>Info de la orden / estado</td></tr>
+      <tr><td>GET /waybill/documento/{id}</td><td>Descargar PDF de la guía</td></tr>
+    </tbody>
+  </table>
+
+  <h2>9. Errores HTTP</h2>
+  <p>
+    <span class="pill">400 Bad Request</span>
+    <span class="pill">403 Forbidden</span>
+    <span class="pill">503 Unavailable</span>
+  </p>
+
+  <h2>10. Contacto desarrollo CVA</h2>
+  <p class="muted">
+    Juan Alfaro · David Solórzano · Christian Ochoa — emails en la
+    <a href="https://apicvaservices.grupocva.com/documentation/#dudas-o-preguntas">sección de dudas</a>
+    de la documentación.
+  </p>
+
+  <p class="footer">
+    Fuente: documentación API CVA Services · resumen orientado a integración (catálogo + precios + pedidos).
+  </p>
+
+</body>
+</html>
