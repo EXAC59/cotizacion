@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\MarcaController;
 use App\Http\Controllers\Api\MayoristaController;
 use App\Http\Controllers\Api\N8nWebhookController;
+use App\Http\Controllers\Api\NotificacionController;
 use App\Http\Controllers\Api\RbacController;
 use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SolicitudController;
@@ -128,12 +129,23 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:cotizaciones,send');
     Route::post('/cotizaciones/{id}/notas-internas', [CotizacionController::class, 'agregarNotaInterna'])
         ->middleware('permission:cotizaciones,create|edit');
+    Route::patch('/cotizaciones/{id}/seguimiento', [NotificacionController::class, 'seguimiento'])
+        ->middleware('permission:cotizaciones,edit');
+    Route::get('/cotizaciones/{id}/elegibilidad-aviso', [NotificacionController::class, 'eligibility'])
+        ->middleware('permission:cotizaciones,view');
     Route::get('/cotizaciones/{id}', [CotizacionController::class, 'show'])
         ->middleware('permission:cotizaciones,view');
     Route::post('/cotizaciones', [CotizacionController::class, 'store'])
         ->middleware('permission:cotizaciones,create');
     Route::post('/cotizaciones/calcular', [CotizacionController::class, 'calcular'])
         ->middleware('permission:cotizaciones,create');
+
+    Route::get('/notificaciones', [NotificacionController::class, 'index'])
+        ->middleware('permission:cotizaciones,view');
+    Route::post('/notificaciones', [NotificacionController::class, 'store'])
+        ->middleware('permission:cotizaciones,edit');
+    Route::patch('/notificaciones/{id}/leer', [NotificacionController::class, 'markRead'])
+        ->middleware('permission:cotizaciones,view');
 
     Route::get('/configuracion/comercial', [ConfiguracionController::class, 'comercial'])
         ->middleware('permission:configuracion,view');

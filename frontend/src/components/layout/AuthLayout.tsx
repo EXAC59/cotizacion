@@ -12,6 +12,7 @@ export function AuthLayout() {
   const [branding, setBranding] = useState<AppBranding>(() => getInitialBranding())
   const logoSrc = brandingLogoSrc(branding.logoUrl)
   const showBrandCopy = Boolean(branding.appName.trim())
+  const initial = (branding.appName.trim().charAt(0) || 'C').toUpperCase()
 
   useEffect(() => {
     let cancelled = false
@@ -47,10 +48,12 @@ export function AuthLayout() {
                   alt={branding.appName}
                   className="h-14 w-14 rounded-2xl bg-white object-contain p-1 shadow-xl shadow-indigo-950/40 ring-1 ring-white/25"
                 />
-              ) : null}
-              <h1
-                className={`${logoSrc ? 'mt-10' : ''} text-4xl font-semibold leading-tight tracking-tight sm:text-5xl`}
-              >
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-2xl font-bold shadow-xl shadow-indigo-950/40 ring-1 ring-white/25">
+                  {initial}
+                </div>
+              )}
+              <h1 className="mt-10 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
                 {branding.appName}
               </h1>
               {branding.appTagline ? (

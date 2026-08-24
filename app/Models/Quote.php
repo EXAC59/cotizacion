@@ -35,6 +35,12 @@ class Quote extends Model
         'response_received_at',
         'last_opened_at',
         'invoice_number',
+        'follow_up_status',
+        'follow_up_invoice',
+        'follow_up_comments',
+        'follow_up_remind_at',
+        'follow_up_at',
+        'follow_up_by',
         'locked_by',
         'locked_at',
         'involucrado',
@@ -52,6 +58,8 @@ class Quote extends Model
             'sent_at' => 'datetime',
             'response_received_at' => 'datetime',
             'last_opened_at' => 'datetime',
+            'follow_up_remind_at' => 'datetime',
+            'follow_up_at' => 'datetime',
             'locked_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
@@ -86,5 +94,20 @@ class Quote extends Model
     public function internalNotes(): HasMany
     {
         return $this->hasMany(QuoteInternalNote::class, 'quote_id')->orderByDesc('created_at');
+    }
+
+    public function followUpByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'follow_up_by');
+    }
+
+    public function followUpEvents(): HasMany
+    {
+        return $this->hasMany(QuoteFollowUpEvent::class, 'quote_id')->orderByDesc('created_at');
+    }
+
+    public function salesNotifications(): HasMany
+    {
+        return $this->hasMany(SalesNotification::class, 'quote_id')->orderByDesc('created_at');
     }
 }

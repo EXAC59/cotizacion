@@ -15,6 +15,8 @@ use App\Services\Quotes\QuotePersistenceService;
 use App\Services\Quotes\QuoteProfitCalculator;
 use App\Services\Quotes\QuoteSearchScope;
 use App\Services\Quotes\QuoteStatusHistoryService;
+use App\Services\Sales\QuoteFollowUpService;
+use App\Services\Sales\SalesNotificationService;
 use App\Services\Wholesalers\WholesalerSalesAliasService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -29,6 +31,8 @@ class CotizacionController extends Controller
         private readonly QuoteLockService $quoteLockService,
         private readonly QuoteStatusHistoryService $statusHistory,
         private readonly WholesalerSalesAliasService $wholesalerAliases,
+        private readonly QuoteFollowUpService $followUps,
+        private readonly SalesNotificationService $salesNotifications,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -328,6 +332,8 @@ class CotizacionController extends Controller
             'invoiceNumber' => $quote->invoice_number,
             'createdByName' => $quote->creator?->name,
             'involucrado' => $quote->involucrado,
+            'followUp' => $this->followUps->followUpPayload($quote),
+            'eligibility' => $this->salesNotifications->eligibility($quote),
             'editLock' => $this->quoteLockService->lockPayload($quote),
         ];
     }
@@ -368,6 +374,9 @@ class CotizacionController extends Controller
             'involucrado' => $quote->involucrado,
             'editLock' => $this->quoteLockService->lockPayload($quote),
             'statusHistory' => $this->statusHistory->timelineForQuote($quote),
+            'followUp' => $this->followUps->followUpPayload($quote),
+            'followUpHistory' => $this->followUps->historyForQuote($quote),
+            'eligibility' => $this->salesNotifications->eligibility($quote),
             'lines' => $quote->lines->map(fn ($line) => [
                 'id' => $line->id,
                 'quantity' => (float) $line->quantity,

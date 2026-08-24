@@ -254,6 +254,9 @@ export interface Quote {
   total?: number
   createdByName?: string
   statusHistory?: QuoteStatusHistoryEntry[]
+  followUp?: QuoteFollowUp | null
+  followUpHistory?: QuoteFollowUpHistoryEntry[]
+  eligibility?: QuoteNotifyEligibility
   /** Usuarios involucrados en la cotización (1., 2., …) */
   involucrado?: string
 }
@@ -270,6 +273,58 @@ export interface QuoteStatusHistoryEntry {
   toStatus: QuoteStatus
   userName?: string | null
   createdAt: string
+}
+
+export type FollowUpStatus = 'negociacion' | 'ganada' | 'perdida'
+
+export interface QuoteFollowUp {
+  status: FollowUpStatus
+  invoice?: string | null
+  comments?: string | null
+  remindAt?: string | null
+  at?: string | null
+  byUser?: string | null
+  byUserId?: number | null
+}
+
+export interface QuoteFollowUpHistoryEntry {
+  id: string
+  userName: string
+  fromStatus: FollowUpStatus | null
+  toStatus: FollowUpStatus
+  remindAt?: string | null
+  invoice?: string | null
+  comments?: string | null
+  createdAt: string
+}
+
+export interface QuoteNotifyEligibility {
+  eligible: boolean
+  reasonCode: string | null
+  blockReason: string | null
+  daysIdle: number
+  pendingUnread?: boolean
+}
+
+export interface SalesNotificationItem {
+  id: string
+  quoteId: string
+  folio?: string | null
+  clientName: string
+  audience: 'ventas' | 'compras'
+  reasonCode: string
+  reasonLabel: string
+  message: string
+  senderName?: string | null
+  createdAt?: string | null
+  readAt?: string | null
+  read: boolean
+}
+
+export const FOLLOW_UP_STATUS_LABELS: Record<FollowUpStatus, string> = {
+  negociacion: 'Negociación',
+  ganada: 'Ganada',
+  perdida: 'Perdida',
 }
 
 export interface Wholesaler {

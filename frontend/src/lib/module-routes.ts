@@ -4,6 +4,7 @@ import { canAccessModule, canAccessDashboard } from '@/lib/permissions'
 import type { RolePermissionMap } from '@/types/rbac'
 import {
   BarChart3,
+  Bell,
   Building2,
   FileText,
   LayoutDashboard,
@@ -23,6 +24,7 @@ export const MODULE_ROUTES: {
   { module: 'dashboard', path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { module: 'solicitudes', path: '/solicitudes', label: 'Solicitudes', icon: Upload },
   { module: 'cotizaciones', path: '/cotizaciones', label: 'Cotizaciones', icon: FileText },
+  { module: 'cotizaciones', path: '/recordatorios-ventas', label: 'Recordatorios ventas', icon: Bell, end: true },
   { module: 'clientes', path: '/clientes', label: 'Clientes', icon: Building2 },
   { module: 'mayoristas', path: '/mayoristas', label: 'Mayoristas', icon: Package },
   { module: 'reportes', path: '/reportes', label: 'Reportes', icon: BarChart3 },

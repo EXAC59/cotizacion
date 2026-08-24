@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { AlertCircle, LogOut, Search } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
+import { NotificationsBell } from '@/components/layout/NotificationsBell'
 import {
   beginModalBusy,
   ModalBusyPanel,
@@ -162,6 +163,7 @@ export function Header({ title }: { title?: string }) {
           </form>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <NotificationsBell />
           {user?.email && (
             <div className="hidden max-w-[14rem] truncate rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-sm text-slate-600 shadow-sm md:block">
               {user.email}

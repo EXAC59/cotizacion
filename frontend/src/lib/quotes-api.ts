@@ -4,7 +4,7 @@ import { normalizeQuoteStatus } from '@/lib/quote-status'
 
 import { getApiBase } from '@/lib/app-paths'
 
-import type { Quote, QuoteEditLock, QuoteInternalNote, QuoteLine, QuoteStatus, QuoteStatusHistoryEntry, WholesalerOffer } from '@/types'
+import type { Quote, QuoteEditLock, QuoteInternalNote, QuoteLine, QuoteStatus, QuoteStatusHistoryEntry, QuoteFollowUp, QuoteFollowUpHistoryEntry, QuoteNotifyEligibility, WholesalerOffer } from '@/types'
 
 export class QuoteLockError extends Error {
   readonly lockedBy: QuoteEditLock
@@ -106,6 +106,12 @@ type QuoteApiResponse = {
     createdAt: string
   }>
 
+  followUp?: QuoteFollowUp | null
+
+  followUpHistory?: QuoteFollowUpHistoryEntry[]
+
+  eligibility?: QuoteNotifyEligibility
+
   lockedBy?: { id: string; name: string; email: string }
 
   lockedAt?: string
@@ -143,6 +149,12 @@ type QuoteSummaryApi = {
   invoiceNumber?: string | null
 
   editLock?: QuoteEditLock | null
+
+  followUp?: QuoteFollowUp | null
+
+  eligibility?: QuoteNotifyEligibility
+
+  involucrado?: string | null
 
 }
 
@@ -189,6 +201,12 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     editLock: data.editLock ?? undefined,
 
     statusHistory: data.statusHistory,
+
+    followUp: data.followUp ?? null,
+
+    followUpHistory: data.followUpHistory,
+
+    eligibility: data.eligibility,
 
     lines: (data.lines ?? []).map((line): QuoteLine => ({
 
@@ -446,6 +464,12 @@ export async function listQuotes(params?: {
     invoiceNumber: row.invoiceNumber ?? undefined,
 
     createdByName: row.createdByName ?? undefined,
+
+    involucrado: row.involucrado ?? undefined,
+
+    followUp: row.followUp ?? null,
+
+    eligibility: row.eligibility ?? undefined,
 
     editLock: row.editLock ?? undefined,
 

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo — Bandeja y recordatorios de ventas</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">Exacto</span>
+        <span class="brand-sub">Demo recordatorios</span>
+      </div>
+
+      <div class="role-switch" role="tablist" aria-label="Rol de demostración" data-tour="roles">
+        <button type="button" class="role-btn" data-role="compras" id="role-compras">
+          Compras
+        </button>
+        <button type="button" class="role-btn" data-role="ventas" id="role-ventas">
+          Ventas
+        </button>
+      </div>
+
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="start-tour" title="Recorrido guiado">
+          Guía paso a paso
+        </button>
+        <div class="bell-wrap" id="bell-wrap" data-tour="bell">
+          <button type="button" class="bell-btn" id="bell-btn" aria-label="Notificaciones" aria-expanded="false">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            <span class="bell-badge" id="bell-badge" hidden>0</span>
+          </button>
+          <div class="bell-dropdown" id="bell-dropdown" hidden>
+            <div class="bell-dropdown-head">Notificaciones</div>
+            <div id="bell-list"></div>
+          </div>
+        </div>
+        <label class="actor-select-wrap" id="sales-actor-wrap" hidden>
+          <span class="sr-only">Vendedor activo</span>
+          <select id="sales-actor" class="actor-select" aria-label="Personal de ventas">
+            <option value="ventas">María López</option>
+            <option value="ventasAlt">Carlos Ruiz</option>
+          </select>
+        </label>
+        <span class="user-chip" id="user-chip">Compras</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel" id="view-compras" data-tour="compras-list">
+        <header class="panel-head">
+          <h1>Cotizaciones sin vender</h1>
+          <p>
+            Avisa a ventas solo si está <strong>Lista / Terminada</strong> o
+            <strong>En elaboración</strong> con 3+ días sin avance (como en el sistema real).
+          </p>
+        </header>
+        <div id="compras-list"></div>
+      </section>
+
+      <section class="panel" id="view-ventas" hidden data-tour="ventas-dash">
+        <header class="panel-head">
+          <h1>Dashboard — Recordatorios</h1>
+          <p>Seguimiento comercial aparte del estado de la cotización (enviada, etc.).</p>
+        </header>
+
+        <div class="legend" data-tour="legend">
+          <span class="chip chip-negociacion">Negociación</span>
+          <span class="chip chip-ganada">Ganada</span>
+          <span class="chip chip-perdida">Perdida</span>
+          <span class="hint">Negociación: agenda una fecha de seguimiento</span>
+        </div>
+
+        <div class="stats" id="ventas-stats" data-tour="stats"></div>
+        <div class="card-list" id="ventas-list" data-tour="ventas-list"></div>
+      </section>
+
+      <aside class="detail" id="detail-panel" hidden data-tour="detail">
+        <header class="detail-head">
+          <h2 id="detail-title">Detalle</h2>
+          <button type="button" class="btn btn-ghost" id="detail-close">Cerrar</button>
+        </header>
+        <div id="detail-body"></div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Prototipo local — no conectado a la API ni al VPS</span>
+      <div class="footer-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="start-tour-footer">Guía paso a paso</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="reset-demo">Restablecer demo</button>
+      </div>
+    </footer>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <div class="tour-overlay" id="tour-overlay" hidden>
+      <div class="tour-spotlight" id="tour-spotlight"></div>
+      <div class="tour-card" id="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+        <div class="tour-progress" id="tour-progress"></div>
+        <h3 id="tour-title"></h3>
+        <p id="tour-text"></p>
+        <div class="tour-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="tour-skip">Saltar guía</button>
+          <div class="tour-nav">
+            <button type="button" class="btn btn-ghost btn-sm" id="tour-prev">Anterior</button>
+            <button type="button" class="btn btn-sm" id="tour-next">Siguiente</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

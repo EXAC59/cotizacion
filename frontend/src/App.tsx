@@ -29,6 +29,7 @@ import { ClientsPage } from '@/pages/clients/ClientsPage'
 import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { QuoteFormPage } from '@/pages/quotes/QuoteFormPage'
 import { QuotesPage } from '@/pages/quotes/QuotesPage'
+import { RecordatoriosPage } from '@/pages/recordatorios/RecordatoriosPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { RequestDetailPage } from '@/pages/requests/RequestDetailPage'
 import { RequestNewPage } from '@/pages/requests/RequestNewPage'
@@ -117,6 +118,18 @@ const router = createBrowserRouter(
             element={
               <ModuleRoute module="cotizaciones">
                 <QuoteFormPage />
+              </ModuleRoute>
+            }
+          />
+          <Route
+            path="recordatorios"
+            element={<Navigate to="/recordatorios-ventas" replace />}
+          />
+          <Route
+            path="recordatorios-ventas"
+            element={
+              <ModuleRoute module="cotizaciones">
+                <RecordatoriosPage />
               </ModuleRoute>
             }
           />
