@@ -64,11 +64,13 @@ class AuthController extends Controller
         ]);
     }
 
-    public function logout(Request $request): JsonResponse
+    public function logout(Request $request, \App\Services\Quotes\QuoteLockService $quoteLocks): JsonResponse
     {
         $user = $request->user();
 
         if ($user) {
+            $quoteLocks->releaseAllForUser($user);
+
             $accessToken = $user->currentAccessToken();
             if ($accessToken instanceof PersonalAccessToken) {
                 $accessToken->delete();

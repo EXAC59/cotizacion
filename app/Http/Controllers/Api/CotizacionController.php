@@ -177,8 +177,7 @@ class CotizacionController extends Controller
         $quote = Quote::query()->findOrFail($id);
         $filename = preg_replace('/[^A-Za-z0-9._-]+/', '_', $quote->folio).'.pdf';
 
-        $this->markAsSentIfNeeded($quote);
-
+        // PDF es solo vista/descarga: no marca «enviada». Eso lo hace el correo.
         if ($request->boolean('download')) {
             return $pdf->download($filename);
         }
@@ -274,17 +273,13 @@ class CotizacionController extends Controller
 
         $quote = $quote->fresh(['lockedByUser']);
         $statusChanged = false;
+        // Solo borradores: al abrir, Solicitud / Lista → En elaboración.
+        // Enviada/aceptada/facturada NO pasan a modificación solo por abrir.
         if ($quote !== null && in_array($quote->status, config('quotes.elaboracion_from_statuses', ['solicitud_cotizaciones', 'pendiente_envio']), true)) {
             $fromStatus = $quote->status;
             $quote->update(['status' => 'en_elaboracion']);
             $quote = $quote->fresh(['lockedByUser']);
             $this->statusHistory->record($quote, $fromStatus, 'en_elaboracion');
-            $statusChanged = true;
-        } elseif ($quote !== null && in_array($quote->status, config('quotes.modificacion_from_statuses', ['enviada']), true)) {
-            $fromStatus = $quote->status;
-            $quote->update(['status' => 'modificacion']);
-            $quote = $quote->fresh(['lockedByUser']);
-            $this->statusHistory->record($quote, $fromStatus, 'modificacion');
             $statusChanged = true;
         }
 
@@ -416,26 +411,5 @@ class CotizacionController extends Controller
     private function quoteStatuses(): array
     {
         return config('quotes.statuses', []);
-    }
-
-    private function markAsSentIfNeeded(Quote $quote): void
-    {
-        $sentFrom = config('quotes.sent_from_statuses', []);
-
-        if (in_array($quote->status, $sentFrom, true)) {
-            $fromStatus = $quote->status;
-            $quote->update([
-                'status' => 'enviada',
-                'sent_at' => now(),
-                'response_received_at' => null,
-            ]);
-            $this->statusHistory->record($quote->fresh(), $fromStatus, 'enviada');
-
-            return;
-        }
-
-        if ($quote->status === 'enviada' && $quote->sent_at === null) {
-            $quote->update(['sent_at' => now()]);
-        }
     }
 }

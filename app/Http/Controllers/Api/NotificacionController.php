@@ -28,7 +28,7 @@ class NotificacionController extends Controller
     {
         $data = $request->validate([
             'quoteId' => ['required', 'uuid', 'exists:quotes,id'],
-            'message' => ['nullable', 'string', 'max:1000'],
+            'message' => ['required', 'string', 'min:3', 'max:1000'],
         ]);
 
         $quote = Quote::query()->findOrFail($data['quoteId']);
@@ -39,7 +39,7 @@ class NotificacionController extends Controller
         );
 
         return response()->json($this->notifications->toApiArray(
-            $notification->load(['quote.client', 'sender'])
+            $notification->load(['quote.client', 'sender', 'recipient'])
         ), 201);
     }
 

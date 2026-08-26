@@ -304,6 +304,9 @@ export interface QuoteNotifyEligibility {
   blockReason: string | null
   daysIdle: number
   pendingUnread?: boolean
+  /** Usuario ventas que recibirá el aviso (último toque o creador) */
+  notifyRecipientId?: number | null
+  notifyRecipientName?: string | null
 }
 
 export interface SalesNotificationItem {
@@ -316,6 +319,8 @@ export interface SalesNotificationItem {
   reasonLabel: string
   message: string
   senderName?: string | null
+  recipientId?: number | null
+  recipientName?: string | null
   createdAt?: string | null
   readAt?: string | null
   read: boolean

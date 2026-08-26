@@ -21,12 +21,28 @@ class SalesNotificationService
 
     public const REASON_SEGUIMIENTO = 'seguimiento_actualizado';
 
+    /** Comentario libre de compras hacia ventas sobre el recordatorio */
+    public const REASON_COMENTARIO = 'comentario_compras';
+
     /**
-     * @return array{eligible: bool, reasonCode: string|null, blockReason: string|null, daysIdle: int, pendingUnread: bool}
+     * @return array{
+     *   eligible: bool,
+     *   reasonCode: string|null,
+     *   blockReason: string|null,
+     *   daysIdle: int,
+     *   pendingUnread: bool,
+     *   notifyRecipientId: int|null,
+     *   notifyRecipientName: string|null
+     * }
      */
     public function eligibility(Quote $quote): array
     {
         $daysIdle = $this->daysIdle($quote);
+        $recipient = $this->resolveVentasRecipient($quote);
+        $recipientMeta = [
+            'notifyRecipientId' => $recipient?->id,
+            'notifyRecipientName' => $recipient?->name,
+        ];
 
         if (in_array($quote->follow_up_status, ['ganada', 'perdida'], true)) {
             return [
@@ -35,6 +51,7 @@ class SalesNotificationService
                 'blockReason' => 'Ya cerrada (ganada/perdida).',
                 'daysIdle' => $daysIdle,
                 'pendingUnread' => false,
+                ...$recipientMeta,
             ];
         }
 
@@ -45,6 +62,7 @@ class SalesNotificationService
                 'blockReason' => null,
                 'daysIdle' => $daysIdle,
                 'pendingUnread' => $this->hasUnreadDedupe($quote->id, self::REASON_LISTA, self::AUDIENCE_VENTAS),
+                ...$recipientMeta,
             ];
         }
 
@@ -56,6 +74,7 @@ class SalesNotificationService
                 'blockReason' => null,
                 'daysIdle' => $daysIdle,
                 'pendingUnread' => $this->hasUnreadDedupe($quote->id, self::REASON_SIN_AVANCE, self::AUDIENCE_VENTAS),
+                ...$recipientMeta,
             ];
         }
 
@@ -66,6 +85,7 @@ class SalesNotificationService
                 'blockReason' => "Aún en elaboración ({$daysIdle} día(s); se avisa desde {$threshold}).",
                 'daysIdle' => $daysIdle,
                 'pendingUnread' => false,
+                ...$recipientMeta,
             ];
         }
 
@@ -75,6 +95,7 @@ class SalesNotificationService
             'blockReason' => 'No candidata a avisar.',
             'daysIdle' => $daysIdle,
             'pendingUnread' => false,
+            ...$recipientMeta,
         ];
     }
 
@@ -112,11 +133,88 @@ class SalesNotificationService
             self::REASON_LISTA => 'Lista / Terminada',
             self::REASON_SIN_AVANCE => 'Sin avance en elaboración',
             self::REASON_SEGUIMIENTO => 'Recordatorio actualizado',
+            self::REASON_COMENTARIO => 'Comentario de compras',
             default => 'Aviso',
         };
     }
 
     /**
+     * Avisos automáticos a ventas: cotizaciones en elaboración idle ≥ N días
+     * (N = AppSetting unanswered_quote_days, default 3).
+     * Respeta dedupe: no crea otro si ya hay uno no leído con el mismo motivo.
+     *
+     * @return array{created: int, skipped: int, notifiedQuoteIds: list<string>}
+     */
+    public function autoNotifyIdleQuotes(int $limit = 100): array
+    {
+        $threshold = AppSetting::current()->resolvedUnansweredQuoteDays();
+        $cutoff = now()->subDays($threshold);
+
+        $quotes = Quote::query()
+            ->with(['creator.role', 'statusEvents.user.role', 'lockedByUser.role', 'client'])
+            ->where('status', 'en_elaboracion')
+            ->where(function ($q) {
+                $q->whereNull('follow_up_status')
+                    ->orWhereNotIn('follow_up_status', ['ganada', 'perdida']);
+            })
+            ->where('updated_at', '<', $cutoff)
+            ->where(function ($q) use ($cutoff) {
+                $q->whereNull('last_opened_at')
+                    ->orWhere('last_opened_at', '<', $cutoff);
+            })
+            ->orderBy('updated_at')
+            ->limit(max(1, min($limit, 500)))
+            ->get();
+
+        $created = 0;
+        $skipped = 0;
+        $notifiedQuoteIds = [];
+
+        foreach ($quotes as $quote) {
+            $eligibility = $this->eligibility($quote);
+            if (! ($eligibility['eligible'] ?? false) || ($eligibility['reasonCode'] ?? null) !== self::REASON_SIN_AVANCE) {
+                $skipped++;
+
+                continue;
+            }
+
+            if ($eligibility['pendingUnread'] ?? false) {
+                $skipped++;
+
+                continue;
+            }
+
+            $recipient = $this->resolveVentasRecipient($quote);
+            if ($recipient === null) {
+                $skipped++;
+
+                continue;
+            }
+
+            SalesNotification::query()->create([
+                'quote_id' => $quote->id,
+                'sender_id' => null,
+                'recipient_id' => $recipient->id,
+                'audience' => self::AUDIENCE_VENTAS,
+                'reason_code' => self::REASON_SIN_AVANCE,
+                'message' => $this->defaultMessage($quote, self::REASON_SIN_AVANCE),
+                'read_at' => null,
+            ]);
+
+            $created++;
+            $notifiedQuoteIds[] = $quote->id;
+        }
+
+        return [
+            'created' => $created,
+            'skipped' => $skipped,
+            'notifiedQuoteIds' => $notifiedQuoteIds,
+        ];
+    }
+
+    /**
+     * Compras envía un comentario sobre el recordatorio al vendedor de la cotización.
+     *
      * @throws ValidationException
      */
     public function notifySales(Quote $quote, User $sender, ?string $message = null): SalesNotification
@@ -127,30 +225,49 @@ class SalesNotificationService
             ]);
         }
 
-        $eligibility = $this->eligibility($quote);
-        if (! $eligibility['eligible'] || ! $eligibility['reasonCode']) {
-            throw ValidationException::withMessages([
-                'quoteId' => $eligibility['blockReason'] ?? 'No candidata a avisar.',
-            ]);
-        }
-
-        $reasonCode = $eligibility['reasonCode'];
-        if ($this->hasUnreadDedupe($quote->id, $reasonCode, self::AUDIENCE_VENTAS)) {
-            throw ValidationException::withMessages([
-                'quoteId' => 'Ya hay un aviso pendiente para esta cotización.',
-            ]);
-        }
-
-        $recipient = $this->resolveVentasRecipient($quote);
         $text = trim((string) $message);
-        if ($text === '') {
-            $text = $this->defaultMessage($quote, $reasonCode);
+        $len = mb_strlen($text);
+        if ($len < 3 || $len > 1000) {
+            throw ValidationException::withMessages([
+                'message' => 'Escribe un comentario sobre el recordatorio (3 a 1000 caracteres).',
+            ]);
+        }
+
+        $eligibility = $this->eligibility($quote);
+        $recipient = $this->resolveVentasRecipient($quote);
+        if ($recipient === null) {
+            throw ValidationException::withMessages([
+                'quoteId' => 'No hay un usuario de ventas al que enviar el comentario.',
+            ]);
+        }
+
+        // Motivo contextual si es candidata; si no, comentario libre de recordatorio
+        $reasonCode = ($eligibility['eligible'] && $eligibility['reasonCode'])
+            ? $eligibility['reasonCode']
+            : self::REASON_COMENTARIO;
+
+        $existing = SalesNotification::query()
+            ->where('quote_id', $quote->id)
+            ->where('audience', self::AUDIENCE_VENTAS)
+            ->whereNull('read_at')
+            ->orderByDesc('created_at')
+            ->first();
+
+        if ($existing) {
+            $existing->update([
+                'sender_id' => $sender->id,
+                'recipient_id' => $recipient->id,
+                'reason_code' => $reasonCode,
+                'message' => $text,
+            ]);
+
+            return $existing->fresh(['quote.client', 'sender', 'recipient']);
         }
 
         return SalesNotification::query()->create([
             'quote_id' => $quote->id,
             'sender_id' => $sender->id,
-            'recipient_id' => $recipient?->id,
+            'recipient_id' => $recipient->id,
             'audience' => self::AUDIENCE_VENTAS,
             'reason_code' => $reasonCode,
             'message' => $text,
@@ -203,12 +320,13 @@ class SalesNotificationService
     public function listForUser(User $user, int $limit = 40): array
     {
         $query = SalesNotification::query()
-            ->with(['quote.client', 'sender'])
+            ->with(['quote.client', 'sender', 'recipient'])
             ->orderByDesc('created_at')
             ->limit($limit);
 
         $role = $user->role_slug;
         if ($role === 'ventas') {
+            // Solo avisos dirigidos a este vendedor (o legacy sin destinatario)
             $query->where('audience', self::AUDIENCE_VENTAS)
                 ->where(function ($q) use ($user) {
                     $q->where('recipient_id', $user->id)
@@ -253,7 +371,7 @@ class SalesNotificationService
             $notification->update(['read_at' => now()]);
         }
 
-        return $notification->fresh()->load(['quote.client', 'sender']);
+        return $notification->fresh()->load(['quote.client', 'sender', 'recipient']);
     }
 
     /**
@@ -270,7 +388,13 @@ class SalesNotificationService
             'reasonCode' => $n->reason_code,
             'reasonLabel' => $this->reasonLabel($n->reason_code),
             'message' => $n->message,
-            'senderName' => $n->sender?->name,
+            'senderName' => $n->sender?->name ?? (
+                $n->reason_code === self::REASON_SIN_AVANCE && $n->sender_id === null
+                    ? 'Automático'
+                    : null
+            ),
+            'recipientId' => $n->recipient_id,
+            'recipientName' => $n->recipient?->name,
             'createdAt' => $n->created_at?->toIso8601String(),
             'readAt' => $n->read_at?->toIso8601String(),
             'read' => $n->read_at !== null,
@@ -287,12 +411,40 @@ class SalesNotificationService
             ->exists();
     }
 
-    private function resolveVentasRecipient(Quote $quote): ?User
+    /**
+     * Destinatario ventas: último usuario ventas que tocó la cotización,
+     * si no el creador, si no el primer ventas activo.
+     */
+    public function resolveVentasRecipient(Quote $quote): ?User
     {
+        $candidates = [];
+
+        // 1) Último movimiento de estatus por un usuario ventas
+        $quote->loadMissing(['statusEvents.user.role']);
+        $lastStatusUser = $quote->statusEvents
+            ->sortByDesc(fn ($ev) => $ev->created_at?->timestamp ?? 0)
+            ->map(fn ($ev) => $ev->user)
+            ->first(fn ($u) => $this->isActiveVentas($u));
+        if ($lastStatusUser) {
+            $candidates[] = $lastStatusUser;
+        }
+
+        // 2) Quien tiene el candado de edición (último que la abrió/editó)
+        $quote->loadMissing('lockedByUser.role');
+        if ($this->isActiveVentas($quote->lockedByUser)) {
+            $candidates[] = $quote->lockedByUser;
+        }
+
+        // 3) Creador de la cotización
         $quote->loadMissing('creator.role');
-        $creator = $quote->creator;
-        if ($creator && $creator->active && $creator->role_slug === 'ventas') {
-            return $creator;
+        if ($this->isActiveVentas($quote->creator)) {
+            $candidates[] = $quote->creator;
+        }
+
+        foreach ($candidates as $user) {
+            if ($user instanceof User) {
+                return $user;
+            }
         }
 
         $ventasRoleId = Role::query()->where('slug', 'ventas')->value('id');
@@ -305,5 +457,12 @@ class SalesNotificationService
             ->where('active', true)
             ->orderBy('id')
             ->first();
+    }
+
+    private function isActiveVentas(?User $user): bool
+    {
+        return $user !== null
+            && $user->active
+            && $user->role_slug === 'ventas';
     }
 }

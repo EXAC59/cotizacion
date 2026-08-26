@@ -48,7 +48,15 @@ export function RecordatorioDetailPanel({
     setLoading(true)
     void getQuoteById(quoteId)
       .then((full) => {
-        if (!cancelled) setQuote(full)
+        if (!cancelled) {
+          setQuote({
+            ...full,
+            // Conservar total del listado si el detalle no lo trae
+            total: full.total ?? summary.total,
+            followUp: full.followUp ?? summary.followUp,
+            eligibility: full.eligibility ?? summary.eligibility,
+          })
+        }
       })
       .catch(() => {
         if (!cancelled) setQuote({ ...summary, lines: summary.lines ?? [] })
@@ -59,24 +67,36 @@ export function RecordatorioDetailPanel({
     return () => {
       cancelled = true
     }
-  }, [quoteId, summary])
+    // Solo al cambiar de cotización; summary se usa como respaldo en catch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteId])
 
   const data = quote ?? summary
-  const fu = data.followUp
+  /** Detalle a veces llega sin total en el mapper; no perder el del listado. */
+  const displayTotal = data.total ?? summary.total ?? 0
+  const fu = data.followUp ?? summary.followUp
   const eligibility = data.eligibility ?? summary.eligibility
   const history = data.followUpHistory ?? []
   const pending = Boolean(eligibility?.pendingUnread)
-  const allowNotify =
-    comprasView && canNotify && eligibility?.eligible && !pending
+  const recipientName =
+    eligibility?.notifyRecipientName || summary.createdByName || 'ventas'
+  const canSendComment =
+    comprasView && canNotify && isPersistedQuoteId(quoteId) && Boolean(recipientName)
 
   const handleNotify = async () => {
+    const text = notifyMsg.trim()
+    if (text.length < 3) {
+      setNotifyError('Escribe un comentario sobre el recordatorio (mínimo 3 caracteres).')
+      return
+    }
     setNotifying(true)
     setNotifyError(null)
     try {
-      await notifySalesAboutQuote(quoteId, notifyMsg.trim() || undefined)
+      await notifySalesAboutQuote(quoteId, text)
+      setNotifyMsg('')
       onSaved()
     } catch (e) {
-      setNotifyError(e instanceof Error ? e.message : 'No se pudo avisar.')
+      setNotifyError(e instanceof Error ? e.message : 'No se pudo enviar el comentario.')
     } finally {
       setNotifying(false)
     }
@@ -112,17 +132,13 @@ export function RecordatorioDetailPanel({
               </div>
               <div className="flex flex-wrap gap-x-2">
                 <dt className="font-medium text-slate-700">Monto:</dt>
-                <dd className="text-slate-900">{formatCurrency(data.total ?? 0)}</dd>
+                <dd className="text-slate-900">{formatCurrency(displayTotal)}</dd>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <dt className="font-medium text-slate-700">Estado de cotización:</dt>
                 <dd>
                   <QuoteStatusBadge status={data.status} />
                 </dd>
-              </div>
-              <div className="flex flex-wrap gap-x-2">
-                <dt className="font-medium text-slate-700">Días sin avance:</dt>
-                <dd className="text-slate-900">{eligibility?.daysIdle ?? 0}</dd>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <dt className="font-medium text-slate-700">Seguimiento:</dt>
@@ -137,6 +153,20 @@ export function RecordatorioDetailPanel({
                   ) : null}
                 </dd>
               </div>
+              <div className="flex flex-wrap gap-x-2">
+                <dt className="font-medium text-slate-700">Días sin avance:</dt>
+                <dd className="text-slate-900">{eligibility?.daysIdle ?? 0}</dd>
+              </div>
+              {(data.createdByName || eligibility?.notifyRecipientName) && (
+                <div className="flex flex-wrap gap-x-2">
+                  <dt className="font-medium text-slate-700">
+                    {comprasView ? 'Avisar a:' : 'Creada por:'}
+                  </dt>
+                  <dd className="text-slate-900">
+                    {eligibility?.notifyRecipientName || data.createdByName || '—'}
+                  </dd>
+                </div>
+              )}
               {fu?.invoice ? (
                 <div className="flex flex-wrap gap-x-2">
                   <dt className="font-medium text-slate-700">Factura/ticket:</dt>
@@ -163,6 +193,13 @@ export function RecordatorioDetailPanel({
               ) : null}
             </dl>
 
+            {comprasView ? (
+              <p className="text-xs text-slate-500">
+                Compras ve el seguimiento y envía comentarios; solo ventas marca Negociación /
+                Ganada / Perdida.
+              </p>
+            ) : null}
+
             <Button
               type="button"
               variant="secondary"
@@ -174,40 +211,42 @@ export function RecordatorioDetailPanel({
             </Button>
 
             {comprasView && (
-              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+              <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Comentario sobre el recordatorio
+                  </h3>
+                  <p className="mt-0.5 text-xs text-slate-600">
+                    Se envía a{' '}
+                    <strong>{recipientName}</strong>
+                    {pending ? ' (hay un aviso sin leer; se actualizará el mensaje).' : '.'}
+                  </p>
+                </div>
                 {eligibility?.eligible ? (
-                  pending ? (
-                    <p className="text-xs text-amber-700">
-                      Ya hay un aviso pendiente (sin leer).
-                    </p>
-                  ) : (
-                    <p className="text-xs text-slate-600">
-                      Motivo del aviso:{' '}
-                      <strong>
-                        {eligibility.reasonCode === 'lista_terminada'
-                          ? 'Lista / Terminada'
-                          : eligibility.reasonCode === 'sin_avance'
-                            ? 'Sin avance en elaboración'
-                            : 'Aviso'}
-                      </strong>
-                    </p>
-                  )
-                ) : (
-                  <p className="text-xs text-slate-500">{eligibility?.blockReason}</p>
-                )}
+                  <p className="text-xs text-slate-600">
+                    Contexto:{' '}
+                    <strong>
+                      {eligibility.reasonCode === 'lista_terminada'
+                        ? 'Lista / Terminada'
+                        : eligibility.reasonCode === 'sin_avance'
+                          ? 'Sin avance en elaboración'
+                          : 'Recordatorio'}
+                    </strong>
+                  </p>
+                ) : eligibility?.blockReason ? (
+                  <p className="text-xs text-slate-500">
+                    Nota: {eligibility.blockReason} Aun así puedes enviar un comentario.
+                  </p>
+                ) : null}
                 <label className="block text-xs font-medium text-slate-700">
-                  Mensaje para ventas {allowNotify ? '(opcional)' : ''}
+                  Tu comentario para {recipientName}
                   <textarea
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-60"
-                    rows={3}
-                    disabled={!allowNotify}
+                    rows={4}
+                    disabled={!canSendComment || notifying}
                     value={notifyMsg}
                     onChange={(e) => setNotifyMsg(e.target.value)}
-                    placeholder={
-                      allowNotify
-                        ? 'Lista/Terminada: lista para que ventas continúe.'
-                        : 'No disponible'
-                    }
+                    placeholder="Ej. Cliente ya confirmó stock; da seguimiento al recordatorio de esta cotización."
                   />
                 </label>
                 {notifyError ? (
@@ -216,10 +255,12 @@ export function RecordatorioDetailPanel({
                 <Button
                   type="button"
                   size="sm"
-                  disabled={!allowNotify || notifying}
+                  disabled={!canSendComment || notifying || notifyMsg.trim().length < 3}
                   onClick={() => void handleNotify()}
                 >
-                  {notifying ? 'Enviando…' : 'Avisar a ventas'}
+                  {notifying
+                    ? 'Enviando…'
+                    : `Enviar comentario a ${recipientName}`}
                 </Button>
               </div>
             )}

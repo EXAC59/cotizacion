@@ -518,15 +518,18 @@ function QuoteFormEditor({
   const openSaveModal = () => {
     if (!buildDraftQuote()) return
 
+    // Post-envío: guardar cambios = modificación (no ofrecer Terminada/Elaboración).
     if (
-      isNew ||
-      savedStatus === 'en_elaboracion' ||
-      savedStatus === 'solicitud_cotizaciones' ||
-      savedStatus === 'modificacion' ||
       savedStatus === 'enviada' ||
       savedStatus === 'aceptada' ||
-      savedStatus === 'facturada'
+      savedStatus === 'facturada' ||
+      savedStatus === 'modificacion'
     ) {
+      void confirmSaveWithStatus('modificacion')
+      return
+    }
+
+    if (isNew || savedStatus === 'en_elaboracion' || savedStatus === 'solicitud_cotizaciones') {
       setSaveModalOpen(true)
       return
     }
@@ -602,16 +605,11 @@ function QuoteFormEditor({
   const handleOpenPdf = async () => {
     setActionLoading('pdf')
     try {
-      let draft = buildDraftQuote()
+      const draft = buildDraftQuote()
       if (!draft) return
 
-      if (isPreSentStatus(status)) {
-        const sentAtNow = new Date().toISOString()
-        draft = { ...draft, status: 'enviada', sentAt: sentAtNow }
-        setStatus('enviada')
-        setSentAt(sentAtNow)
-      }
-
+      // Ver PDF no marca «enviada»: la cotización desde solicitudes sigue en elaboración
+      // hasta enviar por correo al cliente.
       const quoteIdForPdf = await saveDraft(draft)
       if (quoteIdForPdf) {
         await openQuotePdf(quoteIdForPdf)
@@ -1008,8 +1006,9 @@ function QuoteFormEditor({
                   })}
                 </ol>
                 <p className="mt-2 text-xs text-slate-500">
-                  El estatus cambia solo con el flujo (solicitud → elaboración; guardar;
-                  PDF/correo → enviada; reabrir enviada → modificación). Ya no se elige a mano.
+                  El estatus cambia con el flujo (solicitud → elaboración; guardar;
+                  correo al cliente → enviada; guardar cambios tras enviada → modificación).
+                  Ver PDF no cambia el estatus.
                 </p>
               </div>
               {!isNew && statusHistory.length > 0 && (

@@ -34,7 +34,7 @@ return [
         'modificacion',
     ],
 
-    /** Al abrir/bloquear una cotización enviada/aceptada/facturada → pasa a modificación. */
+    /** Al guardar cambios sobre enviada/aceptada/facturada → pasa a modificación (no al solo abrir). */
     'modificacion_from_statuses' => ['enviada', 'aceptada', 'facturada'],
 
     /** Al abrir/bloquear una cotización en estos estatus → vuelve a elaboración. */

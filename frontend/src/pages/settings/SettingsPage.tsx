@@ -130,6 +130,12 @@ export function SettingsPage() {
   }
 
   useEffect(() => {
+    if (!showPreferredWarehouses) {
+      setLoadingPrefs(false)
+      setPrefsError(null)
+      return
+    }
+
     let cancelled = false
     setLoadingPrefs(true)
     setPrefsError(null)
@@ -160,7 +166,7 @@ export function SettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [user?.email])
+  }, [user?.email, showPreferredWarehouses])
 
   const saveMyWarehousePrefs = async () => {
     setSavingPrefs(true)
@@ -412,7 +418,7 @@ export function SettingsPage() {
         </p>
       )}
 
-      {prefsError && (
+      {showPreferredWarehouses && prefsError && (
         <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {prefsError}
         </p>
@@ -702,8 +708,9 @@ export function SettingsPage() {
                     placeholder="3"
                   />
                   <p className="mt-1 text-xs text-slate-500">
-                    Si una cotización permanece en elaboración o Lista / Terminada sin abrirse ni
-                    actualizarse durante este plazo, aparece en «Cotizaciones sin avance».
+                    Si una cotización permanece en elaboración sin abrirse ni actualizarse durante
+                    este plazo, aparece en Recordatorios y se envía aviso automático a la campana
+                    de ventas.
                   </p>
                 </div>
                 <Button

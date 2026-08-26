@@ -123,15 +123,15 @@ const router = createBrowserRouter(
           />
           <Route
             path="recordatorios"
-            element={<Navigate to="/recordatorios-ventas" replace />}
-          />
-          <Route
-            path="recordatorios-ventas"
             element={
               <ModuleRoute module="cotizaciones">
                 <RecordatoriosPage />
               </ModuleRoute>
             }
+          />
+          <Route
+            path="recordatorios-ventas"
+            element={<Navigate to="/recordatorios" replace />}
           />
           <Route
             path="clientes"

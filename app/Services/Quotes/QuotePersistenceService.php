@@ -56,6 +56,19 @@ class QuotePersistenceService
             $legacyMap = config('quotes.legacy_status_map', []);
             $requestedStatus = $legacyMap[$requestedStatus] ?? $requestedStatus;
             $previousStatus = $existingQuote?->status;
+
+            // Guardar cambios sobre una cotización ya enviada/aceptada/facturada
+            // → pasa a "modificacion" (no al abrir, sino al persistir edición).
+            $postSent = config('quotes.modificacion_from_statuses', ['enviada', 'aceptada', 'facturada']);
+            if (
+                $existingQuote !== null
+                && in_array((string) $previousStatus, $postSent, true)
+                && in_array($requestedStatus, ['en_elaboracion', 'pendiente_envio', 'modificacion', (string) $previousStatus], true)
+                && $requestedStatus !== 'enviada'
+            ) {
+                $requestedStatus = 'modificacion';
+            }
+
             $this->statusGuard->assertForwardOnly($existingQuote, $requestedStatus);
 
             if ($existingQuote !== null) {

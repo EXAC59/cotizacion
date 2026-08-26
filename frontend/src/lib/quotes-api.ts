@@ -91,6 +91,12 @@ type QuoteApiResponse = {
 
   internalNotes?: QuoteInternalNote[]
 
+  subtotal?: number
+
+  taxAmount?: number
+
+  total?: number
+
   createdAt?: string
 
   sentAt?: string | null
@@ -191,6 +197,8 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     customerObservations: data.customerObservations ?? '',
 
     internalNotes: data.internalNotes ?? [],
+
+    total: data.total ?? undefined,
 
     createdAt: data.createdAt ?? new Date().toISOString(),
 

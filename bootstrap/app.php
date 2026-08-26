@@ -68,6 +68,11 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('solicitud:alertar-atascadas')->everyFiveMinutes();
+        // Cotizaciones en elaboración sin avance ≥ N días → campana de ventas.
+        $schedule->command('sales:notify-idle-quotes')
+            ->hourly()
+            ->withoutOverlapping()
+            ->runInBackground();
         // FTP CT incompleto: refrescar UPC→clave de productos solo-API.
         $schedule->command('wholesalers:ct-catalog-gaps --sync-upc --upc-limit=300')
             ->dailyAt('03:30')

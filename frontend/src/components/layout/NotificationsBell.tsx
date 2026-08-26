@@ -79,7 +79,10 @@ export function NotificationsBell() {
       }
     }
     setOpen(false)
-    navigate(`/cotizaciones/${item.quoteId}`)
+    const qs = new URLSearchParams()
+    if (item.quoteId) qs.set('quote', item.quoteId)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    navigate(`/recordatorios${suffix}`)
   }
 
   return (

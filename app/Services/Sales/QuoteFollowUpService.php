@@ -23,6 +23,12 @@ class QuoteFollowUpService
      */
     public function update(Quote $quote, User $actor, array $payload): array
     {
+        if (! in_array($actor->role_slug, ['ventas', 'administrador'], true)) {
+            throw ValidationException::withMessages([
+                'status' => 'Solo ventas puede marcar el estatus de seguimiento.',
+            ]);
+        }
+
         $status = $payload['status'] ?? '';
         if (! in_array($status, ['negociacion', 'ganada', 'perdida'], true)) {
             throw ValidationException::withMessages([

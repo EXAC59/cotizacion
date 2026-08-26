@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Bell, FileDown, RefreshCw } from 'lucide-react'
 import { RecordatorioDetailPanel } from '@/components/recordatorios/RecordatorioDetailPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -10,15 +11,12 @@ import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { formatCurrency, formatDate } from '@/lib/format'
-import { notifySalesAboutQuote } from '@/lib/notifications-api'
 import { isPersistedQuoteId, listQuotes, openQuotePdf } from '@/lib/quotes-api'
 import {
   FOLLOW_UP_STATUS_LABELS,
   type FollowUpStatus,
   type Quote,
 } from '@/types'
-
-type RecordatoriosMode = 'compras' | 'ventas'
 
 function isComprasRole(role: string | undefined): boolean {
   return role === 'gerente_compras' || role === 'administrador'
@@ -33,22 +31,24 @@ function needsRemindAgain(quote: Quote): boolean {
 export function RecordatoriosPage() {
   const { user } = useAuth()
   const { can } = usePermission()
-  const canCompras = isComprasRole(user?.role)
-  const canNotify = canCompras && can('cotizaciones', 'edit')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const isCompras = isComprasRole(user?.role)
+  const canNotify = isCompras && can('cotizaciones', 'edit')
   const canEditFollowUp = can('cotizaciones', 'edit')
+  const showVentasDashboard = !isCompras
 
-  /** Recordatorios ventas: dashboard de seguimiento para todos los roles al entrar. */
-  const [mode, setMode] = useState<RecordatoriosMode>('ventas')
+  const quoteParam = searchParams.get('quote')
+
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
-  const [notifyingId, setNotifyingId] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(quoteParam)
   const [forceNegociacion, setForceNegociacion] = useState(false)
 
-  const showVentasDashboard = mode === 'ventas'
-  const showModeToggle = canCompras
+  useEffect(() => {
+    if (quoteParam) setSelectedId(quoteParam)
+  }, [quoteParam])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -97,25 +97,19 @@ export function RecordatoriosPage() {
   const openDetail = (id: string, reagendar = false) => {
     setSelectedId(id)
     setForceNegociacion(reagendar)
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('vista')
+    nextParams.set('quote', id)
+    setSearchParams(nextParams, { replace: true })
   }
 
   const closeDetail = () => {
     setSelectedId(null)
     setForceNegociacion(false)
-  }
-
-  const handleNotify = async (quote: Quote) => {
-    setNotifyingId(quote.id)
-    setActionMsg(null)
-    try {
-      await notifySalesAboutQuote(quote.id)
-      setActionMsg(`Aviso enviado: ${quote.folio}`)
-      await refresh()
-    } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : 'No se pudo avisar.')
-    } finally {
-      setNotifyingId(null)
-    }
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('quote')
+    nextParams.delete('vista')
+    setSearchParams(nextParams, { replace: true })
   }
 
   const handleSaved = () => {
@@ -136,55 +130,13 @@ export function RecordatoriosPage() {
         description={
           showVentasDashboard
             ? 'Seguimiento comercial aparte del estado de cotización (enviada, etc.).'
-            : 'Avisa a ventas si la cotización está Lista/Terminada o En elaboración sin avance.'
+            : 'Envía comentarios del recordatorio al vendedor de cada cotización.'
         }
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {showModeToggle && (
-              <div
-                className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-0.5"
-                role="tablist"
-                aria-label="Vista recordatorios"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === 'compras'}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    mode === 'compras'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  onClick={() => {
-                    setMode('compras')
-                    closeDetail()
-                  }}
-                >
-                  Compras
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === 'ventas'}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    mode === 'ventas'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  onClick={() => {
-                    setMode('ventas')
-                    closeDetail()
-                  }}
-                >
-                  Ventas
-                </button>
-              </div>
-            )}
-            <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
-              <RefreshCw className="h-4 w-4" />
-              Actualizar
-            </Button>
-          </div>
+          <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className="h-4 w-4" />
+            Actualizar
+          </Button>
         }
       />
 
@@ -216,10 +168,8 @@ export function RecordatoriosPage() {
                 eligible={eligible}
                 others={others}
                 canNotify={canNotify}
-                notifyingId={notifyingId}
                 selectedId={selectedId}
                 onSelect={(id) => openDetail(id)}
-                onNotify={handleNotify}
               />
             )}
           </div>
@@ -246,29 +196,26 @@ function ComprasView({
   eligible,
   others,
   canNotify,
-  notifyingId,
   selectedId,
   onSelect,
-  onNotify,
 }: {
   eligible: Quote[]
   others: Quote[]
   canNotify: boolean
-  notifyingId: string | null
   selectedId: string | null
   onSelect: (id: string) => void
-  onNotify: (q: Quote) => void
 }) {
   return (
     <div className="space-y-8">
       <section>
-        <h2 className="text-base font-semibold text-slate-900">Candidatas a avisar</h2>
+        <h2 className="text-base font-semibold text-slate-900">Cotizaciones sin avance</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Lista / Terminada, o En elaboración con días sin avance según configuración.
+          Lista / Terminada, o En elaboración sin avance. Abre el detalle y escribe el comentario
+          para ventas.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {eligible.length === 0 && (
-            <p className="text-sm text-slate-500">No hay candidatas ahora.</p>
+            <p className="text-sm text-slate-500">No hay cotizaciones sin avance ahora.</p>
           )}
           {eligible.map((q) => (
             <ComprasReminderCard
@@ -276,9 +223,7 @@ function ComprasView({
               quote={q}
               selected={selectedId === q.id}
               canNotify={canNotify}
-              notifying={notifyingId === q.id}
               onSelect={() => onSelect(q.id)}
-              onNotify={() => onNotify(q)}
             />
           ))}
         </div>
@@ -287,7 +232,7 @@ function ComprasView({
       <section>
         <h2 className="text-base font-semibold text-slate-900">Otras cotizaciones</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Aún no cumplen la regla (o ya cerradas). No se notifica a ventas.
+          También puedes abrirlas y enviar un comentario sobre su recordatorio.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {others.length === 0 && (
@@ -299,9 +244,7 @@ function ComprasView({
               quote={q}
               selected={selectedId === q.id}
               canNotify={false}
-              notifying={false}
               onSelect={() => onSelect(q.id)}
-              onNotify={() => undefined}
             />
           ))}
         </div>
@@ -446,20 +389,13 @@ function ComprasReminderCard({
   quote,
   selected,
   canNotify,
-  notifying,
   onSelect,
-  onNotify,
 }: {
   quote: Quote
   selected: boolean
   canNotify: boolean
-  notifying: boolean
   onSelect: () => void
-  onNotify: () => void
 }) {
-  const pending = Boolean(quote.eligibility?.pendingUnread)
-  const allowNotify = canNotify && quote.eligibility?.eligible && !pending
-
   return (
     <article
       className={`rounded-xl border bg-white p-4 shadow-sm ${
@@ -484,11 +420,19 @@ function ComprasReminderCard({
         </div>
       </div>
 
-      {!quote.eligibility?.eligible && quote.eligibility?.blockReason && (
-        <p className="mt-2 text-xs text-slate-500">{quote.eligibility.blockReason}</p>
+      {(quote.eligibility?.notifyRecipientName || quote.createdByName) && (
+        <p className="mt-2 text-xs text-slate-600">
+          Ventas:{' '}
+          <span className="font-medium text-slate-800">
+            {quote.eligibility?.notifyRecipientName || quote.createdByName}
+          </span>
+        </p>
       )}
-      {pending && (
-        <p className="mt-2 text-xs text-amber-700">Ya hay un aviso pendiente (sin leer).</p>
+
+      {quote.eligibility?.pendingUnread && (
+        <p className="mt-2 text-xs text-amber-700">
+          Hay un comentario/aviso pendiente (sin leer).
+        </p>
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -506,14 +450,9 @@ function ComprasReminderCard({
           PDF
         </Button>
         {canNotify && (
-          <Button
-            type="button"
-            size="sm"
-            disabled={!allowNotify || notifying}
-            onClick={onNotify}
-          >
+          <Button type="button" size="sm" onClick={onSelect}>
             <Bell className="h-4 w-4" />
-            {notifying ? 'Enviando…' : 'Avisar a ventas'}
+            Escribir comentario
           </Button>
         )}
       </div>

@@ -66,6 +66,19 @@ class QuoteLockService
         ]);
     }
 
+    /**
+     * Libera todos los bloqueos de edición que tiene el usuario (p. ej. al cerrar sesión).
+     */
+    public function releaseAllForUser(User $user): int
+    {
+        return Quote::query()
+            ->where('locked_by', $user->id)
+            ->update([
+                'locked_by' => null,
+                'locked_at' => null,
+            ]);
+    }
+
     public function assertHeldByCurrentUser(Quote $quote, ?User $user = null): void
     {
         $user = $user ?? Auth::user();

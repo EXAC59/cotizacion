@@ -123,7 +123,7 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_auto_transitions_enviada_to_modificacion_on_lock(): void
+    public function it_does_not_auto_transition_enviada_to_modificacion_on_lock(): void
     {
         $client = Client::query()->create([
             'company' => 'Mod Status SA',
@@ -146,10 +146,10 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
         $this->postJson("/api/cotizaciones/{$quote->id}/bloqueo")
             ->assertOk()
             ->assertJsonPath('locked', true)
-            ->assertJsonPath('status', 'modificacion')
-            ->assertJsonPath('statusChanged', true);
+            ->assertJsonPath('status', 'enviada')
+            ->assertJsonPath('statusChanged', false);
 
-        $this->assertSame('modificacion', $quote->fresh()->status);
+        $this->assertSame('enviada', $quote->fresh()->status);
     }
 
     #[Test]
@@ -182,16 +182,16 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_auto_transitions_aceptada_facturada_to_modificacion_on_lock(): void
+    public function it_does_not_auto_transition_aceptada_facturada_to_modificacion_on_lock(): void
     {
         foreach (['aceptada', 'facturada'] as $status) {
             $client = Client::query()->create([
                 'company' => "Won {$status} SA",
-                'rfc' => "WON{$status}ABC",
+                'rfc' => 'W'.strtoupper(substr($status, 0, 2)).'020202ABC',
             ]);
 
             $quote = Quote::query()->create([
-                'folio' => 'COT-LOCK-WON-001',
+                'folio' => 'COT-LOCK-WON-'.strtoupper($status),
                 'client_id' => $client->id,
                 'status' => $status,
                 'validity_days' => 15,
@@ -205,10 +205,10 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
             $this->postJson("/api/cotizaciones/{$quote->id}/bloqueo")
                 ->assertOk()
                 ->assertJsonPath('locked', true)
-                ->assertJsonPath('status', 'modificacion')
-                ->assertJsonPath('statusChanged', true);
+                ->assertJsonPath('status', $status)
+                ->assertJsonPath('statusChanged', false);
 
-            $this->assertSame('modificacion', $quote->fresh()->status);
+            $this->assertSame($status, $quote->fresh()->status);
             Quote::query()->whereKey($quote->id)->delete();
             Client::query()->whereKey($client->id)->delete();
         }
@@ -251,5 +251,37 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
         $this->postJson("/api/cotizaciones/{$quoteId}/bloqueo")
             ->assertOk()
             ->assertJsonPath('locked', true);
+    }
+
+    #[Test]
+    public function logout_releases_held_quote_locks(): void
+    {
+        $client = Client::query()->create([
+            'company' => 'Logout Lock SA',
+            'rfc' => 'LGL020202ABC',
+        ]);
+
+        $created = $this->postJson('/api/cotizaciones', [
+            'folio' => 'COT-LOCK-LOGOUT-001',
+            'clientId' => $client->id,
+            'status' => 'en_elaboracion',
+            'lines' => [[
+                'quantity' => 1,
+                'product' => 'Item',
+                'partNumber' => 'SKU-1',
+                'cost' => 100,
+                'marginPercent' => 30,
+            ]],
+        ])->assertCreated();
+
+        $quoteId = $created->json('id');
+        $this->postJson("/api/cotizaciones/{$quoteId}/bloqueo")->assertOk();
+
+        $this->assertNotNull(Quote::query()->whereKey($quoteId)->value('locked_by'));
+
+        $this->postJson('/api/logout')->assertOk();
+
+        $this->assertNull(Quote::query()->whereKey($quoteId)->value('locked_by'));
+        $this->assertNull(Quote::query()->whereKey($quoteId)->value('locked_at'));
     }
 }
