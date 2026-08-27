@@ -48,7 +48,7 @@ class SalesNotificationService
             return [
                 'eligible' => false,
                 'reasonCode' => null,
-                'blockReason' => 'Ya cerrada (ganada/perdida).',
+                'blockReason' => 'Esta cotización ya está cerrada (ganada o perdida).',
                 'daysIdle' => $daysIdle,
                 'pendingUnread' => false,
                 ...$recipientMeta,
@@ -82,7 +82,7 @@ class SalesNotificationService
             return [
                 'eligible' => false,
                 'reasonCode' => null,
-                'blockReason' => "Aún en elaboración ({$daysIdle} día(s); se avisa desde {$threshold}).",
+                'blockReason' => $this->elaboracionBelowThresholdReason($daysIdle, $threshold),
                 'daysIdle' => $daysIdle,
                 'pendingUnread' => false,
                 ...$recipientMeta,
@@ -92,7 +92,7 @@ class SalesNotificationService
         return [
             'eligible' => false,
             'reasonCode' => null,
-            'blockReason' => 'No candidata a avisar.',
+            'blockReason' => 'Por ahora no aplica un aviso automático a ventas.',
             'daysIdle' => $daysIdle,
             'pendingUnread' => false,
             ...$recipientMeta,
@@ -464,5 +464,18 @@ class SalesNotificationService
         return $user !== null
             && $user->active
             && $user->role_slug === 'ventas';
+    }
+
+    private function elaboracionBelowThresholdReason(int $daysIdle, int $threshold): string
+    {
+        $thresholdLabel = $threshold === 1 ? '1 día' : "{$threshold} días";
+
+        if ($daysIdle === 0) {
+            return "Recién en elaboración. Ventas recibirá un aviso si pasan {$thresholdLabel} sin avance.";
+        }
+
+        $idleLabel = $daysIdle === 1 ? '1 día' : "{$daysIdle} días";
+
+        return "Lleva {$idleLabel} sin avance. El aviso a ventas se envía al cumplir {$thresholdLabel}.";
     }
 }

@@ -30,3 +30,6 @@ scripts/.vps-deploy.local
 scripts/.wholesaler-ct.local
 scripts/.wholesaler-cva.local
 scripts/.meta-cotizaciones.local
+
+# local GitHub SSH helper (do not commit)
+.ssh-github/

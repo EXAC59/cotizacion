@@ -235,7 +235,7 @@ export function RecordatorioDetailPanel({
                   </p>
                 ) : eligibility?.blockReason ? (
                   <p className="text-xs text-slate-500">
-                    Nota: {eligibility.blockReason} Aun así puedes enviar un comentario.
+                    {eligibility.blockReason} Puedes dejar un comentario de todas formas.
                   </p>
                 ) : null}
                 <label className="block text-xs font-medium text-slate-700">

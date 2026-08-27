@@ -230,13 +230,14 @@ function ComprasView({
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-slate-900">Otras cotizaciones</h2>
+        <h2 className="text-base font-semibold text-slate-900">Cotizaciones en seguimiento</h2>
         <p className="mt-1 text-sm text-slate-500">
-          También puedes abrirlas y enviar un comentario sobre su recordatorio.
+          Siguen en elaboración dentro del plazo normal. Puedes abrirlas y dejar un comentario si
+          hace falta.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {others.length === 0 && (
-            <p className="text-sm text-slate-500">Ninguna.</p>
+            <p className="text-sm text-slate-500">No hay cotizaciones en seguimiento.</p>
           )}
           {others.map((q) => (
             <ComprasReminderCard

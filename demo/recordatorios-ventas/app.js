@@ -502,7 +502,7 @@
       return 'Ya cerrada (ganada/perdida).';
     }
     if (quote.workflowStatus === 'en_elaboracion' && quote.daysIdle < IDLE_NOTIFY_DAYS) {
-      return `Aún en elaboración (${quote.daysIdle} día${quote.daysIdle === 1 ? '' : 's'}; se avisa desde ${IDLE_NOTIFY_DAYS}).`;
+      return `Recién en elaboración. Ventas recibirá un aviso si pasan ${IDLE_NOTIFY_DAYS} días sin avance.`;
     }
     return 'No candidata a avisar.';
   }
@@ -1068,7 +1068,7 @@
         </div>
       </div>
       <div class="list-section">
-        <h2 class="list-section-title">Otras cotizaciones</h2>
+        <h2 class="list-section-title">Cotizaciones en seguimiento</h2>
         <p class="list-section-hint">Aún no cumplen la regla (o ya cerradas). No se notifica a ventas.</p>
         <div class="card-list">
           ${
