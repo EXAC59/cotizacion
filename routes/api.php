@@ -69,6 +69,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])
         ->middleware('permission:dashboard,view');
 
+    Route::post('/debug/client', function (\Illuminate\Http\Request $request) {
+        $entry = [
+            'at' => now()->toIso8601String(),
+            'user_id' => optional($request->user())->id,
+            'payload' => $request->all(),
+        ];
+        \Illuminate\Support\Facades\Log::info('spa.client', $entry);
+        try {
+            file_put_contents(
+                storage_path('logs/spa-client.ndjson'),
+                json_encode($entry, JSON_UNESCAPED_UNICODE)."\n",
+                FILE_APPEND | LOCK_EX,
+            );
+        } catch (\Throwable) {
+            /* telemetría opcional */
+        }
+
+        return response()->noContent();
+    })->middleware('auth:sanctum');
+
     Route::get('/reportes', [ReportesController::class, 'index'])
         ->middleware('permission:reportes,view');
 
@@ -141,7 +161,7 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:cotizaciones,create');
 
     Route::get('/notificaciones', [NotificacionController::class, 'index'])
-        ->middleware('permission:cotizaciones,view');
+        ->middleware(['permission:cotizaciones,view', 'spa.upgrade']);
     Route::post('/notificaciones', [NotificacionController::class, 'store'])
         ->middleware('permission:cotizaciones,edit');
     Route::patch('/notificaciones/{id}/leer', [NotificacionController::class, 'markRead'])

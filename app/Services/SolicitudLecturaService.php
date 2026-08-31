@@ -102,11 +102,11 @@ class SolicitudLecturaService
 
     /**
      * Marca la solicitud como revisada por el usuario actual.
-     * Idempotente: el primer revisor gana, no se sobreescribe.
+     * Idempotente: el primer revisor distinto al creador gana; quien la creó no cuenta como revisión.
      */
     public function marcarRevisada(QuoteRequest $request): void
     {
-        if ($request->reviewed_by !== null) {
+        if ($this->hasExternalReview($request)) {
             return;
         }
 
@@ -115,7 +115,24 @@ class SolicitudLecturaService
             return;
         }
 
+        if ($request->created_by !== null && (int) $request->created_by === (int) $userId) {
+            return;
+        }
+
         $request->update(['reviewed_by' => $userId, 'reviewed_at' => now()]);
+    }
+
+    public function hasExternalReview(QuoteRequest $request): bool
+    {
+        if ($request->reviewed_by === null) {
+            return false;
+        }
+
+        if ($request->created_by === null) {
+            return true;
+        }
+
+        return (int) $request->reviewed_by !== (int) $request->created_by;
     }
 
     /**
@@ -154,6 +171,7 @@ class SolicitudLecturaService
     public function toApiArray(QuoteRequest $request): array
     {
         $request->loadMissing(['lines', 'client', 'creator', 'reviewer']);
+        $reviewer = $this->hasExternalReview($request) ? $request->reviewer : null;
 
         return [
             'id' => $request->id,
@@ -162,9 +180,9 @@ class SolicitudLecturaService
             'client_name' => $request->client?->company,
             'created_by' => $request->created_by,
             'created_by_name' => $request->creator?->name,
-            'reviewed_by' => $request->reviewed_by !== null ? (string) $request->reviewed_by : null,
-            'reviewed_by_name' => $request->reviewer?->name,
-            'reviewed_at' => $request->reviewed_at?->toIso8601String(),
+            'reviewed_by' => $reviewer !== null ? (string) $request->reviewed_by : null,
+            'reviewed_by_name' => $reviewer?->name,
+            'reviewed_at' => $reviewer !== null ? $request->reviewed_at?->toIso8601String() : null,
             'source' => $request->source,
             'status' => $request->status,
             'workflow_status' => $request->workflow_status ?? 'en_elaboracion',

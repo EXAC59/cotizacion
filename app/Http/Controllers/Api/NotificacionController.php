@@ -45,6 +45,10 @@ class NotificacionController extends Controller
 
     public function markRead(Request $request, string $id): JsonResponse
     {
+        if ($id === \App\Http\Middleware\PromptSpaUpgrade::UPGRADE_NOTIFICATION_ID) {
+            return response()->json(['ok' => true]);
+        }
+
         $notification = SalesNotification::query()->findOrFail($id);
         $updated = $this->notifications->markRead($notification, $request->user());
 

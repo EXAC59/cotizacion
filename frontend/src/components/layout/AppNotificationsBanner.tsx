@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ArrowRight, Bell } from 'lucide-react'
+import { goToDashboardAlerts } from '@/lib/dashboard-alerts-nav'
+import { DASHBOARD_SECTIONS } from '@/lib/notification-focus'
 import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
 
 export function AppNotificationsBanner() {
   const { can } = usePermission()
   const canViewDashboard = can('dashboard', 'view')
+  const location = useLocation()
+  const navigate = useNavigate()
   const [alertCount, setAlertCount] = useState(0)
+  const [focusTargetId, setFocusTargetId] = useState('alertas')
   const [summary, setSummary] = useState('')
 
   useEffect(() => {
@@ -25,6 +30,12 @@ export function AppNotificationsBanner() {
         const total = unanswered + readyForSales + stuck
 
         setAlertCount(total)
+
+        let targetId = 'alertas'
+        if (unanswered > 0) targetId = 'cotizaciones-sin-avance'
+        else if (readyForSales > 0) targetId = 'cotizaciones-listas-ventas'
+        else if (stuck > 0) targetId = 'lecturas-atascadas'
+        setFocusTargetId(targetId)
 
         const parts: string[] = []
         if (readyForSales)
@@ -50,6 +61,12 @@ export function AppNotificationsBanner() {
     return null
   }
 
+  const goToAlertas = () => {
+    goToDashboardAlerts(navigate, location, focusTargetId)
+  }
+
+  const focusLabel = DASHBOARD_SECTIONS[focusTargetId]?.label ?? 'Alertas'
+
   return (
     <div className="sticky top-0 z-20 border-b border-amber-200/80 bg-amber-50/90 px-4 py-2.5 backdrop-blur-md sm:px-6">
       <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between gap-4">
@@ -65,14 +82,16 @@ export function AppNotificationsBanner() {
             <p className="truncate text-xs leading-4 text-amber-800 sm:text-sm">{summary}</p>
           </div>
         </div>
-        <Link
-          to="/dashboard#alertas"
+        <button
+          type="button"
+          onClick={goToAlertas}
           className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-amber-300 hover:bg-amber-100/70"
+          title={`Ir a ${focusLabel}`}
         >
           <span className="hidden sm:inline">Ver alertas</span>
           <span className="sm:hidden">Ver</span>
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </Link>
+        </button>
       </div>
     </div>
   )

@@ -80,6 +80,7 @@ import {
   useDirtyTracker,
   useUnsavedChangesGuard,
 } from '@/hooks/useUnsavedChangesGuard'
+import { useNotificationFocus } from '@/lib/notification-focus'
 
 function QuoteFormEditor({
   quoteId,
@@ -379,6 +380,8 @@ function QuoteFormEditor({
     },
   )
 
+  useNotificationFocus(!loadingQuote)
+
   if (isNew && !canCreate) {
     return <Navigate to="/cotizaciones" replace />
   }
@@ -667,7 +670,7 @@ function QuoteFormEditor({
   }
 
   return (
-    <div>
+    <div id="quote-detail-panel" className="relative">
       {unsavedDialog}
       <PageHeader
         title={isNew ? 'Nueva cotización' : folio}

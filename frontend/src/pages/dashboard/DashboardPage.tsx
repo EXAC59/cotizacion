@@ -14,6 +14,9 @@ import { StatCard } from '@/components/ui/StatCard'
 import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
+import {
+  useNotificationFocus,
+} from '@/lib/notification-focus'
 import { formatCurrency } from '@/lib/format'
 import {
   QUOTE_STATUS_LABELS,
@@ -58,6 +61,9 @@ export function DashboardPage() {
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  useNotificationFocus(!loading)
+
   useEffect(() => {
     fetchDashboard()
       .then(setAnalytics)
@@ -70,13 +76,6 @@ export function DashboardPage() {
       )
       .finally(() => setLoading(false))
   }, [])
-
-  useEffect(() => {
-    if (loading) return
-    const hash = window.location.hash.replace('#', '')
-    if (hash !== 'alertas') return
-    document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [loading])
 
   const quotesByStatus = analytics?.quotesByStatus ?? localDashboard.quotesByStatus
   const recentQuotes = analytics?.recentQuotes ?? []
@@ -117,7 +116,7 @@ export function DashboardPage() {
         <StatCard
           label="Solicitudes de cotización sin revisión"
           value={String(alerts.pendingReviewRequests.length)}
-          hint="Se quedaron en elaboración"
+          hint="Nadie distinto al creador las ha revisado"
           icon={Inbox}
         />
         <StatCard
@@ -259,11 +258,11 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      <div id="alertas" className="scroll-mt-4">
+      <div id="alertas" className="relative scroll-mt-28">
         <SectionTitle>Alertas</SectionTitle>
       </div>
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
-        <Card className="min-w-0 overflow-hidden">
+        <Card id="cotizaciones-pendientes" className="relative min-w-0 scroll-mt-28 overflow-hidden">
           <CardHeader
             title="Cotizaciones pendientes"
             subtitle="Siguen en En elaboración y nunca han sido Lista / Terminada"
@@ -279,8 +278,9 @@ export function DashboardPage() {
             ) : (
               alerts.pendingQuotes.map((quote) => (
                 <div
+                  id={`dashboard-quote-${quote.id}`}
                   key={quote.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2 text-sm"
+                  className="relative flex items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2 text-sm"
                 >
                   <div>
                     <Link
@@ -301,7 +301,7 @@ export function DashboardPage() {
           </CardBody>
         </Card>
 
-        <Card className="min-w-0 overflow-hidden">
+        <Card id="cotizaciones-listas-ventas" className="relative min-w-0 scroll-mt-28 overflow-hidden">
           <CardHeader
             title="Listas / Terminadas para ventas"
             subtitle="Cotizaciones listas para envío o seguimiento"
@@ -317,8 +317,9 @@ export function DashboardPage() {
             ) : (
               alerts.readyForSalesQuotes.map((quote) => (
                 <div
+                  id={`dashboard-quote-${quote.id}`}
                   key={quote.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-sm"
+                  className="relative flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-sm"
                 >
                   <div>
                     <Link
@@ -339,7 +340,7 @@ export function DashboardPage() {
           </CardBody>
         </Card>
 
-        <Card>
+        <Card id="cotizaciones-sin-avance" className="relative scroll-mt-28">
           <CardHeader
             title="Cotizaciones sin avance"
             subtitle={
@@ -354,8 +355,9 @@ export function DashboardPage() {
             ) : (
               alerts.unansweredQuotes.map((quote) => (
                 <div
+                  id={`dashboard-quote-${quote.id}`}
                   key={quote.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm"
+                  className="relative flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm"
                 >
                   <div>
                     <Link
@@ -378,10 +380,10 @@ export function DashboardPage() {
           </CardBody>
         </Card>
 
-        <Card>
+        <Card id="solicitudes-sin-revisar" className="relative scroll-mt-28">
           <CardHeader
             title="Solicitudes sin revisar"
-            subtitle="Siguen en «En elaboración» sin crear cotización"
+            subtitle="En elaboración y sin revisión de otro usuario"
             action={
               <Link to="/solicitudes" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
                 Ver solicitudes
@@ -416,8 +418,44 @@ export function DashboardPage() {
           </CardBody>
         </Card>
 
+        {(alerts.stuckProcessingRequests?.length ?? 0) > 0 && (
+          <Card id="lecturas-atascadas" className="relative scroll-mt-28">
+            <CardHeader
+              title="Lecturas atascadas"
+              subtitle="Solicitudes en procesamiento sin avance reciente"
+              action={
+                <Link to="/solicitudes" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+                  Ver solicitudes
+                </Link>
+              }
+            />
+            <CardBody className="space-y-2">
+              {alerts.stuckProcessingRequests.map((req) => (
+                <div
+                  id={`dashboard-request-${req.id}`}
+                  key={req.id}
+                  className="relative flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/50 px-3 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      to={`/solicitudes/${req.id}`}
+                      className="font-medium text-indigo-600 hover:underline"
+                    >
+                      {req.fileName || 'Solicitud'}
+                    </Link>
+                    <p className="truncate text-slate-500">{req.clientName || 'Sin cliente'}</p>
+                  </div>
+                  <span className="shrink-0 text-amber-800">
+                    {req.minutesStuck} min sin avance
+                  </span>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        )}
+
         {canViewIntegrationAlerts && (
-          <Card>
+          <Card id="errores-integracion" className="relative scroll-mt-28">
             <CardHeader
               title="Errores de integración"
               action={

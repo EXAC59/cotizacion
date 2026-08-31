@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Bell } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
@@ -8,38 +9,102 @@ import {
   listNotifications,
   markNotificationRead,
 } from '@/lib/notifications-api'
+import { goToDashboardAlerts } from '@/lib/dashboard-alerts-nav'
+import {
+  DASHBOARD_SECTIONS,
+  navigateWithNotificationFocus,
+  quoteDashboardFocus,
+  recordatorioQuoteFocus,
+} from '@/lib/notification-focus'
+import { fetchDashboard } from '@/lib/dashboard-api'
 import { formatDateTime } from '@/lib/format'
-import type { SalesNotificationItem } from '@/types'
+import type { DashboardAlertQuote, SalesNotificationItem } from '@/types'
 
 function canUseInbox(role: string | undefined): boolean {
   return role === 'ventas' || role === 'gerente_compras' || role === 'administrador'
+}
+
+type OperationalAlert = {
+  id: string
+  quoteId: string
+  folio: string
+  label: string
+  detail: string
+}
+
+function mapOperationalAlerts(
+  unanswered: DashboardAlertQuote[],
+  readyForSales: DashboardAlertQuote[],
+): OperationalAlert[] {
+  const items: OperationalAlert[] = []
+  for (const quote of unanswered) {
+    items.push({
+      id: `unanswered-${quote.id}`,
+      quoteId: quote.id,
+      folio: quote.folio,
+      label: 'Sin avance',
+      detail: `${quote.clientName || 'Sin cliente'} · ${quote.daysWaiting ?? 0} días sin actividad`,
+    })
+  }
+  for (const quote of readyForSales) {
+    items.push({
+      id: `ready-${quote.id}`,
+      quoteId: quote.id,
+      folio: quote.folio,
+      label: 'Lista / Terminada',
+      detail: quote.clientName || 'Sin cliente',
+    })
+  }
+  return items
 }
 
 export function NotificationsBell() {
   const { user } = useAuth()
   const { can } = usePermission()
   const navigate = useNavigate()
+  const location = useLocation()
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<SalesNotificationItem[]>([])
+  const [operational, setOperational] = useState<OperationalAlert[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelStyle, setPanelStyle] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  )
 
   const enabled = Boolean(user && can('cotizaciones', 'view') && canUseInbox(user.role))
+  const canViewDashboard = can('dashboard', 'view')
+  const showOperational = canViewDashboard && user?.role !== 'ventas'
 
   const refresh = useCallback(async () => {
     if (!enabled) return
     setLoading(true)
     try {
-      const result = await listNotifications()
-      setItems(result.data)
-      setUnreadCount(result.unreadCount)
+      const tasks: [Promise<{ data: SalesNotificationItem[]; unreadCount: number }>, Promise<OperationalAlert[]>] = [
+        listNotifications(),
+        showOperational
+          ? fetchDashboard()
+              .then((data) =>
+                mapOperationalAlerts(
+                  data.alerts.unansweredQuotes,
+                  data.alerts.readyForSalesQuotes ?? [],
+                ),
+              )
+              .catch(() => [] as OperationalAlert[])
+          : Promise.resolve([] as OperationalAlert[]),
+      ]
+      const [inbox, operationalAlerts] = await Promise.all(tasks)
+      setItems(inbox.data)
+      setUnreadCount(inbox.unreadCount)
+      setOperational(operationalAlerts)
     } catch {
       // Silencioso: la campana no debe romper el layout
     } finally {
       setLoading(false)
     }
-  }, [enabled])
+  }, [enabled, showOperational])
 
   useEffect(() => {
     void refresh()
@@ -50,8 +115,32 @@ export function NotificationsBell() {
 
   useEffect(() => {
     if (!open) return
+    const updatePosition = () => {
+      const anchor = rootRef.current
+      if (!anchor) return
+      const rect = anchor.getBoundingClientRect()
+      const width = Math.min(352, window.innerWidth - 16)
+      setPanelStyle({
+        top: rect.bottom + 8,
+        left: Math.max(8, rect.right - width),
+        width,
+      })
+    }
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
     const onDoc = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      const target = event.target as Node
+      if (rootRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setOpen(false)
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false)
@@ -66,6 +155,26 @@ export function NotificationsBell() {
 
   if (!enabled) return null
 
+  const badgeCount = unreadCount + operational.length
+
+  const goToOperationalAlerts = () => {
+    setOpen(false)
+    const targetId = operational.some((o) => o.label === 'Sin avance')
+      ? 'cotizaciones-sin-avance'
+      : 'cotizaciones-listas-ventas'
+    goToDashboardAlerts(navigate, location, targetId)
+  }
+
+  const openOperationalAlert = (alert: OperationalAlert) => {
+    setOpen(false)
+    navigateWithNotificationFocus(
+      navigate,
+      location,
+      { pathname: '/dashboard', hash: 'alertas' },
+      quoteDashboardFocus(alert.quoteId, alert.folio, alert.label),
+    )
+  }
+
   const openQuote = async (item: SalesNotificationItem) => {
     if (!item.read) {
       try {
@@ -79,11 +188,117 @@ export function NotificationsBell() {
       }
     }
     setOpen(false)
-    const qs = new URLSearchParams()
-    if (item.quoteId) qs.set('quote', item.quoteId)
-    const suffix = qs.toString() ? `?${qs.toString()}` : ''
-    navigate(`/recordatorios${suffix}`)
+
+    if (item.quoteId) {
+      navigateWithNotificationFocus(
+        navigate,
+        location,
+        { pathname: '/recordatorios', search: `?quote=${item.quoteId}` },
+        recordatorioQuoteFocus(
+          item.quoteId,
+          item.folio ?? 'Cotización',
+          item.reasonLabel,
+        ),
+      )
+      return
+    }
+
+    navigate('/recordatorios')
   }
+
+  const panel =
+    open && panelStyle && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            ref={panelRef}
+            className="fixed z-[60] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+            style={{ top: panelStyle.top, left: panelStyle.left, width: panelStyle.width }}
+            role="menu"
+          >
+            <div className="border-b border-slate-100 px-3 py-2">
+              <p className="text-sm font-semibold text-slate-900">Alertas y recordatorios</p>
+              <p className="text-xs text-slate-500">
+                {loading
+                  ? 'Actualizando…'
+                  : `${unreadCount} en bandeja · ${operational.length} operativas`}
+              </p>
+            </div>
+            <ul className="max-h-80 overflow-y-auto">
+              {operational.length > 0 && (
+                <>
+                  <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Operativas
+                  </li>
+                  {operational.map((alert) => (
+                    <li key={alert.id}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2.5 text-left text-sm hover:bg-amber-50/60"
+                        onClick={() => openOperationalAlert(alert)}
+                      >
+                        <span className="block font-medium text-slate-900">
+                          {alert.folio} · {alert.label}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-slate-600">{alert.detail}</span>
+                      </button>
+                    </li>
+                  ))}
+                </>
+              )}
+              {items.length > 0 && (
+                <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Bandeja
+                </li>
+              )}
+              {items.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={`w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 ${
+                      item.read ? 'opacity-70' : 'bg-indigo-50/40'
+                    }`}
+                    onClick={() => void openQuote(item)}
+                  >
+                    <span className="block font-medium text-slate-900">
+                      {item.folio ?? 'Cotización'} · {item.reasonLabel}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">
+                      {item.message}
+                    </span>
+                    <span className="mt-1 block text-[11px] text-slate-400">
+                      {item.createdAt ? formatDateTime(item.createdAt) : ''}
+                      {item.senderName ? ` · ${item.senderName}` : ''}
+                    </span>
+                  </button>
+                </li>
+              ))}
+              {items.length === 0 && operational.length === 0 && (
+                <li className="px-3 py-4 text-center text-sm text-slate-500">
+                  Sin alertas ni recordatorios.
+                  {user?.role === 'ventas' ? (
+                    <Link
+                      to="/recordatorios"
+                      className="mt-2 block font-medium text-indigo-600 hover:text-indigo-700"
+                      onClick={() => setOpen(false)}
+                    >
+                      Ir a Recordatorios
+                    </Link>
+                  ) : canViewDashboard ? (
+                    <button
+                      type="button"
+                      className="mt-2 block w-full font-medium text-indigo-600 hover:text-indigo-700"
+                      onClick={goToOperationalAlerts}
+                    >
+                      Ver {DASHBOARD_SECTIONS.alertas.label.toLowerCase()}
+                    </button>
+                  ) : null}
+                </li>
+              )}
+            </ul>
+          </div>,
+          document.body,
+        )
+      : null
 
   return (
     <div className="relative" ref={rootRef}>
@@ -92,7 +307,7 @@ export function NotificationsBell() {
         variant="ghost"
         size="sm"
         className="relative"
-        aria-label={unreadCount > 0 ? `Recordatorios (${unreadCount} sin leer)` : 'Recordatorios'}
+        aria-label={badgeCount > 0 ? `Alertas (${badgeCount})` : 'Alertas y recordatorios'}
         aria-expanded={open}
         onClick={() => {
           setOpen((v) => !v)
@@ -100,52 +315,13 @@ export function NotificationsBell() {
         }}
       >
         <Bell className="h-4 w-4" />
-        {unreadCount > 0 && (
+        {badgeCount > 0 && (
           <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
-            {unreadCount > 9 ? '9+' : unreadCount}
+            {badgeCount > 9 ? '9+' : badgeCount}
           </span>
         )}
       </Button>
-      {open && (
-        <div
-          className="absolute right-0 z-40 mt-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
-          role="menu"
-        >
-          <div className="border-b border-slate-100 px-3 py-2">
-            <p className="text-sm font-semibold text-slate-900">Recordatorios</p>
-            <p className="text-xs text-slate-500">
-              {loading ? 'Actualizando…' : `${unreadCount} sin leer`}
-            </p>
-          </div>
-          <ul className="max-h-80 overflow-y-auto">
-            {items.length === 0 && (
-              <li className="px-3 py-6 text-center text-sm text-slate-500">Sin recordatorios</li>
-            )}
-            {items.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className={`w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 ${
-                    item.read ? 'opacity-70' : 'bg-indigo-50/40'
-                  }`}
-                  onClick={() => void openQuote(item)}
-                >
-                  <span className="block font-medium text-slate-900">
-                    {item.folio ?? 'Cotización'} · {item.reasonLabel}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">
-                    {item.message}
-                  </span>
-                  <span className="mt-1 block text-[11px] text-slate-400">
-                    {item.createdAt ? formatDateTime(item.createdAt) : ''}
-                    {item.senderName ? ` · ${item.senderName}` : ''}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {panel}
     </div>
   )
 }

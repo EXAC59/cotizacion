@@ -19,7 +19,23 @@ export async function listNotifications(): Promise<{
   unreadCount: number
 }> {
   const response = await apiFetch(`${getApiBase()}/notificaciones`)
-  const data = (await response.json()) as NotificationsListResponse
+  const remoteBuild = response.headers.get('X-Spa-Build-Id')
+  if (remoteBuild && remoteBuild !== __SPA_BUILD_ID__) {
+    window.location.reload()
+    return { data: [], unreadCount: 0 }
+  }
+  const data = (await response.json()) as NotificationsListResponse & {
+    spaBuildId?: string
+    spaUpgradeRequired?: boolean
+  }
+  if (data.spaUpgradeRequired) {
+    window.location.reload()
+    return { data: [], unreadCount: 0 }
+  }
+  if (data.spaBuildId && data.spaBuildId !== __SPA_BUILD_ID__) {
+    window.location.reload()
+    return { data: [], unreadCount: 0 }
+  }
   if (!response.ok) {
     throw new Error(data.message || `Error al listar notificaciones (${response.status})`)
   }

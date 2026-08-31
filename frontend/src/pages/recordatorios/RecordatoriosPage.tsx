@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
+import { useNotificationFocus } from '@/lib/notification-focus'
 import { formatCurrency, formatDate } from '@/lib/format'
 import { isPersistedQuoteId, listQuotes, openQuotePdf } from '@/lib/quotes-api'
 import {
@@ -66,6 +67,8 @@ export function RecordatoriosPage() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useNotificationFocus(!loading)
 
   const eligible = useMemo(
     () => quotes.filter((q) => q.eligibility?.eligible),
@@ -323,7 +326,8 @@ function VentasReminderCard({
 
   return (
     <article
-      className={`rounded-xl border bg-white p-4 shadow-sm transition ${
+      id={`recordatorio-quote-${quote.id}`}
+      className={`relative rounded-xl border bg-white p-4 shadow-sm transition ${
         selected ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'
       }`}
     >
@@ -399,7 +403,8 @@ function ComprasReminderCard({
 }) {
   return (
     <article
-      className={`rounded-xl border bg-white p-4 shadow-sm ${
+      id={`recordatorio-quote-${quote.id}`}
+      className={`relative rounded-xl border bg-white p-4 shadow-sm ${
         selected ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'
       }`}
     >

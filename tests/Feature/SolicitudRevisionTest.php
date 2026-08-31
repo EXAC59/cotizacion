@@ -28,26 +28,68 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function marca_como_revisada_al_abrir_el_detalle(): void
+    public function marca_como_revisada_al_abrir_el_detalle_si_no_es_el_creador(): void
     {
-        $request = $this->crearSolicitud();
+        $admin = $this->demoUser('administrador');
+        $request = $this->crearSolicitud([
+            'created_by' => $this->demoUser('ventas')->id,
+        ]);
 
-        $response = $this->getJson("/api/solicitudes/{$request->id}");
+        $response = $this->actingAs($admin)->getJson("/api/solicitudes/{$request->id}");
 
         $response->assertOk()
             ->assertJsonPath('reviewed_by_name', 'Administrador del Sistema')
-            ->assertJsonPath('reviewed_by', (string) $this->demoUser('administrador')->id)
+            ->assertJsonPath('reviewed_by', (string) $admin->id)
             ->assertJsonPath('reviewed_at', $request->fresh()->reviewed_at->toIso8601String());
+    }
+
+    #[Test]
+    public function no_marca_revisada_si_abre_quien_la_creo(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $request = $this->crearSolicitud(['created_by' => $ventas->id]);
+
+        $this->actingAs($ventas)
+            ->getJson("/api/solicitudes/{$request->id}")
+            ->assertOk()
+            ->assertJsonPath('reviewed_by', null)
+            ->assertJsonPath('reviewed_by_name', null)
+            ->assertJsonPath('reviewed_at', null);
+
+        $this->assertNull($request->fresh()->reviewed_by);
+        $this->assertNull($request->fresh()->reviewed_at);
+    }
+
+    #[Test]
+    public function no_muestra_revisada_si_el_unico_revisor_fue_el_creador(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $request = $this->crearSolicitud([
+            'created_by' => $ventas->id,
+            'reviewed_by' => $ventas->id,
+            'reviewed_at' => now(),
+        ]);
+
+        $row = collect($this->getJson('/api/solicitudes')->json('data'))
+            ->firstWhere('id', $request->id);
+
+        $this->assertNotNull($row);
+        $this->assertNull($row['reviewed_by']);
+        $this->assertNull($row['reviewed_by_name']);
+        $this->assertNull($row['reviewed_at']);
     }
 
     #[Test]
     public function el_primer_revisor_gana(): void
     {
-        $request = $this->crearSolicitud();
+        $admin = $this->demoUser('administrador');
+        $request = $this->crearSolicitud([
+            'created_by' => $this->demoUser('ventas')->id,
+        ]);
 
         // El administrador abre el detalle primero.
-        $this->getJson("/api/solicitudes/{$request->id}")->assertOk();
-        $adminId = (string) $this->demoUser('administrador')->id;
+        $this->actingAs($admin)->getJson("/api/solicitudes/{$request->id}")->assertOk();
+        $adminId = (string) $admin->id;
 
         // Un usuario de ventas abre después: el revisor no cambia.
         $this->actingAs($this->demoUser('ventas'));
@@ -105,6 +147,46 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
             ->filter(fn ($status) => in_array($status, ['procesando', 'error'], true));
 
         $this->assertCount(0, $pendingStatuses);
+    }
+
+    #[Test]
+    public function el_dashboard_excluye_solicitudes_revisadas_por_otro_usuario(): void
+    {
+        $client = Client::query()->create([
+            'company' => 'Revision Corp',
+            'rfc' => 'REV020202ABC',
+        ]);
+        $ventas = $this->demoUser('ventas');
+        $admin = $this->demoUser('administrador');
+
+        $sinRevision = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'created_by' => $ventas->id,
+            'file_name' => 'pendiente.pdf',
+        ]);
+        $revisadaPorOtro = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'created_by' => $ventas->id,
+            'reviewed_by' => $admin->id,
+            'reviewed_at' => now(),
+            'file_name' => 'revisada.pdf',
+        ]);
+        $marcadaPorCreador = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'created_by' => $ventas->id,
+            'reviewed_by' => $ventas->id,
+            'reviewed_at' => now(),
+            'file_name' => 'auto.pdf',
+        ]);
+
+        $response = $this->getJson('/api/dashboard');
+        $pendingIds = collect($response->json('alerts.pendingReviewRequests'))
+            ->pluck('id')
+            ->all();
+
+        $this->assertContains($sinRevision->id, $pendingIds);
+        $this->assertContains($marcadaPorCreador->id, $pendingIds);
+        $this->assertNotContains($revisadaPorOtro->id, $pendingIds);
     }
 
     #[Test]

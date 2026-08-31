@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
 import { resetCsrfCookie } from '@/lib/api-fetch'
 import { Button } from '@/components/ui/Button'
 import { InlineBusy } from '@/components/ui/LoadingState'
@@ -10,12 +9,12 @@ import { DEMO_ACCOUNTS } from '@/data/demo-users'
 import { useAuth } from '@/hooks/useAuth'
 import { useRbac } from '@/hooks/useRbac'
 import { getDefaultRoute } from '@/lib/module-routes'
+import { getRouterBasename } from '@/lib/app-paths'
 import { ROLE_LABELS } from '@/types'
 
 export function LoginPage() {
   const { login, isAuthenticated, user } = useAuth()
   const { rolePermissions } = useRbac()
-  const navigate = useNavigate()
 
   useEffect(() => {
     resetCsrfCookie()
@@ -23,9 +22,10 @@ export function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      navigate(getDefaultRoute(rolePermissions, user), { replace: true })
+      const route = getDefaultRoute(rolePermissions, user)
+      window.location.assign(`${getRouterBasename().replace(/\/$/, '')}${route}`)
     }
-  }, [isAuthenticated, user, rolePermissions, navigate])
+  }, [isAuthenticated, user, rolePermissions])
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -40,7 +40,8 @@ export function LoginPage() {
     try {
       const logged = await login(username, password)
       if (logged) {
-        navigate(getDefaultRoute(rolePermissions, logged), { replace: true })
+        const route = getDefaultRoute(rolePermissions, logged)
+        window.location.assign(`${getRouterBasename().replace(/\/$/, '')}${route}`)
       } else {
         setError('No se pudo iniciar sesión. Verifica tu rol de usuario.')
       }

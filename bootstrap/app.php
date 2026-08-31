@@ -36,12 +36,14 @@ return Application::configure(basePath: dirname(__DIR__))
         );
 
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+        $middleware->append(\App\Http\Middleware\SpaBuildHeader::class);
 
         $middleware->alias([
             'n8n.webhook' => \App\Http\Middleware\VerifyN8nWebhookSecret::class,
             'whatsapp.signature' => \App\Http\Middleware\VerifyWhatsAppSignature::class,
             'permission' => \App\Http\Middleware\CheckPermission::class,
             'commercial.settings' => \App\Http\Middleware\CheckCommercialSettings::class,
+            'spa.upgrade' => \App\Http\Middleware\PromptSpaUpgrade::class,
         ]);
 
         // SPA en /spa/login; API sin sesión debe responder 401 JSON (no redirect a route('login')).

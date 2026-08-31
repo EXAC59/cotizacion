@@ -66,6 +66,9 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json')
   }
+  if (typeof __SPA_BUILD_ID__ === 'string' && __SPA_BUILD_ID__) {
+    headers.set('X-Spa-Build-Id', __SPA_BUILD_ID__)
+  }
 
   if (needsCsrf) {
     const token = readXsrfToken()
@@ -104,6 +107,9 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
     !String(input).includes('/user')
   ) {
     unauthorizedHandler?.()
+    if (response.headers.get('X-Spa-Upgrade-Required') === '1') {
+      window.location.reload()
+    }
   }
 
   return response

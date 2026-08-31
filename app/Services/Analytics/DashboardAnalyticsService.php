@@ -269,6 +269,10 @@ class DashboardAnalyticsService
             ->with('client')
             ->where('workflow_status', 'en_elaboracion')
             ->whereNotIn('status', ['procesando', 'error'])
+            ->where(function ($query) {
+                $query->whereNull('reviewed_by')
+                    ->orWhereColumn('reviewed_by', 'created_by');
+            })
             ->orderByDesc('created_at')
             ->limit(20)
             ->get()

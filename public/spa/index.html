@@ -9,8 +9,30 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
     <title>Cotización B2B</title>
-    <script type="module" crossorigin src="/spa/assets/index-CU3tB0wh.js"></script>
-    <link rel="stylesheet" crossorigin href="/spa/assets/index-B84OSi03.css">
+    <script>
+      ;(function () {
+        var moduleScript = document.querySelector('script[type="module"]')
+        if (!moduleScript) return
+        var loadedSrc = moduleScript.getAttribute('src') || ''
+        function checkForDeploy() {
+          fetch('/spa/index.html', { cache: 'no-store' })
+            .then(function (res) {
+              return res.text()
+            })
+            .then(function (html) {
+              var match = html.match(/assets\/index-[^"']+\.js/)
+              if (!match) return
+              if (loadedSrc.indexOf(match[0]) === -1) window.location.reload()
+            })
+            .catch(function () {})
+        }
+        checkForDeploy()
+        window.setInterval(checkForDeploy, 30000)
+      })()
+    </script>
+    <script src="/spa/reload-poller.js" defer></script>
+    <script type="module" crossorigin src="/spa/assets/index-Cm1VHDhx.js"></script>
+    <link rel="stylesheet" crossorigin href="/spa/assets/index-BIz1uPhO.css">
   </head>
   <body>
     <div id="root"></div>
