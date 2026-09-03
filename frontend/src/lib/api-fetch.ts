@@ -1,5 +1,6 @@
 import { getApiBase } from '@/lib/app-paths'
 import { setAuthToken } from '@/lib/auth-token'
+import { reloadOnceForSpaBuild } from '@/lib/spa-build-reload'
 
 let csrfCookiePromise: Promise<void> | null = null
 let unauthorizedHandler: (() => void) | null = null
@@ -101,15 +102,17 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
     })
   }
 
+  if (response.status === 401 && response.headers.get('X-Spa-Upgrade-Required') === '1') {
+    reloadOnceForSpaBuild()
+    return response
+  }
+
   if (
     response.status === 401 &&
     !String(input).includes('/login') &&
     !String(input).includes('/user')
   ) {
     unauthorizedHandler?.()
-    if (response.headers.get('X-Spa-Upgrade-Required') === '1') {
-      window.location.reload()
-    }
   }
 
   return response

@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class QuoteRequest extends Model
 {
+    use Concerns\HasViewerListScope;
     use HasUuids;
 
     public $incrementing = false;

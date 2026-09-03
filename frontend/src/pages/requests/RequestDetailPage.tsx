@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, FileText, RefreshCw } from 'lucide-react'
+import { AssignToSalesPanel } from '@/components/sales/AssignToSalesPanel'
 import { RequestLinesEditor } from '@/components/requests/RequestLinesEditor'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -12,6 +13,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { useToast } from '@/context/ToastProvider'
+import { assignSolicitudToSales } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { persistQuote } from '@/lib/quotes-api'
 import { buildLinesFromRequest } from '@/lib/quote-builder'
@@ -36,6 +38,7 @@ import {
   pollSolicitud,
   reprocesarSolicitud,
   requestLineToPayload,
+  isBlankRequestDraftLine,
   updateSolicitudLineas,
   type SolicitudCotizacionApi,
 } from '@/lib/solicitudes-api'
@@ -57,6 +60,9 @@ export function RequestDetailPage() {
   const { canConsultInventory } = usePermission()
   const { toast } = useToast()
   const canUseComparator = canConsultInventory()
+  const canAssignToSales =
+    user?.role === 'gerente_compras' || user?.role === 'administrador'
+  const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
   const [request, setRequest] = useState<QuoteRequest | null>(null)
   const [cotizaciones, setCotizaciones] = useState<SolicitudCotizacionApi[]>([])
   const [editLines, setEditLines] = useState<RequestLine[]>([])
@@ -67,6 +73,7 @@ export function RequestDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [validationErrors, setValidationErrors] = useState<string[]>([])
+  const lastSaveErrorRef = useRef<string | null>(null)
   const [preferredWarehouse, setPreferredWarehouse] = useState(
     () => DEFAULT_PREFERRED_WAREHOUSES.join(','),
   )
@@ -168,37 +175,84 @@ export function RequestDetailPage() {
   const handleSaveLines = async (
     workflowStatus: Extract<RequestWorkflowStatus, 'en_elaboracion' | 'pendiente_envio'>,
   ): Promise<boolean> => {
-    if (!id || editLines.length === 0) return false
+    if (!id) return false
+    const linesToSave = editLines.filter((line) => !isBlankRequestDraftLine(line))
+    if (linesToSave.length === 0) {
+      const message = 'Agrega al menos una partida con producto o número de parte.'
+      lastSaveErrorRef.current = message
+      setError(message)
+      return false
+    }
+    const incomplete = linesToSave.findIndex((line) => line.product.trim() === '')
+    if (incomplete >= 0) {
+      const message = `La partida ${incomplete + 1} necesita un producto.`
+      lastSaveErrorRef.current = message
+      setError(message)
+      return false
+    }
     setSavingLines(true)
     setError(null)
+    lastSaveErrorRef.current = null
     try {
       const api = await updateSolicitudLineas(
         id,
-        editLines.map(requestLineToPayload),
+        linesToSave.map(requestLineToPayload),
         workflowStatus,
       )
-      const mapped = mapSolicitudApiToQuoteRequest(api)
+      let mapped = mapSolicitudApiToQuoteRequest(api)
       const nextWorkflow = mapped.workflowStatus ?? 'en_elaboracion'
-      toast(`Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()}`)
+
+      if (
+        canAssignToSales &&
+        assignRecipientId != null &&
+        !mapped.assignedToSales
+      ) {
+        try {
+          const result = await assignSolicitudToSales(id, assignRecipientId)
+          toast(
+            result.previousFolio && result.folio
+              ? `Guardada y asignada. Folio ${result.previousFolio} → ${result.folio}`
+              : `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()} y enviado a ventas.`,
+          )
+          const refreshed = await getSolicitud(id)
+          mapped = mapSolicitudApiToQuoteRequest(refreshed)
+          setAssignRecipientId(null)
+        } catch (assignErr: unknown) {
+          const assignMsg =
+            assignErr instanceof Error
+              ? assignErr.message
+              : 'Se guardó, pero no se pudo asignar a ventas.'
+          toast(
+            `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()}. ${assignMsg}`,
+            'warning',
+          )
+        }
+      } else {
+        toast(`Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()}`)
+      }
+
       setRequest(mapped)
-      setEditLines(
-        api.lineas.map((line, index) => ({
-          id: line.id || `pl${index + 1}`,
-          quantity: line.quantity,
-          product: line.product,
-          partNumber: line.partNumber,
-          brand: line.brand,
-          description: line.description,
-          unit: line.unit,
-          referenceCost: line.referenceCost ?? undefined,
-          selectedWholesalerId: line.selectedWholesalerId ?? undefined,
-          warehouse: line.warehouse ?? undefined,
-        })),
-      )
+      const nextLines = mapped.lines?.length
+        ? mapped.lines
+        : api.lineas.map((line, index) => ({
+            id: line.id || `pl${index + 1}`,
+            quantity: line.quantity,
+            product: line.product,
+            partNumber: line.partNumber,
+            brand: line.brand,
+            description: line.description,
+            unit: line.unit,
+            referenceCost: line.referenceCost ?? undefined,
+            selectedWholesalerId: line.selectedWholesalerId ?? undefined,
+            warehouse: line.warehouse ?? undefined,
+          }))
+      setEditLines(nextLines)
       setLinesDirty(false)
       return true
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'No se pudieron guardar las líneas.')
+      const message = err instanceof Error ? err.message : 'No se pudieron guardar las líneas.'
+      lastSaveErrorRef.current = message
+      setError(message)
       return false
     } finally {
       setSavingLines(false)
@@ -206,10 +260,18 @@ export function RequestDetailPage() {
   }
 
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(linesDirty, {
-    onSave: () =>
-      handleSaveLines(
+    onSave: async () => {
+      const ok = await handleSaveLines(
         request?.workflowStatus === 'pendiente_envio' ? 'pendiente_envio' : 'en_elaboracion',
-      ),
+      )
+      if (!ok) {
+        throw new Error(
+          lastSaveErrorRef.current ||
+            'No se pudieron guardar las líneas. Completa el producto o quita las filas vacías.',
+        )
+      }
+      return true
+    },
   })
 
   const handleReprocesar = async () => {
@@ -399,6 +461,24 @@ export function RequestDetailPage() {
         </div>
       )}
 
+      {canAssignToSales && id && request && !request.assignedToSales && (
+        <div className="mb-4">
+          <AssignToSalesPanel
+            entityLabel="solicitud"
+            disabled={savingLines || loading || sent}
+            saveWithParent
+            onRecipientChange={setAssignRecipientId}
+          />
+        </div>
+      )}
+
+      {canAssignToSales && request?.assignedToSales && (
+        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          Ya enviada a ventas ({request.createdByName?.trim() || 'vendedor'}). No se puede volver a
+          asignar.
+        </p>
+      )}
+
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <span
           className={`inline-flex items-center rounded-lg px-3 py-1 text-sm font-semibold ring-1 ${
@@ -577,6 +657,8 @@ export function RequestDetailPage() {
                 showComparator={canUseComparator}
                 dirty={linesDirty}
                 saving={savingLines}
+                forceSaveAvailable={assignRecipientId != null && !request.assignedToSales}
+                assignHint={assignRecipientId != null && !request.assignedToSales}
                 onChange={handleLinesChange}
                 onSave={handleSaveLines}
                 onCancel={handleCancelLines}

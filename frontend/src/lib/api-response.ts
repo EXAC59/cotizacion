@@ -38,11 +38,62 @@ export function formatApiErrorMessage(data: ApiErrorBody, status: number): strin
     return `El archivo debe incluir columnas: ${columnas.join(', ')}.`
   }
 
-  if (data.message) {
-    return data.message
+  const fieldMessage = firstValidationErrorMessage(errors)
+  if (fieldMessage) {
+    return fieldMessage
+  }
+
+  const message = typeof data.message === 'string' ? data.message.trim() : ''
+  if (message && !looksLikeValidationKey(message)) {
+    return message
   }
 
   return `Error del servidor (${status}).`
+}
+
+function looksLikeValidationKey(message: string): boolean {
+  return /^validation\.[a-z0-9_.]+$/i.test(message)
+}
+
+function firstValidationErrorMessage(
+  errors: Record<string, string[] | string>,
+): string | null {
+  for (const [key, value] of Object.entries(errors)) {
+    const raw = Array.isArray(value) ? value[0] : value
+    if (typeof raw !== 'string' || raw.trim() === '') continue
+    if (!looksLikeValidationKey(raw)) {
+      return raw
+    }
+    return humanizeValidationKey(key, raw)
+  }
+  return null
+}
+
+function humanizeValidationKey(field: string, key: string): string {
+  const lineMatch = field.match(/^lineas\.(\d+)\.(.+)$/i)
+  if (lineMatch) {
+    const row = Number(lineMatch[1]) + 1
+    const attr = lineMatch[2]
+    if (attr === 'product' && key.includes('required')) {
+      return `La partida ${row} necesita un producto.`
+    }
+    if (attr === 'quantity' && (key.includes('required') || key.includes('min'))) {
+      return `La partida ${row} necesita una cantidad válida.`
+    }
+    if (attr === 'partNumber') {
+      return `Revisa el número de parte de la partida ${row}.`
+    }
+    if (attr === 'brand') {
+      return `Revisa la marca de la partida ${row}.`
+    }
+    return `Revisa la partida ${row} (${attr}).`
+  }
+
+  if (key.includes('required')) {
+    return 'Falta un dato obligatorio. Revisa las partidas.'
+  }
+
+  return 'Hay datos inválidos. Revisa el formulario.'
 }
 
 export async function parseApiJson<T>(response: Response): Promise<T> {

@@ -19,6 +19,39 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function listado_marca_pendiente_solo_si_creador_es_ventas(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+
+        $deVentas = $this->crearSolicitud([
+            'created_by' => $ventas->id,
+            'folio' => 'SOL-VENTAS-PEND',
+        ]);
+        $deCompras = $this->crearSolicitud([
+            'created_by' => $compras->id,
+            'folio' => 'SOL-COMPRAS-NA',
+        ]);
+
+        $this->actingAs($compras);
+        $rows = collect($this->getJson('/api/solicitudes?scope=all')->assertOk()->json('data'));
+
+        $rowVentas = $rows->firstWhere('id', $deVentas->id);
+        $rowCompras = $rows->firstWhere('id', $deCompras->id);
+
+        $this->assertNotNull($rowVentas);
+        $this->assertNotNull($rowCompras);
+
+        $this->assertTrue($rowVentas['needs_external_review']);
+        $this->assertTrue($rowVentas['assigned_to_sales']);
+        $this->assertNull($rowVentas['reviewed_by_name']);
+
+        $this->assertFalse($rowCompras['needs_external_review']);
+        $this->assertFalse($rowCompras['assigned_to_sales']);
+        $this->assertNull($rowCompras['reviewed_by_name']);
+    }
+
+    #[Test]
     public function se_crea_sin_revisor(): void
     {
         $request = $this->crearSolicitud();
@@ -108,25 +141,35 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
             'company' => 'Revision Corp',
             'rfc' => 'REV010101ABC',
         ]);
+        $ventas = $this->demoUser('ventas');
 
         $enElaboracion = $this->crearSolicitud([
             'client_id' => $client->id,
+            'created_by' => $ventas->id,
             'file_name' => 'pedido.pdf',
         ]);
         $preciosListos = $this->crearSolicitud([
             'client_id' => $client->id,
+            'created_by' => $ventas->id,
             'status' => 'precios_listos',
             'file_name' => 'precios.xlsx',
         ]);
         $pendienteEnvio = $this->crearSolicitud([
             'client_id' => $client->id,
+            'created_by' => $ventas->id,
             'workflow_status' => 'pendiente_envio',
             'file_name' => 'lista.pdf',
         ]);
         $enviada = $this->crearSolicitud([
             'client_id' => $client->id,
+            'created_by' => $ventas->id,
             'workflow_status' => 'enviada',
             'file_name' => 'enviada.pdf',
+        ]);
+        $deCompras = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'created_by' => $this->demoUser('gerente_compras')->id,
+            'file_name' => 'compras.pdf',
         ]);
 
         $response = $this->getJson('/api/dashboard');
@@ -140,6 +183,7 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
         $this->assertContains($preciosListos->id, $pendingIds);
         $this->assertNotContains($pendienteEnvio->id, $pendingIds);
         $this->assertNotContains($enviada->id, $pendingIds);
+        $this->assertNotContains($deCompras->id, $pendingIds);
 
         // Las sin revisar no deben filtrarse por estado terminal de flujo.
         $pendingStatuses = collect($response->json('alerts.pendingReviewRequests'))
@@ -213,9 +257,10 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
     #[Test]
     public function permite_editar_lineas_en_elaboracion(): void
     {
-        $request = $this->crearSolicitud();
+        $ventas = $this->demoUser('ventas');
+        $request = $this->crearSolicitud(['created_by' => $ventas->id]);
 
-        $this->actingAs($this->demoUser('ventas'))
+        $this->actingAs($ventas)
             ->putJson("/api/solicitudes/{$request->id}/lineas", [
                 'lineas' => [
                     [
@@ -229,6 +274,8 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
                 ],
             ])
             ->assertOk()
-            ->assertJsonPath('workflow_status', 'pendiente_envio');
+            ->assertJsonPath('workflow_status', 'pendiente_envio')
+            ->assertJsonPath('needs_external_review', true)
+            ->assertJsonPath('reviewed_by', null);
     }
 }

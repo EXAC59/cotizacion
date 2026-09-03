@@ -130,6 +130,22 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function follow_up_rejected_when_quote_already_sent_to_client(): void
+    {
+        $this->actingAsDemoUser('ventas');
+        $quote = $this->createQuote([
+            'status' => 'enviada',
+            'sent_at' => now(),
+        ]);
+
+        $this->patchJson("/api/cotizaciones/{$quote->id}/seguimiento", [
+            'status' => 'negociacion',
+            'remindDate' => now()->toDateString(),
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['status']);
+    }
+
+    #[Test]
     public function follow_up_negociacion_rejects_past_date(): void
     {
         $this->actingAsDemoUser('ventas');
@@ -221,7 +237,7 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function notify_targets_last_ventas_user_who_touched_quote(): void
+    public function notify_targets_ventas_user_who_created_the_quote(): void
     {
         $compras = $this->demoUser('gerente_compras');
         $creator = $this->demoUser('ventas');
@@ -251,32 +267,105 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
         $this->actingAs($compras);
         $this->getJson("/api/cotizaciones/{$quote->id}/elegibilidad-aviso")
             ->assertOk()
-            ->assertJsonPath('notifyRecipientName', $otherVentas->name);
+            ->assertJsonPath('notifyRecipientName', $creator->name);
 
         $this->postJson('/api/notificaciones', [
             'quoteId' => $quote->id,
             'message' => 'Por favor da seguimiento al cliente.',
         ])
             ->assertCreated()
-            ->assertJsonPath('recipientName', $otherVentas->name)
+            ->assertJsonPath('recipientName', $creator->name)
             ->assertJsonPath('message', 'Por favor da seguimiento al cliente.');
 
         $this->actingAs($otherVentas);
         $list = $this->getJson('/api/notificaciones')->assertOk();
-        $this->assertTrue(collect($list->json('data'))->contains(
-            fn ($n) => ($n['quoteId'] ?? '') === $quote->id
-                && ($n['message'] ?? '') === 'Por favor da seguimiento al cliente.'
-        ));
+        $this->assertFalse(
+            collect($list->json('data'))->contains(
+                fn ($n) => ($n['quoteId'] ?? '') === $quote->id
+            ),
+            'Otro vendedor no debe ver cotizaciones que no creó.'
+        );
 
         $this->actingAs($creator);
         $creatorList = $this->getJson('/api/notificaciones')->assertOk();
-        $this->assertFalse(
+        $this->assertTrue(
             collect($creatorList->json('data'))->contains(
                 fn ($n) => ($n['quoteId'] ?? '') === $quote->id
                     && str_contains((string) ($n['message'] ?? ''), 'Por favor da seguimiento')
-            ),
-            'El creador no debe recibir el aviso dirigido a otro vendedor.'
+            )
         );
+    }
+
+    #[Test]
+    public function ventas_sees_pipeline_alerts_only_for_own_quotes(): void
+    {
+        $creator = $this->demoUser('ventas');
+        $otherVentas = \App\Models\User::query()->create([
+            'name' => 'Otra Venta',
+            'email' => 'otra.venta.'.uniqid().'@test.local',
+            'username' => 'otra_venta_'.uniqid(),
+            'password' => bcrypt('demo'),
+            'role_id' => $creator->role_id,
+            'active' => true,
+        ]);
+
+        $ownElab = $this->createQuote([
+            'status' => 'en_elaboracion',
+            'created_by' => $creator->id,
+            'folio' => 'COT-MIA-ELAB-'.uniqid(),
+        ]);
+        $ownLista = $this->createQuote([
+            'status' => 'pendiente_envio',
+            'created_by' => $creator->id,
+            'folio' => 'COT-MIA-LISTA-'.uniqid(),
+        ]);
+        $foreignElab = $this->createQuote([
+            'status' => 'en_elaboracion',
+            'created_by' => $otherVentas->id,
+            'folio' => 'COT-AJENA-ELAB-'.uniqid(),
+        ]);
+        $foreignLista = $this->createQuote([
+            'status' => 'pendiente_envio',
+            'created_by' => $otherVentas->id,
+            'folio' => 'COT-AJENA-LISTA-'.uniqid(),
+        ]);
+
+        $this->actingAs($creator);
+        $list = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+
+        $this->assertTrue($list->contains(
+            fn ($n) => ($n['quoteId'] ?? '') === $ownElab->id
+                && ($n['reasonCode'] ?? '') === 'en_elaboracion'
+                && ($n['kind'] ?? '') === 'pipeline'
+        ));
+        $this->assertTrue($list->contains(
+            fn ($n) => ($n['quoteId'] ?? '') === $ownLista->id
+                && ($n['reasonCode'] ?? '') === 'lista_terminada'
+                && ($n['kind'] ?? '') === 'pipeline'
+        ));
+        $this->assertFalse($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $foreignElab->id));
+        $this->assertFalse($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $foreignLista->id));
+
+        $this->actingAs($otherVentas);
+        $otherList = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+        $this->assertFalse($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownElab->id));
+        $this->assertFalse($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownLista->id));
+    }
+
+    #[Test]
+    public function ventas_pipeline_ignores_quotes_made_by_other_display_names(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $admin = $this->demoUser('administrador');
+        $adminQuote = $this->createQuote([
+            'status' => 'en_elaboracion',
+            'created_by' => $admin->id,
+            'folio' => 'COT-ADMIN-ELAB-'.uniqid(),
+        ]);
+
+        $this->actingAs($ventas);
+        $list = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+        $this->assertFalse($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $adminQuote->id));
     }
 
     #[Test]
@@ -362,5 +451,50 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
             0,
             SalesNotification::query()->where('quote_id', $quote->id)->count()
         );
+    }
+
+    #[Test]
+    public function ventas_sees_only_own_quotes_or_ones_compras_sent_them(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+        $admin = $this->demoUser('administrador');
+
+        $own = $this->createQuote([
+            'status' => 'en_elaboracion',
+            'created_by' => $ventas->id,
+            'folio' => 'COT-ERICKA-'.uniqid(),
+        ]);
+        $foreign = $this->createQuote([
+            'status' => 'pendiente_envio',
+            'created_by' => $admin->id,
+            'folio' => 'COT-AJENA-'.uniqid(),
+        ]);
+
+        $this->actingAs($ventas);
+        $folios = collect($this->getJson('/api/cotizaciones')->assertOk()->json('data'))->pluck('folio');
+        $this->assertTrue($folios->contains($own->folio));
+        $this->assertFalse($folios->contains($foreign->folio));
+        $this->getJson("/api/cotizaciones/{$foreign->id}")
+            ->assertOk()
+            ->assertJsonPath('ownedByViewer', false);
+
+        $teamFolios = collect($this->getJson('/api/cotizaciones?scope=team')->assertOk()->json('data'))->pluck('folio');
+        $this->assertTrue($teamFolios->contains($foreign->folio));
+        $this->assertFalse($teamFolios->contains($own->folio));
+
+        $this->postJson("/api/cotizaciones/{$foreign->id}/bloqueo")->assertForbidden();
+
+        $this->actingAs($compras);
+        $this->postJson('/api/notificaciones', [
+            'quoteId' => $foreign->id,
+            'message' => 'Ericka, da seguimiento a esta cotización.',
+            'recipientId' => $ventas->id,
+        ])->assertCreated();
+
+        $this->actingAs($ventas);
+        $foliosAfter = collect($this->getJson('/api/cotizaciones')->assertOk()->json('data'))->pluck('folio');
+        $this->assertTrue($foliosAfter->contains($foreign->folio));
+        $this->getJson("/api/cotizaciones/{$foreign->id}")->assertOk();
     }
 }

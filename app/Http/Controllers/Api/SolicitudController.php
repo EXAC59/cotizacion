@@ -7,7 +7,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Services\LecturaInterpretacionService;
+use App\Services\Sales\AssignToSalesService;
 use App\Services\SolicitudLecturaService;
+use App\Support\ViewerListScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -28,6 +30,7 @@ class SolicitudController extends Controller
     public function __construct(
         private readonly SolicitudLecturaService $lecturaService,
         private readonly LecturaInterpretacionService $interpretacion,
+        private readonly AssignToSalesService $assignToSales,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -36,11 +39,18 @@ class SolicitudController extends Controller
             'status' => ['nullable', 'string', Rule::in(self::STATUSES)],
             'workflow_status' => ['nullable', 'string', Rule::in(config('solicitudes.workflow_statuses', []))],
             'q' => ['nullable', 'string', 'max:120'],
+            'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
         ]);
 
         $query = QuoteRequest::query()
             ->with(['lines', 'client', 'creator'])
             ->orderByDesc('created_at');
+
+        $user = $request->user();
+        $user?->loadMissing('role');
+        if ($user) {
+            $query->forViewerList($user, $validated['scope'] ?? ViewerListScope::defaultFor($user));
+        }
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -66,10 +76,14 @@ class SolicitudController extends Controller
         ]);
     }
 
-    public function show(string $id): JsonResponse
+    public function show(Request $httpRequest, string $id): JsonResponse
     {
         $request = QuoteRequest::query()->with(['lines', 'client', 'creator'])->findOrFail($id);
-        $this->lecturaService->marcarRevisada($request);
+        $user = $httpRequest->user();
+        $user?->loadMissing('role');
+        if ($user?->role_slug !== 'ventas' || $request->isOwnedByUser($user)) {
+            $this->lecturaService->marcarRevisada($request);
+        }
 
         return response()->json($this->lecturaService->toApiArray($request));
     }
@@ -239,25 +253,47 @@ class SolicitudController extends Controller
 
     public function updateLineas(Request $request, string $id): JsonResponse
     {
-        $validated = $request->validate([
-            'lineas' => ['required', 'array', 'min:1'],
-            'lineas.*.quantity' => ['required', 'numeric', 'min:0.0001'],
-            'lineas.*.product' => ['required', 'string', 'max:255'],
-            'lineas.*.partNumber' => ['nullable', 'string', 'max:80'],
-            'lineas.*.brand' => ['nullable', 'string', 'max:80'],
-            'lineas.*.description' => ['nullable', 'string'],
-            'lineas.*.unit' => ['nullable', 'string', 'max:20'],
-            'lineas.*.referenceCost' => ['nullable', 'numeric', 'min:0'],
-            'lineas.*.selectedWholesalerId' => ['nullable', 'uuid'],
-            'lineas.*.warehouse' => ['nullable', 'string', 'max:20'],
-            'workflow_status' => ['nullable', 'string', Rule::in(['en_elaboracion', 'pendiente_envio'])],
-        ]);
+        $validated = $request->validate(
+            [
+                'lineas' => ['required', 'array', 'min:1'],
+                'lineas.*.quantity' => ['required', 'numeric', 'min:0.0001'],
+                'lineas.*.product' => ['required', 'string', 'max:255'],
+                'lineas.*.partNumber' => ['nullable', 'string', 'max:80'],
+                'lineas.*.brand' => ['nullable', 'string', 'max:80'],
+                'lineas.*.description' => ['nullable', 'string'],
+                'lineas.*.unit' => ['nullable', 'string', 'max:20'],
+                'lineas.*.referenceCost' => ['nullable', 'numeric', 'min:0'],
+                'lineas.*.selectedWholesalerId' => ['nullable', 'uuid'],
+                'lineas.*.warehouse' => ['nullable', 'string', 'max:20'],
+                'workflow_status' => ['nullable', 'string', Rule::in(['en_elaboracion', 'pendiente_envio'])],
+            ],
+            [
+                'lineas.required' => 'Indica al menos una partida.',
+                'lineas.min' => 'Indica al menos una partida.',
+                'lineas.*.quantity.required' => 'Cada partida necesita una cantidad.',
+                'lineas.*.quantity.min' => 'La cantidad debe ser mayor a cero.',
+                'lineas.*.product.required' => 'Cada partida necesita un producto.',
+                'lineas.*.product.max' => 'El producto es demasiado largo.',
+            ],
+            [
+                'lineas' => 'partidas',
+                'lineas.*.quantity' => 'cantidad',
+                'lineas.*.product' => 'producto',
+                'lineas.*.partNumber' => 'número de parte',
+                'lineas.*.brand' => 'marca',
+            ],
+        );
+
+        $quoteRequest = QuoteRequest::query()->findOrFail($id);
+        $this->ensureVentasCanMutateSolicitud($request, $quoteRequest);
 
         $lineas = collect($validated['lineas'])->map(fn (array $line) => [
             'quantity' => (float) $line['quantity'],
             'product' => $line['product'],
             'partNumber' => $line['partNumber'] ?? '',
-            'brand' => $line['brand'] ?? 'Genérico',
+            'brand' => trim((string) ($line['brand'] ?? '')) !== ''
+                ? trim((string) $line['brand'])
+                : 'Genérico',
             'description' => $line['description'] ?? $line['product'],
             'unit' => $line['unit'] ?? 'pza',
             'referenceCost' => isset($line['referenceCost']) ? (float) $line['referenceCost'] : null,
@@ -275,9 +311,37 @@ class SolicitudController extends Controller
             return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         }
 
+        $this->lecturaService->marcarRevisada($quoteRequest);
+
         return response()->json([
             'message' => 'Líneas actualizadas',
-            ...$this->lecturaService->toApiArray($quoteRequest),
+            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
+        ]);
+    }
+
+    public function asignarVentas(string $id, Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'recipientId' => ['required', 'integer', 'exists:users,id'],
+        ]);
+
+        $actor = $request->user();
+        if ($actor === null) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        }
+
+        $quoteRequest = QuoteRequest::query()->findOrFail($id);
+        $result = $this->assignToSales->assignSolicitud(
+            $quoteRequest,
+            $actor,
+            (int) $validated['recipientId'],
+        );
+
+        return response()->json([
+            'message' => 'Solicitud asignada a ventas.',
+            'previousFolio' => $result['previousFolio'],
+            'folio' => $result['folio'],
+            ...$this->lecturaService->toApiArray($result['request']),
         ]);
     }
 
@@ -302,5 +366,18 @@ class SolicitudController extends Controller
         }
 
         return $source ?? 'pdf';
+    }
+
+    private function ensureVentasCanMutateSolicitud(Request $request, QuoteRequest $quoteRequest): void
+    {
+        $user = $request->user();
+        $user?->loadMissing('role');
+        if ($user?->role_slug !== 'ventas') {
+            return;
+        }
+
+        if (! $quoteRequest->isOwnedByUser($user)) {
+            abort(403, 'Solo puedes editar solicitudes que creaste.');
+        }
     }
 }

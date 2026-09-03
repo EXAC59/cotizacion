@@ -7,6 +7,8 @@ import { Input, Label, Select } from '@/components/ui/Input'
 import { LoadingState, TableSkeleton } from '@/components/ui/LoadingState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
+import { ViewerListScopeTabs } from '@/components/ui/ViewerListScopeTabs'
+import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { useData } from '@/hooks/useData'
 import { quoteTotals } from '@/lib/calculations'
@@ -15,16 +17,19 @@ import { matchesQuoteListFilters } from '@/lib/quote-list-filters'
 import { buildQuoteSearchParams } from '@/lib/quote-search-params'
 import { QUOTE_STATUS_ORDER } from '@/lib/quote-status'
 import { listQuotes, openQuotePdf, isPersistedQuoteId } from '@/lib/quotes-api'
+import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
 import { QUOTE_STATUS_LABELS, type Quote, type QuoteStatus } from '@/types'
 
 export function QuotesPage() {
   const { quotes: localQuotes, saveQuote } = useData()
+  const { user } = useAuth()
   const { canCreateQuotes } = usePermission()
   const canCreate = canCreateQuotes()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const statusFilter = (searchParams.get('status') ?? '') as QuoteStatus | ''
   const urlSearch = searchParams.get('q') ?? ''
+  const listScope = parseViewerListScope(searchParams.get('scope'), user?.role)
 
   const [searchInput, setSearchInput] = useState(urlSearch)
   const [apiQuotes, setApiQuotes] = useState<Quote[]>([])
@@ -61,6 +66,7 @@ export function QuotesPage() {
     listQuotes({
       search: urlSearch.trim() || undefined,
       status: statusFilter || undefined,
+      scope: listScope,
     })
       .then((data) => {
         if (cancelled) return
@@ -77,7 +83,7 @@ export function QuotesPage() {
     return () => {
       cancelled = true
     }
-  }, [urlSearch, statusFilter, saveQuote])
+  }, [urlSearch, statusFilter, listScope, saveQuote])
 
   const quotes = useMemo(() => {
     const source = error ? localQuotes : apiQuotes
@@ -89,6 +95,22 @@ export function QuotesPage() {
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     )
   }, [apiQuotes, localQuotes, error, urlSearch, statusFilter])
+
+  const setListScope = (value: ViewerListScope) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        const fallback = parseViewerListScope(null, user?.role)
+        if (value === fallback) {
+          next.delete('scope')
+        } else {
+          next.set('scope', value)
+        }
+        return next
+      },
+      { replace: true },
+    )
+  }
 
   const setStatusFilter = (value: QuoteStatus | '') => {
     setSearchParams(
@@ -111,7 +133,7 @@ export function QuotesPage() {
     <div>
       <PageHeader
         title="Cotizaciones"
-        description="Constructor, márgenes y envío de propuestas"
+        description="Constructor, márgenes y envío de propuestas. Mías son las tuyas; Todas incluye las del equipo."
         actions={
           canCreate ? (
             <Link to="/cotizaciones/nueva">
@@ -123,6 +145,8 @@ export function QuotesPage() {
           ) : undefined
         }
       />
+
+      <ViewerListScopeTabs value={listScope} onChange={setListScope} />
 
       {urlSearch.trim() && (
         <p className="mb-4 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-2 text-sm text-indigo-900">

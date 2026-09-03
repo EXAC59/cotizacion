@@ -116,7 +116,7 @@ export function DashboardPage() {
         <StatCard
           label="Solicitudes de cotización sin revisión"
           value={String(alerts.pendingReviewRequests.length)}
-          hint="Nadie distinto al creador las ha revisado"
+          hint="De ventas, en elaboración, sin apertura de compras/admin"
           icon={Inbox}
         />
         <StatCard
@@ -259,87 +259,9 @@ export function DashboardPage() {
       </div>
 
       <div id="alertas" className="relative scroll-mt-28">
-        <SectionTitle>Alertas</SectionTitle>
+        <SectionTitle>Notificaciones y recordatorios</SectionTitle>
       </div>
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
-        <Card id="cotizaciones-pendientes" className="relative min-w-0 scroll-mt-28 overflow-hidden">
-          <CardHeader
-            title="Cotizaciones pendientes"
-            subtitle="Siguen en En elaboración y nunca han sido Lista / Terminada"
-            action={
-              <Link to="/cotizaciones?status=en_elaboracion" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-                Ver cotizaciones
-              </Link>
-            }
-          />
-          <CardBody className="space-y-2">
-            {alerts.pendingQuotes.length === 0 ? (
-              <p className="text-sm text-slate-500">No hay cotizaciones pendientes en elaboración.</p>
-            ) : (
-              alerts.pendingQuotes.map((quote) => (
-                <div
-                  id={`dashboard-quote-${quote.id}`}
-                  key={quote.id}
-                  className="relative flex items-center justify-between gap-2 rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2 text-sm"
-                >
-                  <div>
-                    <Link
-                      to={`/cotizaciones/${quote.id}`}
-                      className="font-medium text-indigo-600 hover:underline"
-                    >
-                      {quote.folio}
-                    </Link>
-                    <p className="text-slate-500">{quote.clientName}</p>
-                    <p className="text-xs text-slate-600">
-                      Hecha por: {quote.createdByName?.trim() || 'Sin asignar'}
-                    </p>
-                  </div>
-                  <QuoteStatusBadge status="en_elaboracion" />
-                </div>
-              ))
-            )}
-          </CardBody>
-        </Card>
-
-        <Card id="cotizaciones-listas-ventas" className="relative min-w-0 scroll-mt-28 overflow-hidden">
-          <CardHeader
-            title="Listas / Terminadas para ventas"
-            subtitle="Cotizaciones listas para envío o seguimiento"
-            action={
-              <Link to="/cotizaciones?status=pendiente_envio" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-                Ver cotizaciones
-              </Link>
-            }
-          />
-          <CardBody className="space-y-2">
-            {(alerts.readyForSalesQuotes?.length ?? 0) === 0 ? (
-              <p className="text-sm text-slate-500">No hay cotizaciones en Lista / Terminada.</p>
-            ) : (
-              alerts.readyForSalesQuotes.map((quote) => (
-                <div
-                  id={`dashboard-quote-${quote.id}`}
-                  key={quote.id}
-                  className="relative flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-sm"
-                >
-                  <div>
-                    <Link
-                      to={`/cotizaciones/${quote.id}`}
-                      className="font-medium text-indigo-600 hover:underline"
-                    >
-                      {quote.folio}
-                    </Link>
-                    <p className="text-slate-500">{quote.clientName}</p>
-                    <p className="text-xs text-slate-600">
-                      Hecha por: {quote.createdByName?.trim() || 'Sin asignar'}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-emerald-800">Lista</span>
-                </div>
-              ))
-            )}
-          </CardBody>
-        </Card>
-
         <Card id="cotizaciones-sin-avance" className="relative scroll-mt-28">
           <CardHeader
             title="Cotizaciones sin avance"
@@ -383,7 +305,7 @@ export function DashboardPage() {
         <Card id="solicitudes-sin-revisar" className="relative scroll-mt-28">
           <CardHeader
             title="Solicitudes sin revisar"
-            subtitle="En elaboración y sin revisión de otro usuario"
+            subtitle="Hechas por ventas, en elaboración y sin revisión de compras/admin"
             action={
               <Link to="/solicitudes" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
                 Ver solicitudes

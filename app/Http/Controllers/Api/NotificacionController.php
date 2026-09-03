@@ -29,6 +29,7 @@ class NotificacionController extends Controller
         $data = $request->validate([
             'quoteId' => ['required', 'uuid', 'exists:quotes,id'],
             'message' => ['required', 'string', 'min:3', 'max:1000'],
+            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
         $quote = Quote::query()->findOrFail($data['quoteId']);
@@ -36,6 +37,7 @@ class NotificacionController extends Controller
             $quote,
             $request->user(),
             $data['message'] ?? null,
+            isset($data['recipientId']) ? (int) $data['recipientId'] : null,
         );
 
         return response()->json($this->notifications->toApiArray(

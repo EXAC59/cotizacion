@@ -18,6 +18,7 @@ import {
   type FollowUpStatus,
   type Quote,
 } from '@/types'
+import { isUnsentForClientQuote } from '@/lib/quote-status'
 
 function isComprasRole(role: string | undefined): boolean {
   return role === 'gerente_compras' || role === 'administrador'
@@ -70,13 +71,18 @@ export function RecordatoriosPage() {
 
   useNotificationFocus(!loading)
 
-  const eligible = useMemo(
-    () => quotes.filter((q) => q.eligibility?.eligible),
+  const reminderQuotes = useMemo(
+    () => quotes.filter((q) => isUnsentForClientQuote(q)),
     [quotes],
   )
+
+  const eligible = useMemo(
+    () => reminderQuotes.filter((q) => q.eligibility?.eligible),
+    [reminderQuotes],
+  )
   const others = useMemo(
-    () => quotes.filter((q) => !q.eligibility?.eligible),
-    [quotes],
+    () => reminderQuotes.filter((q) => !q.eligibility?.eligible),
+    [reminderQuotes],
   )
 
   const stats = useMemo(() => {
@@ -85,16 +91,16 @@ export function RecordatoriosPage() {
       ganada: 0,
       perdida: 0,
     }
-    for (const q of quotes) {
+    for (const q of reminderQuotes) {
       const s = q.followUp?.status
       if (s && counts[s] !== undefined) counts[s] += 1
     }
     return counts
-  }, [quotes])
+  }, [reminderQuotes])
 
   const selectedQuote = useMemo(
-    () => quotes.find((q) => q.id === selectedId) ?? null,
-    [quotes, selectedId],
+    () => reminderQuotes.find((q) => q.id === selectedId) ?? null,
+    [reminderQuotes, selectedId],
   )
 
   const openDetail = (id: string, reagendar = false) => {
@@ -132,8 +138,8 @@ export function RecordatoriosPage() {
         title={showVentasDashboard ? 'Dashboard — Recordatorios' : 'Recordatorios'}
         description={
           showVentasDashboard
-            ? 'Seguimiento comercial aparte del estado de cotización (enviada, etc.).'
-            : 'Envía comentarios del recordatorio al vendedor de cada cotización.'
+            ? 'Solo cotizaciones tuyas (o las que compras te envió), en elaboración o Lista / Terminada, todavía no enviadas al cliente.'
+            : 'Comentarios al vendedor sobre cotizaciones que aún no se envían al cliente.'
         }
         actions={
           <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
@@ -161,7 +167,7 @@ export function RecordatoriosPage() {
           <div className="min-w-0">
             {showVentasDashboard ? (
               <VentasDashboard
-                quotes={quotes}
+                quotes={reminderQuotes}
                 stats={stats}
                 selectedId={selectedId}
                 onOpenDetail={openDetail}
@@ -297,7 +303,9 @@ function VentasDashboard({
 
       <div className="grid gap-3">
         {quotes.length === 0 && (
-          <p className="text-sm text-slate-500">No hay cotizaciones.</p>
+          <p className="text-sm text-slate-500">
+            No hay cotizaciones pendientes de envío al cliente.
+          </p>
         )}
         {quotes.map((q) => (
           <VentasReminderCard

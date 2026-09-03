@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Quote extends Model
 {
+    use Concerns\HasViewerListScope;
     use HasUuids;
 
     public $incrementing = false;
@@ -76,6 +77,13 @@ class Quote extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    public static function normalizeDisplayName(?string $name): string
+    {
+        $collapsed = preg_replace('/\s+/u', ' ', trim((string) $name)) ?? '';
+
+        return mb_strtolower($collapsed);
+    }
+
     public function lockedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'locked_by');
@@ -109,5 +117,33 @@ class Quote extends Model
     public function salesNotifications(): HasMany
     {
         return $this->hasMany(SalesNotification::class, 'quote_id')->orderByDesc('created_at');
+    }
+
+    /**
+     * Ventas: propias (Hecha por / created_by) o asignadas por un aviso de compras.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Quote>  $query
+     * @return \Illuminate\Database\Eloquent\Builder<Quote>
+     */
+    public function scopeVisibleToSalesperson($query, User $user)
+    {
+        return $query->where(function ($outer) use ($user) {
+            $outer->where('created_by', $user->id)
+                ->orWhere(fn ($byName) => $byName->madeByDisplayName($user))
+                ->orWhereHas('salesNotifications', function ($notification) use ($user) {
+                    $notification->where('audience', 'ventas')
+                        ->where('recipient_id', $user->id)
+                        ->whereNotNull('sender_id')
+                        ->whereHas(
+                            'sender.role',
+                            fn ($role) => $role->whereIn('slug', ['gerente_compras', 'administrador']),
+                        );
+                });
+        });
+    }
+
+    public function isVisibleToSalesperson(User $user): bool
+    {
+        return static::query()->whereKey($this->id)->visibleToSalesperson($user)->exists();
     }
 }

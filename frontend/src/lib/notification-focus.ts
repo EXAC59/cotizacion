@@ -19,7 +19,7 @@ export type NotificationFocusLocationState = {
 }
 
 export const DASHBOARD_SECTIONS: Record<string, NotificationFocusTarget> = {
-  alertas: { elementId: 'alertas', label: 'Alertas del dashboard' },
+  alertas: { elementId: 'alertas', label: 'Notificaciones y recordatorios' },
   'cotizaciones-pendientes': {
     elementId: 'cotizaciones-pendientes',
     label: 'Cotizaciones pendientes',

@@ -14,6 +14,7 @@ import {
   DASHBOARD_SECTIONS,
   navigateWithNotificationFocus,
   quoteDashboardFocus,
+  quoteDetailFocus,
   recordatorioQuoteFocus,
 } from '@/lib/notification-focus'
 import { fetchDashboard } from '@/lib/dashboard-api'
@@ -32,30 +33,14 @@ type OperationalAlert = {
   detail: string
 }
 
-function mapOperationalAlerts(
-  unanswered: DashboardAlertQuote[],
-  readyForSales: DashboardAlertQuote[],
-): OperationalAlert[] {
-  const items: OperationalAlert[] = []
-  for (const quote of unanswered) {
-    items.push({
-      id: `unanswered-${quote.id}`,
-      quoteId: quote.id,
-      folio: quote.folio,
-      label: 'Sin avance',
-      detail: `${quote.clientName || 'Sin cliente'} · ${quote.daysWaiting ?? 0} días sin actividad`,
-    })
-  }
-  for (const quote of readyForSales) {
-    items.push({
-      id: `ready-${quote.id}`,
-      quoteId: quote.id,
-      folio: quote.folio,
-      label: 'Lista / Terminada',
-      detail: quote.clientName || 'Sin cliente',
-    })
-  }
-  return items
+function mapOperationalAlerts(unanswered: DashboardAlertQuote[]): OperationalAlert[] {
+  return unanswered.map((quote) => ({
+    id: `unanswered-${quote.id}`,
+    quoteId: quote.id,
+    folio: quote.folio,
+    label: 'Sin avance',
+    detail: `${quote.clientName || 'Sin cliente'} · ${quote.daysWaiting ?? 0} días sin actividad`,
+  }))
 }
 
 export function NotificationsBell() {
@@ -86,12 +71,7 @@ export function NotificationsBell() {
         listNotifications(),
         showOperational
           ? fetchDashboard()
-              .then((data) =>
-                mapOperationalAlerts(
-                  data.alerts.unansweredQuotes,
-                  data.alerts.readyForSalesQuotes ?? [],
-                ),
-              )
+              .then((data) => mapOperationalAlerts(data.alerts.unansweredQuotes))
               .catch(() => [] as OperationalAlert[])
           : Promise.resolve([] as OperationalAlert[]),
       ]
@@ -159,10 +139,7 @@ export function NotificationsBell() {
 
   const goToOperationalAlerts = () => {
     setOpen(false)
-    const targetId = operational.some((o) => o.label === 'Sin avance')
-      ? 'cotizaciones-sin-avance'
-      : 'cotizaciones-listas-ventas'
-    goToDashboardAlerts(navigate, location, targetId)
+    goToDashboardAlerts(navigate, location, 'cotizaciones-sin-avance')
   }
 
   const openOperationalAlert = (alert: OperationalAlert) => {
@@ -176,7 +153,7 @@ export function NotificationsBell() {
   }
 
   const openQuote = async (item: SalesNotificationItem) => {
-    if (!item.read) {
+    if (!item.read && item.kind !== 'pipeline') {
       try {
         await markNotificationRead(item.id)
         setItems((prev) =>
@@ -188,6 +165,16 @@ export function NotificationsBell() {
       }
     }
     setOpen(false)
+
+    if (item.quoteId && item.kind === 'pipeline') {
+      navigateWithNotificationFocus(
+        navigate,
+        location,
+        { pathname: `/cotizaciones/${item.quoteId}` },
+        quoteDetailFocus(item.folio ?? 'Cotización', item.reasonLabel),
+      )
+      return
+    }
 
     if (item.quoteId) {
       navigateWithNotificationFocus(
@@ -206,6 +193,9 @@ export function NotificationsBell() {
     navigate('/recordatorios')
   }
 
+  const pipelineItems = items.filter((item) => item.kind === 'pipeline')
+  const inboxItems = items.filter((item) => item.kind !== 'pipeline')
+
   const panel =
     open && panelStyle && typeof document !== 'undefined'
       ? createPortal(
@@ -216,11 +206,13 @@ export function NotificationsBell() {
             role="menu"
           >
             <div className="border-b border-slate-100 px-3 py-2">
-              <p className="text-sm font-semibold text-slate-900">Alertas y recordatorios</p>
+              <p className="text-sm font-semibold text-slate-900">Notificaciones y recordatorios</p>
               <p className="text-xs text-slate-500">
                 {loading
                   ? 'Actualizando…'
-                  : `${unreadCount} en bandeja · ${operational.length} operativas`}
+                  : user?.role === 'ventas'
+                    ? `${pipelineItems.length} de tus cotizaciones · ${inboxItems.filter((i) => !i.read).length} avisos`
+                    : `${unreadCount} en bandeja · ${operational.length} operativas`}
               </p>
             </div>
             <ul className="max-h-80 overflow-y-auto">
@@ -245,12 +237,35 @@ export function NotificationsBell() {
                   ))}
                 </>
               )}
-              {items.length > 0 && (
+              {pipelineItems.length > 0 && (
+                <>
+                  <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Tus cotizaciones
+                  </li>
+                  {pipelineItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2.5 text-left text-sm hover:bg-amber-50/60 bg-indigo-50/40"
+                        onClick={() => void openQuote(item)}
+                      >
+                        <span className="block font-medium text-slate-900">
+                          {item.folio ?? 'Cotización'} · {item.reasonLabel}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">
+                          {item.message}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </>
+              )}
+              {inboxItems.length > 0 && (
                 <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                   Bandeja
                 </li>
               )}
-              {items.map((item) => (
+              {inboxItems.map((item) => (
                 <li key={item.id}>
                   <button
                     type="button"
@@ -274,7 +289,7 @@ export function NotificationsBell() {
               ))}
               {items.length === 0 && operational.length === 0 && (
                 <li className="px-3 py-4 text-center text-sm text-slate-500">
-                  Sin alertas ni recordatorios.
+                  Sin notificaciones ni recordatorios.
                   {user?.role === 'ventas' ? (
                     <Link
                       to="/recordatorios"
@@ -307,7 +322,7 @@ export function NotificationsBell() {
         variant="ghost"
         size="sm"
         className="relative"
-        aria-label={badgeCount > 0 ? `Alertas (${badgeCount})` : 'Alertas y recordatorios'}
+        aria-label={badgeCount > 0 ? `Notificaciones (${badgeCount})` : 'Notificaciones y recordatorios'}
         aria-expanded={open}
         onClick={() => {
           setOpen((v) => !v)

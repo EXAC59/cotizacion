@@ -7,9 +7,12 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { Input, Label, Select } from '@/components/ui/Input'
 import { LoadingState, TableSkeleton } from '@/components/ui/LoadingState'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { ViewerListScopeTabs } from '@/components/ui/ViewerListScopeTabs'
+import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { formatDateTime } from '@/lib/format'
 import { listSolicitudes, mapSolicitudApiToQuoteRequest } from '@/lib/solicitudes-api'
+import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
 import {
   REQUEST_WORKFLOW_LABELS,
   type QuoteRequest,
@@ -28,6 +31,7 @@ const workflowVariant: Record<
 const ALL_STATUSES = '' as const
 
 export function RequestsPage() {
+  const { user } = useAuth()
   const { can } = usePermission()
   const canCreateClient = can('clientes', 'create')
   const [requests, setRequests] = useState<QuoteRequest[]>([])
@@ -38,6 +42,9 @@ export function RequestsPage() {
   )
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [listScope, setListScope] = useState<ViewerListScope>(() =>
+    parseViewerListScope(null, user?.role),
+  )
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -51,6 +58,7 @@ export function RequestsPage() {
     listSolicitudes({
       workflowStatus: statusFilter || undefined,
       q: debouncedSearch || undefined,
+      scope: listScope,
     })
       .then((data) => {
         if (cancelled) return
@@ -68,13 +76,13 @@ export function RequestsPage() {
     return () => {
       cancelled = true
     }
-  }, [statusFilter, debouncedSearch])
+  }, [statusFilter, debouncedSearch, listScope])
 
   return (
     <div>
       <PageHeader
         title="Solicitudes"
-        description="Recepción y lectura automática de requerimientos"
+        description="Recepción y lectura automática. Mías son las tuyas; Todas incluye las del equipo."
         actions={
           <Link to="/solicitudes/nueva">
             <Button size="sm">
@@ -84,6 +92,8 @@ export function RequestsPage() {
           </Link>
         }
       />
+
+      <ViewerListScopeTabs value={listScope} onChange={setListScope} />
 
       <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:max-w-2xl">
         <div>
@@ -186,8 +196,12 @@ export function RequestsPage() {
                     <td className="px-5 py-3">
                       {r.reviewedByName ? (
                         <Badge variant="success">Revisada · {r.reviewedByName}</Badge>
-                      ) : (
+                      ) : r.needsExternalReview || r.assignedToSales ? (
                         <Badge variant="warning">Pendiente</Badge>
+                      ) : (
+                        <span className="text-slate-400" title="Creada por compras; no requiere revisión externa">
+                          —
+                        </span>
                       )}
                     </td>
                     <td className="px-5 py-3 text-slate-500">

@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { reloadOnceForSpaBuild } from '@/lib/spa-build-reload'
 
 /** Recarga la SPA si hay un deploy nuevo (build-id.txt distinto al bundle en memoria). */
 export function useSpaBuildSync(): void {
@@ -9,7 +10,7 @@ export function useSpaBuildSync(): void {
         if (!res.ok) return
         const remote = (await res.text()).trim()
         if (remote && remote !== __SPA_BUILD_ID__) {
-          window.location.reload()
+          reloadOnceForSpaBuild()
         }
       } catch {
         /* ignore */

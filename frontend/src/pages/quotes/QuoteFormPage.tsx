@@ -9,6 +9,7 @@ import {
   Save,
   X,
 } from 'lucide-react'
+import { AssignToSalesPanel } from '@/components/sales/AssignToSalesPanel'
 import { ClientSearchSelect } from '@/components/clients/ClientSearchSelect'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -25,6 +26,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
 import { QuoteLinesEditor } from '@/components/quotes/QuoteLinesEditor'
 import { QuoteTotalsPanel } from '@/components/quotes/QuoteTotals'
+import { useToast } from '@/context/ToastProvider'
 import { useData } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
@@ -39,6 +41,7 @@ import {
   groupsFromApiOrFallback,
   type WarehousesByWholesalerGroup,
 } from '@/components/settings/PreferredWarehousesByWholesaler'
+import { assignQuoteToSales } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { formatDateTime } from '@/lib/format'
 import {
@@ -94,16 +97,37 @@ function QuoteFormEditor({
   const isNew = !quoteId || quoteId === 'nueva'
   const navigate = useNavigate()
   const { getQuote, saveQuote } = useData()
+  const { toast } = useToast()
   const { user } = useAuth()
   const { can, canCreateQuotes, canEditMargins, canApproveQuotes, canSendQuotes, canConsultInventory } =
     usePermission()
   const canCreate = canCreateQuotes()
+  const canAssignToSales =
+    user?.role === 'gerente_compras' || user?.role === 'administrador'
+  const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
   const canEdit = can('cotizaciones', 'edit')
   const canApprove = canApproveQuotes()
   const canSendEmail = canSendQuotes()
   const canEditMarginFields = canEditMargins()
   const canUseComparator = canConsultInventory()
-  const needsEditLock = !isNew && isPersistedQuoteId(quoteId ?? '') && (canEdit || canCreate)
+  const localExisting = !isNew && quoteId ? getQuote(quoteId) : undefined
+  const [ownedByViewer, setOwnedByViewer] = useState<boolean | null>(
+    () => localExisting?.ownedByViewer ?? null,
+  )
+  const [viewerCreatedByName, setViewerCreatedByName] = useState(
+    () => localExisting?.createdByName ?? '',
+  )
+  const [assignedToSales, setAssignedToSales] = useState(
+    () => localExisting?.assignedToSales ?? false,
+  )
+  const viewingOthers = ownedByViewer === false
+  const showAssignToSales =
+    canAssignToSales && !viewingOthers && !assignedToSales && (canCreate || canEdit)
+  const needsEditLock =
+    !isNew &&
+    isPersistedQuoteId(quoteId ?? '') &&
+    (canEdit || canCreate) &&
+    ownedByViewer === true
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [loadedRequest, setLoadedRequest] = useState<QuoteRequest | null>(null)
   const [loadingQuote, setLoadingQuote] = useState(!isNew)
@@ -113,8 +137,6 @@ function QuoteFormEditor({
   const globalMarginRef = useRef(DEFAULT_MARGIN)
   const requestLinesApplied = useRef(false)
   const tempLocalIdRef = useRef(newLocalId('q'))
-
-  const localExisting = !isNew && quoteId ? getQuote(quoteId) : undefined
 
   const [folio, setFolio] = useState(() => localExisting?.folio ?? '')
   const [folioLoading, setFolioLoading] = useState(isNew && !localExisting?.folio)
@@ -185,7 +207,7 @@ function QuoteFormEditor({
       setStatusHistory(result.statusHistory)
     }
   }
-  const { lockState, lockedBy, retryAcquire, hasEditLock } = useQuoteLock(
+  const { lockState, lockedBy, retryAcquire } = useQuoteLock(
     quoteId,
     needsEditLock,
     handleLockAcquired,
@@ -301,7 +323,6 @@ function QuoteFormEditor({
 
   useEffect(() => {
     if (isNew || !quoteId) return
-    if (needsEditLock && !hasEditLock) return
 
     setLoadingQuote(true)
     getQuoteById(quoteId)
@@ -319,6 +340,9 @@ function QuoteFormEditor({
         setSentAt(quote.sentAt)
         setInvoiceNumber(quote.invoiceNumber ?? '')
         setStatusHistory(quote.statusHistory ?? [])
+        setOwnedByViewer(quote.ownedByViewer ?? true)
+        setViewerCreatedByName(quote.createdByName ?? '')
+        setAssignedToSales(quote.assignedToSales ?? false)
         saveQuote(quote)
       })
       .catch(() => {
@@ -330,7 +354,7 @@ function QuoteFormEditor({
         }
       })
       .finally(() => setLoadingQuote(false))
-  }, [quoteId, isNew, needsEditLock, hasEditLock])
+  }, [quoteId, isNew])
 
   useEffect(() => {
     if (skipMarginSync.current) {
@@ -343,8 +367,9 @@ function QuoteFormEditor({
   const client = selectedClient
   const request = loadedRequest ?? undefined
 
-  const quoteFieldsReadOnly = !canEdit && !canCreate
-  const canSaveQuote = (isNew && canCreate) || (!isNew && (canEdit || canApprove))
+  const quoteFieldsReadOnly = viewingOthers || (!canEdit && !canCreate)
+  const canSaveQuote =
+    !viewingOthers && ((isNew && canCreate) || (!isNew && (canEdit || canApprove)))
 
   const newQuoteDirty =
     isNew &&
@@ -390,7 +415,7 @@ function QuoteFormEditor({
   // aceptada/facturada quedan fuera del stepper (1–5): se muestran ya completas.
   const workflowStep = rawWorkflowStep === -1 ? QUOTE_WORKFLOW_ORDER.length : rawWorkflowStep
   const canUseQuoteActions = lines.length > 0 && Boolean(clientId)
-  const canEmail = canSendEmail && canUseQuoteActions
+  const canEmail = canSendEmail && canUseQuoteActions && !viewingOthers
   const isBusy = saving || actionLoading !== null
 
   const buildDraftQuote = (): Quote | null => {
@@ -501,6 +526,41 @@ function QuoteFormEditor({
     return id != null
   }
 
+  const assignAfterSaveIfNeeded = async (savedId: string): Promise<boolean> => {
+    if (!canAssignToSales || assignRecipientId == null) return false
+    if (!isPersistedQuoteId(savedId)) return false
+
+    try {
+      const result = await assignQuoteToSales(savedId, assignRecipientId)
+      toast(
+        result.previousFolio && result.folio
+          ? `Guardada y asignada. Folio ${result.previousFolio} → ${result.folio}`
+          : 'Guardada y asignada a ventas.',
+      )
+      setAllowLeave(true)
+      navigate(`/cotizaciones/${result.id}`, { replace: true })
+      const refreshed = await getQuoteById(result.id)
+      setFolio(refreshed.folio)
+      setStatus(refreshed.status)
+      setSavedStatus(refreshed.status)
+      setViewerCreatedByName(refreshed.createdByName ?? '')
+      setOwnedByViewer(refreshed.ownedByViewer ?? true)
+      setAssignedToSales(true)
+      saveQuote(refreshed)
+      setAssignRecipientId(null)
+      setAllowLeave(false)
+      return true
+    } catch (err: unknown) {
+      setSaveError(
+        err instanceof Error
+          ? err.message
+          : 'Se guardó, pero no se pudo asignar a ventas.',
+      )
+      toast('Se guardó, pero falló la asignación a ventas.')
+      return false
+    }
+  }
+
   const confirmSaveWithStatus = async (targetStatus: QuoteStatus) => {
     const draft = buildDraftQuote()
     if (!draft) return
@@ -512,10 +572,17 @@ function QuoteFormEditor({
       status: targetStatus,
       ...(serverQuoteId && isPersistedQuoteId(serverQuoteId) ? { id: serverQuoteId } : {}),
     }
-    const savedId = await saveDraft(payload, true)
-    if (savedId) {
-      setSaveModalOpen(false)
+    // No navegar aún: si hay vendedor, asignar en el mismo flujo Guardar.
+    const savedId = await saveDraft(payload, false)
+    if (!savedId) return
+
+    const assigned = await assignAfterSaveIfNeeded(savedId)
+    if (!assigned) {
+      setAllowLeave(true)
+      navigate(`/cotizaciones/${savedId}`, { replace: isNew })
+      setAllowLeave(false)
     }
+    setSaveModalOpen(false)
   }
 
   const openSaveModal = () => {
@@ -608,6 +675,10 @@ function QuoteFormEditor({
   const handleOpenPdf = async () => {
     setActionLoading('pdf')
     try {
+      if (viewingOthers && quoteId && isPersistedQuoteId(quoteId)) {
+        await openQuotePdf(quoteId)
+        return
+      }
       const draft = buildDraftQuote()
       if (!draft) return
 
@@ -736,6 +807,31 @@ function QuoteFormEditor({
         }
       />
 
+      {viewingOthers && (
+        <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          Vista de otra persona ({viewerCreatedByName.trim() || 'equipo'}). Puedes consultarla; no
+          se guarda ni se envía desde ventas.
+        </p>
+      )}
+
+      {showAssignToSales && (
+        <div className="mb-4">
+          <AssignToSalesPanel
+            entityLabel="cotización"
+            disabled={saving || isBusy}
+            saveWithParent
+            onRecipientChange={setAssignRecipientId}
+          />
+        </div>
+      )}
+
+      {canAssignToSales && assignedToSales && !viewingOthers && (
+        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          Ya enviada a ventas ({viewerCreatedByName.trim() || 'vendedor'}). No se puede volver a
+          asignar.
+        </p>
+      )}
+
       {(saveError || loadError) && (
         <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {saveError ?? loadError}
@@ -786,6 +882,9 @@ function QuoteFormEditor({
                   <p className="mt-2 text-sm text-slate-600">
                     En elaboración no se marca como lista para ventas. Terminada sí queda lista
                     para el siguiente paso.
+                    {showAssignToSales && assignRecipientId != null
+                      ? ' Al confirmar, también se enviará al vendedor seleccionado.'
+                      : ''}
                   </p>
                 </div>
 

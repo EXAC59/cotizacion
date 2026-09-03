@@ -7,6 +7,7 @@ use App\Models\ComparisonJob;
 use App\Models\Quote;
 use App\Models\QuoteLineOffer;
 use App\Models\QuoteRequest;
+use App\Models\User;
 use App\Models\Wholesaler;
 use App\Services\Wholesalers\CvaCatalogIndex;
 use App\Services\Wholesalers\LowStock\LowStockPollService;
@@ -69,16 +70,16 @@ class DashboardAnalyticsService
     /**
      * @return array<string, mixed>
      */
-    public function dashboardPayload(?string $from = null, ?string $to = null): array
+    public function dashboardPayload(?string $from = null, ?string $to = null, ?User $viewer = null): array
     {
         $period = $this->resolvePeriod($from, $to);
 
         return [
             'period' => $this->periodArray($period),
             ...$this->kpiBlock($period),
-            'alerts' => $this->alertsBlock(),
+            'alerts' => $this->alertsBlock($viewer),
             'quotesByStatus' => $this->quotesByStatus($period),
-            'recentQuotes' => $this->recentQuotes(),
+            'recentQuotes' => $this->recentQuotes($viewer),
             'pendingRequests' => $this->pendingRequestsCount(),
             'unansweredQuoteDays' => AppSetting::current()->resolvedUnansweredQuoteDays(),
             'topRequestedProducts' => $this->topRequestedProducts($period),
@@ -218,15 +219,15 @@ class DashboardAnalyticsService
     /**
      * @return array<string, mixed>
      */
-    private function alertsBlock(): array
+    private function alertsBlock(?User $viewer = null): array
     {
         return [
             'lowStock' => $this->lowStockAlerts(),
-            'pendingQuotes' => $this->pendingQuotes(),
-            'unansweredQuotes' => $this->unansweredQuotes(),
-            'readyForSalesQuotes' => $this->readyForSalesQuotes(),
+            'pendingQuotes' => $this->pendingQuotes($viewer),
+            'unansweredQuotes' => $this->unansweredQuotes($viewer),
+            'readyForSalesQuotes' => $this->readyForSalesQuotes($viewer),
             'integrationIssues' => $this->integrationIssues(),
-            'expiringQuotes' => $this->expiringQuotes(),
+            'expiringQuotes' => $this->expiringQuotes($viewer),
             'stuckProcessingRequests' => $this->stuckProcessingRequests(),
             'pendingReviewRequests' => $this->pendingReviewRequests(),
             'unsentRequests' => $this->unsentRequests(),
@@ -234,14 +235,32 @@ class DashboardAnalyticsService
     }
 
     /**
+     * @param  \Illuminate\Database\Eloquent\Builder<Quote>  $query
+     * @return \Illuminate\Database\Eloquent\Builder<Quote>
+     */
+    private function constrainQuoteMaker($query, ?User $viewer)
+    {
+        if ($viewer?->role_slug !== 'ventas') {
+            return $query;
+        }
+
+        $query->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'));
+        $query->where(function ($inner) use ($viewer) {
+            $inner->where('created_by', $viewer->id)
+                ->orWhere(fn ($byName) => $byName->madeByDisplayName($viewer));
+        });
+
+        return $query;
+    }
+
+    /**
      * Cotizaciones que siguen en elaboración y nunca llegaron a Lista / Terminada.
      *
      * @return list<array{id: string, folio: string, clientName: string, createdByName: string|null, updatedAt: string}>
      */
-    private function pendingQuotes(): array
+    private function pendingQuotes(?User $viewer = null): array
     {
-        return Quote::query()
-            ->with(['client', 'creator'])
+        return $this->constrainQuoteMaker(Quote::query()->with(['client', 'creator']), $viewer)
             ->where('status', 'en_elaboracion')
             ->whereDoesntHave('statusEvents', fn ($query) => $query->where('to_status', 'pendiente_envio'))
             ->orderByDesc('updated_at')
@@ -269,6 +288,7 @@ class DashboardAnalyticsService
             ->with('client')
             ->where('workflow_status', 'en_elaboracion')
             ->whereNotIn('status', ['procesando', 'error'])
+            ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
             ->where(function ($query) {
                 $query->whereNull('reviewed_by')
                     ->orWhereColumn('reviewed_by', 'created_by');
@@ -316,10 +336,9 @@ class DashboardAnalyticsService
      *
      * @return list<array{id: string, folio: string, clientName: string, updatedAt: string}>
      */
-    private function readyForSalesQuotes(): array
+    private function readyForSalesQuotes(?User $viewer = null): array
     {
-        return Quote::query()
-            ->with(['client', 'creator'])
+        return $this->constrainQuoteMaker(Quote::query()->with(['client', 'creator']), $viewer)
             ->where('status', 'pendiente_envio')
             ->orderByDesc('updated_at')
             ->limit(20)
@@ -499,13 +518,12 @@ class DashboardAnalyticsService
     /**
      * @return list<array<string, mixed>>
      */
-    private function unansweredQuotes(): array
+    private function unansweredQuotes(?User $viewer = null): array
     {
         $days = AppSetting::current()->resolvedUnansweredQuoteDays();
         $cutoff = Carbon::now()->subDays($days);
 
-        return Quote::query()
-            ->with(['client', 'creator'])
+        return $this->constrainQuoteMaker(Quote::query()->with(['client', 'creator']), $viewer)
             ->whereIn('status', ['en_elaboracion', 'pendiente_envio'])
             ->where('updated_at', '<', $cutoff)
             ->where(function ($query) use ($cutoff) {
@@ -664,10 +682,12 @@ class DashboardAnalyticsService
     /**
      * @return list<array<string, mixed>>
      */
-    private function recentQuotes(): array
+    private function recentQuotes(?User $viewer = null): array
     {
-        return Quote::query()
-            ->with(['client', 'creator'])
+        $query = Quote::query()->with(['client', 'creator']);
+        $this->constrainQuoteMaker($query, $viewer);
+
+        return $query
             ->orderByDesc('created_at')
             ->limit(5)
             ->get()

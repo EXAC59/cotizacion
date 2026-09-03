@@ -25,23 +25,17 @@ export function AppNotificationsBanner() {
         if (cancelled) return
         const alerts = data.alerts
         const unanswered = alerts.unansweredQuotes.length
-        const readyForSales = alerts.readyForSalesQuotes?.length ?? 0
         const stuck = alerts.stuckProcessingRequests?.length ?? 0
-        const total = unanswered + readyForSales + stuck
+        const total = unanswered + stuck
 
         setAlertCount(total)
 
         let targetId = 'alertas'
         if (unanswered > 0) targetId = 'cotizaciones-sin-avance'
-        else if (readyForSales > 0) targetId = 'cotizaciones-listas-ventas'
         else if (stuck > 0) targetId = 'lecturas-atascadas'
         setFocusTargetId(targetId)
 
         const parts: string[] = []
-        if (readyForSales)
-          parts.push(
-            `${readyForSales} cotización${readyForSales === 1 ? '' : 'es'} lista${readyForSales === 1 ? '' : 's'} / terminada${readyForSales === 1 ? '' : 's'}`,
-          )
         if (unanswered)
           parts.push(
             `${unanswered} cotización${unanswered === 1 ? '' : 'es'} sin avance`,

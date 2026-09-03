@@ -12,6 +12,8 @@ if [ -z "$APP_KEY" ]; then
     php artisan key:generate --force --no-interaction
 fi
 
+mkdir -p bootstrap/cache storage/framework/cache storage/framework/sessions storage/framework/views storage/logs
+
 php artisan config:clear --no-interaction
 php artisan route:clear --no-interaction
 
@@ -32,5 +34,10 @@ until php -r "
 done
 
 php artisan migrate --force --no-interaction
+
+# php-fpm corre como www-data; artisan aquí corre como root y deja
+# packages.php/services.php sin escritura → HTTP 500 (login vacío).
+chown -R www-data:www-data bootstrap/cache storage/framework storage/logs 2>/dev/null || true
+chmod -R ug+rwX bootstrap/cache storage/framework storage/logs 2>/dev/null || true
 
 exec "$@"

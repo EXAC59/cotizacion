@@ -15,9 +15,11 @@ use App\Services\Quotes\QuotePersistenceService;
 use App\Services\Quotes\QuoteProfitCalculator;
 use App\Services\Quotes\QuoteSearchScope;
 use App\Services\Quotes\QuoteStatusHistoryService;
+use App\Services\Sales\AssignToSalesService;
 use App\Services\Sales\QuoteFollowUpService;
 use App\Services\Sales\SalesNotificationService;
 use App\Services\Wholesalers\WholesalerSalesAliasService;
+use App\Support\ViewerListScope;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -33,6 +35,7 @@ class CotizacionController extends Controller
         private readonly WholesalerSalesAliasService $wholesalerAliases,
         private readonly QuoteFollowUpService $followUps,
         private readonly SalesNotificationService $salesNotifications,
+        private readonly AssignToSalesService $assignToSales,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -40,12 +43,20 @@ class CotizacionController extends Controller
         $validated = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
             'status' => ['nullable', 'string', Rule::in($this->quoteStatuses())],
+            'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
         ]);
 
         $query = Quote::query()
             ->with(['client', 'creator', 'lockedByUser'])
             ->withCount('lines')
             ->orderByDesc('created_at');
+
+        $user = $request->user();
+        $user?->loadMissing('role');
+        if ($user) {
+            $scope = $validated['scope'] ?? ViewerListScope::defaultFor($user);
+            $query->forViewerList($user, $scope);
+        }
 
         if (! empty($validated['search'])) {
             QuoteSearchScope::apply($query, $validated['search']);
@@ -69,7 +80,7 @@ class CotizacionController extends Controller
         ]);
     }
 
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         $quote = Quote::query()->with(['lines.offers.wholesaler', 'client', 'internalNotes.user'])->findOrFail($id);
 
@@ -129,6 +140,13 @@ class CotizacionController extends Controller
             'lines.*.offers.*.leadDays' => ['nullable', 'integer'],
             'lines.*.offers.*.isSelected' => ['nullable', 'boolean'],
         ]);
+
+        if (! empty($validated['id']) && Str::isUuid($validated['id'])) {
+            $existing = Quote::query()->find($validated['id']);
+            if ($existing) {
+                $this->ensureVentasCanMutateQuote($request, $existing);
+            }
+        }
 
         if (($validated['status'] ?? null) === 'facturada' && trim((string) ($validated['invoiceNumber'] ?? '')) === '') {
             throw ValidationException::withMessages([
@@ -209,6 +227,8 @@ class CotizacionController extends Controller
             'message' => ['nullable', 'string', 'max:2000'],
         ]);
 
+        $this->ensureVentasCanMutateQuote($request, $quote);
+
         $toEmail = trim($validated['to'] ?? $quote->client?->email ?? '');
 
         if ($toEmail === '') {
@@ -238,6 +258,7 @@ class CotizacionController extends Controller
         }
 
         $quote = Quote::query()->findOrFail($id);
+        $this->ensureVentasCanMutateQuote($request, $quote);
         $validated = $request->validate([
             'body' => ['required', 'string', 'max:4000'],
         ]);
@@ -264,6 +285,7 @@ class CotizacionController extends Controller
         }
 
         $quote = Quote::query()->findOrFail($id);
+        $this->ensureVentasCanMutateQuote(request(), $quote);
 
         try {
             $this->quoteLockService->acquire($quote);
@@ -305,6 +327,38 @@ class CotizacionController extends Controller
         return response()->json(['locked' => false]);
     }
 
+    public function asignarVentas(string $id, Request $request): JsonResponse
+    {
+        if (! Str::isUuid($id)) {
+            abort(404, 'Cotización no encontrada.');
+        }
+
+        $validated = $request->validate([
+            'recipientId' => ['required', 'integer', 'exists:users,id'],
+            'message' => ['nullable', 'string', 'min:3', 'max:1000'],
+        ]);
+
+        $actor = $request->user();
+        if ($actor === null) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        }
+
+        $quote = Quote::query()->findOrFail($id);
+        $result = $this->assignToSales->assignQuote(
+            $quote,
+            $actor,
+            (int) $validated['recipientId'],
+            $validated['message'] ?? null,
+        );
+
+        return response()->json([
+            'message' => 'Cotización asignada a ventas.',
+            'previousFolio' => $result['previousFolio'],
+            'folio' => $result['folio'],
+            ...$this->toApiArray($result['quote']),
+        ]);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -326,6 +380,8 @@ class CotizacionController extends Controller
             'responseReceivedAt' => $quote->response_received_at?->toIso8601String(),
             'invoiceNumber' => $quote->invoice_number,
             'createdByName' => $quote->creator?->name,
+            'ownedByViewer' => $this->viewerOwnsQuote($quote),
+            'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
             'involucrado' => $quote->involucrado,
             'followUp' => $this->followUps->followUpPayload($quote),
             'eligibility' => $this->salesNotifications->eligibility($quote),
@@ -338,7 +394,7 @@ class CotizacionController extends Controller
      */
     private function toApiArray(Quote $quote): array
     {
-        $quote->loadMissing(['lines.offers.wholesaler', 'client', 'internalNotes.user']);
+        $quote->loadMissing(['lines.offers.wholesaler', 'client', 'creator', 'internalNotes.user']);
         $mask = $this->wholesalerAliases->shouldMask(request()->user());
 
         return [
@@ -366,6 +422,9 @@ class CotizacionController extends Controller
             'sentAt' => $quote->sent_at?->toIso8601String(),
             'responseReceivedAt' => $quote->response_received_at?->toIso8601String(),
             'invoiceNumber' => $quote->invoice_number,
+            'createdByName' => $quote->creator?->name,
+            'ownedByViewer' => $this->viewerOwnsQuote($quote),
+            'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
             'involucrado' => $quote->involucrado,
             'editLock' => $this->quoteLockService->lockPayload($quote),
             'statusHistory' => $this->statusHistory->timelineForQuote($quote),
@@ -403,6 +462,33 @@ class CotizacionController extends Controller
                 })->values(),
             ])->values(),
         ];
+    }
+
+    private function viewerOwnsQuote(Quote $quote): bool
+    {
+        $user = request()->user();
+        $user?->loadMissing('role');
+        if ($user === null) {
+            return true;
+        }
+        if ($user->role_slug !== 'ventas') {
+            return true;
+        }
+
+        return $quote->isVisibleToSalesperson($user);
+    }
+
+    private function ensureVentasCanMutateQuote(Request $request, Quote $quote): void
+    {
+        $user = $request->user();
+        $user?->loadMissing('role');
+        if ($user?->role_slug !== 'ventas') {
+            return;
+        }
+
+        if (! $quote->isVisibleToSalesperson($user)) {
+            abort(403, 'Solo puedes editar cotizaciones que creaste o que compras te envió.');
+        }
     }
 
     /**

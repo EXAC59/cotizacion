@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api-fetch'
 import { getApiBase } from '@/lib/app-paths'
+import { reloadOnceForSpaBuild } from '@/lib/spa-build-reload'
 import type {
   FollowUpStatus,
   QuoteFollowUp,
@@ -21,7 +22,7 @@ export async function listNotifications(): Promise<{
   const response = await apiFetch(`${getApiBase()}/notificaciones`)
   const remoteBuild = response.headers.get('X-Spa-Build-Id')
   if (remoteBuild && remoteBuild !== __SPA_BUILD_ID__) {
-    window.location.reload()
+    reloadOnceForSpaBuild()
     return { data: [], unreadCount: 0 }
   }
   const data = (await response.json()) as NotificationsListResponse & {
@@ -29,11 +30,11 @@ export async function listNotifications(): Promise<{
     spaUpgradeRequired?: boolean
   }
   if (data.spaUpgradeRequired) {
-    window.location.reload()
+    reloadOnceForSpaBuild()
     return { data: [], unreadCount: 0 }
   }
   if (data.spaBuildId && data.spaBuildId !== __SPA_BUILD_ID__) {
-    window.location.reload()
+    reloadOnceForSpaBuild()
     return { data: [], unreadCount: 0 }
   }
   if (!response.ok) {

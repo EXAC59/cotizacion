@@ -32,6 +32,8 @@ export type SolicitudApi = {
   client_name?: string | null
   created_by?: string | null
   created_by_name?: string | null
+  assigned_to_sales?: boolean
+  needs_external_review?: boolean
   reviewed_by?: string | null
   reviewed_by_name?: string | null
   reviewed_at?: string | null
@@ -106,6 +108,8 @@ export function mapSolicitudApiToQuoteRequest(
     clientName: clientName ?? api.client_name ?? undefined,
     createdBy: api.created_by ?? null,
     createdByName: api.created_by_name ?? undefined,
+    assignedToSales: api.assigned_to_sales ?? false,
+    needsExternalReview: api.needs_external_review ?? false,
     reviewedBy: api.reviewed_by ?? null,
     reviewedByName: api.reviewed_by_name ?? undefined,
     reviewedAt: api.reviewed_at ?? undefined,
@@ -146,11 +150,13 @@ export async function listSolicitudes(params: {
   status?: RequestStatus
   workflowStatus?: RequestWorkflowStatus
   q?: string
+  scope?: 'mine' | 'all'
 } = {}): Promise<SolicitudApi[]> {
   const search = new URLSearchParams()
   if (params.status) search.set('status', params.status)
   if (params.workflowStatus) search.set('workflow_status', params.workflowStatus)
   if (params.q?.trim()) search.set('q', params.q.trim())
+  if (params.scope) search.set('scope', params.scope)
 
   const query = search.toString()
   const url = `${getApiBase()}/solicitudes${query ? `?${query}` : ''}`
@@ -483,13 +489,18 @@ export function requestLineToPayload(line: RequestLine): SolicitudLineaPayload {
     quantity: line.quantity,
     product: line.product,
     partNumber: line.partNumber,
-    brand: line.brand,
+    brand: line.brand.trim() || 'Genérico',
     description: line.description ?? line.product,
     unit: line.unit ?? 'pza',
     referenceCost: line.referenceCost ?? null,
     selectedWholesalerId: line.selectedWholesalerId ?? null,
     warehouse: line.warehouse ?? null,
   }
+}
+
+/** Partida en blanco (solo agregada): no se envía al guardar. */
+export function isBlankRequestDraftLine(line: RequestLine): boolean {
+  return line.product.trim() === '' && line.partNumber.trim() === ''
 }
 
 export async function updateSolicitudLineas(

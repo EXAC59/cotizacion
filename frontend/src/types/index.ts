@@ -103,6 +103,8 @@ export interface QuoteRequest {
   clientName?: string
   createdBy?: string | null
   createdByName?: string
+  assignedToSales?: boolean
+  needsExternalReview?: boolean
   reviewedBy?: string | null
   reviewedByName?: string
   reviewedAt?: string | null
@@ -253,6 +255,8 @@ export interface Quote {
   linesCount?: number
   total?: number
   createdByName?: string
+  ownedByViewer?: boolean
+  assignedToSales?: boolean
   statusHistory?: QuoteStatusHistoryEntry[]
   followUp?: QuoteFollowUp | null
   followUpHistory?: QuoteFollowUpHistoryEntry[]
@@ -324,6 +328,7 @@ export interface SalesNotificationItem {
   createdAt?: string | null
   readAt?: string | null
   read: boolean
+  kind?: 'inbox' | 'pipeline'
 }
 
 export const FOLLOW_UP_STATUS_LABELS: Record<FollowUpStatus, string> = {

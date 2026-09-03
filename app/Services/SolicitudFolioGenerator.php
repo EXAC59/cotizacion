@@ -59,6 +59,11 @@ class SolicitudFolioGenerator
             return null;
         }
 
+        $explicit = $user->resolveQuoteFolioCode();
+        if ($explicit !== null) {
+            return $explicit;
+        }
+
         $first = trim(Str::of((string) $user->name)->squish()->explode(' ')->first() ?? '');
         if ($first === '') {
             return null;

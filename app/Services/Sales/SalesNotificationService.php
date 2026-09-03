@@ -4,7 +4,6 @@ namespace App\Services\Sales;
 
 use App\Models\AppSetting;
 use App\Models\Quote;
-use App\Models\Role;
 use App\Models\SalesNotification;
 use App\Models\User;
 use Illuminate\Validation\ValidationException;
@@ -16,6 +15,8 @@ class SalesNotificationService
     public const AUDIENCE_COMPRAS = 'compras';
 
     public const REASON_LISTA = 'lista_terminada';
+
+    public const REASON_EN_ELABORACION = 'en_elaboracion';
 
     public const REASON_SIN_AVANCE = 'sin_avance';
 
@@ -115,7 +116,11 @@ class SalesNotificationService
     public function defaultMessage(Quote $quote, string $reasonCode): string
     {
         if ($reasonCode === self::REASON_LISTA) {
-            return 'Lista/Terminada: lista para que ventas continúe.';
+            return 'Lista / Terminada: lista para envío o seguimiento.';
+        }
+
+        if ($reasonCode === self::REASON_EN_ELABORACION) {
+            return 'En elaboración: cotización pendiente de terminar.';
         }
 
         if ($reasonCode === self::REASON_SIN_AVANCE) {
@@ -131,6 +136,7 @@ class SalesNotificationService
     {
         return match ($reasonCode) {
             self::REASON_LISTA => 'Lista / Terminada',
+            self::REASON_EN_ELABORACION => 'En elaboración',
             self::REASON_SIN_AVANCE => 'Sin avance en elaboración',
             self::REASON_SEGUIMIENTO => 'Recordatorio actualizado',
             self::REASON_COMENTARIO => 'Comentario de compras',
@@ -217,7 +223,7 @@ class SalesNotificationService
      *
      * @throws ValidationException
      */
-    public function notifySales(Quote $quote, User $sender, ?string $message = null): SalesNotification
+    public function notifySales(Quote $quote, User $sender, ?string $message = null, ?int $recipientId = null): SalesNotification
     {
         if (! in_array($sender->role_slug, ['administrador', 'gerente_compras'], true)) {
             throw ValidationException::withMessages([
@@ -234,8 +240,11 @@ class SalesNotificationService
         }
 
         $eligibility = $this->eligibility($quote);
-        $recipient = $this->resolveVentasRecipient($quote);
-        if ($recipient === null) {
+        $recipient = $recipientId !== null
+            ? User::query()->with('role')->find($recipientId)
+            : $this->resolveVentasRecipient($quote);
+
+        if (! $this->isActiveVentas($recipient)) {
             throw ValidationException::withMessages([
                 'quoteId' => 'No hay un usuario de ventas al que enviar el comentario.',
             ]);
@@ -326,11 +335,14 @@ class SalesNotificationService
 
         $role = $user->role_slug;
         if ($role === 'ventas') {
-            // Solo avisos dirigidos a este vendedor (o legacy sin destinatario)
             $query->where('audience', self::AUDIENCE_VENTAS)
-                ->where(function ($q) use ($user) {
-                    $q->where('recipient_id', $user->id)
-                        ->orWhereNull('recipient_id');
+                ->where('recipient_id', $user->id)
+                ->whereHas('quote', function ($quoteQuery) use ($user) {
+                    $quoteQuery->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
+                        ->where(function ($maker) use ($user) {
+                            $maker->where('created_by', $user->id)
+                                ->orWhere(fn ($byName) => $byName->madeByDisplayName($user));
+                        });
                 });
         } elseif (in_array($role, ['gerente_compras', 'administrador'], true)) {
             $query->where('audience', self::AUDIENCE_COMPRAS);
@@ -339,22 +351,93 @@ class SalesNotificationService
         }
 
         $items = $query->get();
+        $data = $items->map(fn (SalesNotification $n) => $this->toApiArray($n))->values()->all();
         $unreadCount = $items->whereNull('read_at')->count();
 
+        if ($role === 'ventas') {
+            $alreadyNotified = $items->pluck('quote_id')->filter()->all();
+            $pipeline = $this->pipelineAlertsForVentas($user, $alreadyNotified);
+            $data = array_values(array_merge($pipeline, $data));
+            $unreadCount += count($pipeline);
+        }
+
         return [
-            'data' => $items->map(fn (SalesNotification $n) => $this->toApiArray($n))->values()->all(),
+            'data' => $data,
             'unreadCount' => $unreadCount,
         ];
     }
 
+    /**
+     * Alertas de dashboard convertidas en avisos: cotizaciones del vendedor
+     * en elaboración o Lista / Terminada.
+     *
+     * @param  list<string>  $excludeQuoteIds
+     * @return list<array<string, mixed>>
+     */
+    public function pipelineAlertsForVentas(User $user, array $excludeQuoteIds = []): array
+    {
+        if ($user->role_slug !== 'ventas') {
+            return [];
+        }
+
+        $quotes = Quote::query()
+            ->with('client')
+            ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
+            ->where(function ($query) use ($user) {
+                $query->where('created_by', $user->id)
+                    ->orWhere(fn ($byName) => $byName->madeByDisplayName($user));
+            })
+            ->whereIn('status', ['en_elaboracion', 'pendiente_envio'])
+            ->where(function ($q) {
+                $q->whereNull('follow_up_status')
+                    ->orWhereNotIn('follow_up_status', ['ganada', 'perdida']);
+            })
+            ->when($excludeQuoteIds !== [], fn ($q) => $q->whereNotIn('id', $excludeQuoteIds))
+            ->orderByDesc('updated_at')
+            ->limit(40)
+            ->get();
+
+        return $quotes->map(function (Quote $quote) use ($user) {
+            $reason = $quote->status === 'pendiente_envio'
+                ? self::REASON_LISTA
+                : self::REASON_EN_ELABORACION;
+
+            return [
+                'id' => 'pipeline-'.$quote->id,
+                'quoteId' => $quote->id,
+                'folio' => $quote->folio,
+                'clientName' => $quote->client?->company ?? '',
+                'audience' => self::AUDIENCE_VENTAS,
+                'reasonCode' => $reason,
+                'reasonLabel' => $this->reasonLabel($reason),
+                'message' => $this->defaultMessage($quote, $reason),
+                'senderName' => 'Sistema',
+                'recipientId' => $user->id,
+                'recipientName' => $user->name,
+                'createdAt' => ($quote->updated_at ?? $quote->created_at)?->toIso8601String(),
+                'readAt' => null,
+                'read' => false,
+                'kind' => 'pipeline',
+            ];
+        })->values()->all();
+    }
+
     public function markRead(SalesNotification $notification, User $user): SalesNotification
     {
+        $notification->loadMissing('quote');
         $role = $user->role_slug;
         $allowed = false;
 
         if ($notification->audience === self::AUDIENCE_VENTAS) {
+            $quote = $notification->quote;
+            $quote?->loadMissing('creator');
+            $samePerson = Quote::normalizeDisplayName($quote?->creator?->name)
+                === Quote::normalizeDisplayName($user->name);
+            $sameCreator = (int) ($quote?->created_by ?? 0) === (int) $user->id;
             $allowed = $role === 'administrador'
-                || ($role === 'ventas' && ($notification->recipient_id === null || (int) $notification->recipient_id === (int) $user->id));
+                || ($role === 'ventas'
+                    && (int) $notification->recipient_id === (int) $user->id
+                    && ($sameCreator || $samePerson));
         }
 
         if ($notification->audience === self::AUDIENCE_COMPRAS) {
@@ -398,6 +481,7 @@ class SalesNotificationService
             'createdAt' => $n->created_at?->toIso8601String(),
             'readAt' => $n->read_at?->toIso8601String(),
             'read' => $n->read_at !== null,
+            'kind' => 'inbox',
         ];
     }
 
@@ -412,51 +496,17 @@ class SalesNotificationService
     }
 
     /**
-     * Destinatario ventas: último usuario ventas que tocó la cotización,
-     * si no el creador, si no el primer ventas activo.
+     * Destinatario ventas: solo el usuario con rol ventas que creó la cotización.
      */
     public function resolveVentasRecipient(Quote $quote): ?User
     {
-        $candidates = [];
-
-        // 1) Último movimiento de estatus por un usuario ventas
-        $quote->loadMissing(['statusEvents.user.role']);
-        $lastStatusUser = $quote->statusEvents
-            ->sortByDesc(fn ($ev) => $ev->created_at?->timestamp ?? 0)
-            ->map(fn ($ev) => $ev->user)
-            ->first(fn ($u) => $this->isActiveVentas($u));
-        if ($lastStatusUser) {
-            $candidates[] = $lastStatusUser;
-        }
-
-        // 2) Quien tiene el candado de edición (último que la abrió/editó)
-        $quote->loadMissing('lockedByUser.role');
-        if ($this->isActiveVentas($quote->lockedByUser)) {
-            $candidates[] = $quote->lockedByUser;
-        }
-
-        // 3) Creador de la cotización
         $quote->loadMissing('creator.role');
+
         if ($this->isActiveVentas($quote->creator)) {
-            $candidates[] = $quote->creator;
+            return $quote->creator;
         }
 
-        foreach ($candidates as $user) {
-            if ($user instanceof User) {
-                return $user;
-            }
-        }
-
-        $ventasRoleId = Role::query()->where('slug', 'ventas')->value('id');
-        if (! $ventasRoleId) {
-            return null;
-        }
-
-        return User::query()
-            ->where('role_id', $ventasRoleId)
-            ->where('active', true)
-            ->orderBy('id')
-            ->first();
+        return null;
     }
 
     private function isActiveVentas(?User $user): bool

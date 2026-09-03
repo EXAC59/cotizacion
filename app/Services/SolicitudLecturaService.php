@@ -102,7 +102,8 @@ class SolicitudLecturaService
 
     /**
      * Marca la solicitud como revisada por el usuario actual.
-     * Idempotente: el primer revisor distinto al creador gana; quien la creó no cuenta como revisión.
+     * Idempotente: el primer revisor distinto al creador gana; quien la creó no cuenta.
+     * Ventas nunca cuenta como revisor externo (solo compras/admin).
      */
     public function marcarRevisada(QuoteRequest $request): void
     {
@@ -110,16 +111,20 @@ class SolicitudLecturaService
             return;
         }
 
-        $userId = auth()->id();
-        if ($userId === null) {
+        $user = auth()->user();
+        if ($user === null) {
+            return;
+        }
+        $user->loadMissing('role');
+        if ($user->role_slug === 'ventas') {
             return;
         }
 
-        if ($request->created_by !== null && (int) $request->created_by === (int) $userId) {
+        if ($request->created_by !== null && (int) $request->created_by === (int) $user->id) {
             return;
         }
 
-        $request->update(['reviewed_by' => $userId, 'reviewed_at' => now()]);
+        $request->update(['reviewed_by' => $user->id, 'reviewed_at' => now()]);
     }
 
     public function hasExternalReview(QuoteRequest $request): bool
@@ -133,6 +138,21 @@ class SolicitudLecturaService
         }
 
         return (int) $request->reviewed_by !== (int) $request->created_by;
+    }
+
+    /**
+     * ¿Falta revisión de alguien distinto al creador, y el dueño actual es ventas?
+     * (Las hechas por compras no cuentan como “pendiente de revisión”.)
+     */
+    public function needsExternalReview(QuoteRequest $request): bool
+    {
+        if ($this->hasExternalReview($request)) {
+            return false;
+        }
+
+        $request->loadMissing('creator.role');
+
+        return $request->creator?->role_slug === 'ventas';
     }
 
     /**
@@ -170,7 +190,7 @@ class SolicitudLecturaService
      */
     public function toApiArray(QuoteRequest $request): array
     {
-        $request->loadMissing(['lines', 'client', 'creator', 'reviewer']);
+        $request->loadMissing(['lines', 'client', 'creator.role', 'reviewer']);
         $reviewer = $this->hasExternalReview($request) ? $request->reviewer : null;
 
         return [
@@ -180,6 +200,9 @@ class SolicitudLecturaService
             'client_name' => $request->client?->company,
             'created_by' => $request->created_by,
             'created_by_name' => $request->creator?->name,
+            'assigned_to_sales' => $request->creator !== null
+                && $request->creator->role_slug === 'ventas',
+            'needs_external_review' => $this->needsExternalReview($request),
             'reviewed_by' => $reviewer !== null ? (string) $request->reviewed_by : null,
             'reviewed_by_name' => $reviewer?->name,
             'reviewed_at' => $reviewer !== null ? $request->reviewed_at?->toIso8601String() : null,

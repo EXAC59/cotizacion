@@ -37,6 +37,10 @@ export function RequestLinesEditor({
 
   saving = false,
 
+  forceSaveAvailable = false,
+
+  assignHint = false,
+
   onChange,
 
   onSave,
@@ -61,6 +65,12 @@ export function RequestLinesEditor({
   dirty?: boolean
 
   saving?: boolean
+
+  /** Permite Guardar aunque no haya cambios (p. ej. solo enviar a ventas). */
+  forceSaveAvailable?: boolean
+
+  /** Menciona en el modal que se asignará al vendedor elegido. */
+  assignHint?: boolean
 
   onChange: (lines: RequestLine[]) => void
 
@@ -211,7 +221,7 @@ export function RequestLinesEditor({
 
         partNumber: '',
 
-        brand: 'Genérico',
+        brand: '',
 
         description: '',
 
@@ -435,7 +445,7 @@ export function RequestLinesEditor({
 
           </Button>
 
-          {dirty && onSave ? (
+          {(dirty || forceSaveAvailable) && onSave ? (
 
             <>
 
@@ -447,7 +457,7 @@ export function RequestLinesEditor({
 
               </Button>
 
-              {onCancel ? (
+              {dirty && onCancel ? (
 
                 <Button variant="secondary" size="sm" onClick={onCancel} disabled={saving}>
 
@@ -548,6 +558,10 @@ export function RequestLinesEditor({
                 <p className="mt-2 text-sm text-slate-600">
 
                   Selecciona uno de los dos estados para guardar tus cambios.
+
+                  {assignHint
+                    ? ' Al confirmar, también se enviará al vendedor seleccionado.'
+                    : ''}
 
                 </p>
 

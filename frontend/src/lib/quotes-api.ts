@@ -118,6 +118,12 @@ type QuoteApiResponse = {
 
   eligibility?: QuoteNotifyEligibility
 
+  createdByName?: string | null
+
+  ownedByViewer?: boolean
+
+  assignedToSales?: boolean
+
   lockedBy?: { id: string; name: string; email: string }
 
   lockedAt?: string
@@ -151,6 +157,10 @@ type QuoteSummaryApi = {
   createdAt?: string
 
   createdByName?: string | null
+
+  ownedByViewer?: boolean
+
+  assignedToSales?: boolean
 
   invoiceNumber?: string | null
 
@@ -215,6 +225,12 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     followUpHistory: data.followUpHistory,
 
     eligibility: data.eligibility,
+
+    createdByName: data.createdByName ?? undefined,
+
+    ownedByViewer: data.ownedByViewer,
+
+    assignedToSales: data.assignedToSales,
 
     lines: (data.lines ?? []).map((line): QuoteLine => ({
 
@@ -420,11 +436,13 @@ export async function addQuoteInternalNote(id: string, body: string): Promise<Qu
 export async function listQuotes(params?: {
   search?: string
   status?: Quote['status']
+  scope?: 'mine' | 'all'
 }): Promise<Quote[]> {
 
   const qs = new URLSearchParams()
   if (params?.search?.trim()) qs.set('search', params.search.trim())
   if (params?.status) qs.set('status', params.status)
+  if (params?.scope) qs.set('scope', params.scope)
   const query = qs.toString()
 
   const response = await apiFetch(`${getApiBase()}/cotizaciones${query ? `?${query}` : ''}`)
@@ -472,6 +490,8 @@ export async function listQuotes(params?: {
     invoiceNumber: row.invoiceNumber ?? undefined,
 
     createdByName: row.createdByName ?? undefined,
+    ownedByViewer: row.ownedByViewer,
+    assignedToSales: row.assignedToSales,
 
     involucrado: row.involucrado ?? undefined,
 

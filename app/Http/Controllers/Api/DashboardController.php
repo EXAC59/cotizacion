@@ -19,7 +19,11 @@ class DashboardController extends Controller
         return response()->json(
             $this->payloadForUser(
                 $request,
-                $analytics->dashboardPayload($validated['from'] ?? null, $validated['to'] ?? null),
+                $analytics->dashboardPayload(
+                    $validated['from'] ?? null,
+                    $validated['to'] ?? null,
+                    $request->user(),
+                ),
             )
         );
     }

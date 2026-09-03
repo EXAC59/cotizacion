@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Client;
 use App\Models\Quote;
 use App\Support\MexicanRfc;
+use App\Support\ViewerListScope;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ClienteController extends Controller
@@ -71,6 +73,7 @@ class ClienteController extends Controller
         $validated = $request->validate([
             'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
             'status' => ['nullable', 'string', 'max:30'],
+            'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
         ]);
 
         $limit = (int) ($validated['limit'] ?? 50);
@@ -79,15 +82,20 @@ class ClienteController extends Controller
             ->with('creator')
             ->withCount('lines')
             ->where('client_id', $id)
-            ->orderByDesc('created_at')
-            ->limit($limit);
+            ->orderByDesc('created_at');
+
+        $user = $request->user();
+        $user?->loadMissing('role');
+        if ($user) {
+            $query->forViewerList($user, $validated['scope'] ?? ViewerListScope::defaultFor($user));
+        }
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
         }
 
         return response()->json([
-            'data' => $query->get()->map(fn (Quote $quote) => [
+            'data' => $query->limit($limit)->get()->map(fn (Quote $quote) => [
                 'id' => $quote->id,
                 'folio' => $quote->folio,
                 'clientId' => $quote->client_id,

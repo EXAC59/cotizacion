@@ -11,6 +11,22 @@ use Illuminate\Validation\ValidationException;
 
 class QuoteFollowUpService
 {
+    /** Recordatorios: cotizaciones que ventas aún no envía al cliente. */
+    public const UNSENT_FOR_CLIENT_STATUSES = [
+        'solicitud_cotizaciones',
+        'en_elaboracion',
+        'pendiente_envio',
+    ];
+
+    public static function isUnsentForClient(Quote $quote): bool
+    {
+        if ($quote->sent_at !== null) {
+            return false;
+        }
+
+        return in_array($quote->status, self::UNSENT_FOR_CLIENT_STATUSES, true);
+    }
+
     public function __construct(
         private readonly SalesNotificationService $notifications,
     ) {}
@@ -26,6 +42,18 @@ class QuoteFollowUpService
         if (! in_array($actor->role_slug, ['ventas', 'administrador'], true)) {
             throw ValidationException::withMessages([
                 'status' => 'Solo ventas puede marcar el estatus de seguimiento.',
+            ]);
+        }
+
+        if (! self::isUnsentForClient($quote)) {
+            throw ValidationException::withMessages([
+                'status' => 'El recordatorio solo aplica a cotizaciones que ventas aún no ha enviado al cliente.',
+            ]);
+        }
+
+        if ($actor->role_slug === 'ventas' && ! $quote->isVisibleToSalesperson($actor)) {
+            throw ValidationException::withMessages([
+                'status' => 'Solo puedes dar seguimiento a cotizaciones que creaste o que compras te envió.',
             ]);
         }
 
