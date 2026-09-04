@@ -61,7 +61,6 @@ export function RequestNewPage() {
   const [validationErrors, setValidationErrors] = useState<string[]>([])
   const [doOcr, setDoOcr] = useState(true)
   const [clientRequiredModal, setClientRequiredModal] = useState(false)
-  const [goToQuoteAfter, setGoToQuoteAfter] = useState(false)
   const [allowLeave, setAllowLeave] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const doOcrRef = useRef(doOcr)
@@ -110,12 +109,6 @@ export function RequestNewPage() {
     }
 
     toast('Guardado en elaboración', 'success')
-
-    if (goToQuoteAfter && clientId) {
-      navigate(`/cotizaciones/nueva?request=${requestId}&clientId=${clientId}`)
-      return
-    }
-
     navigate(`/solicitudes/${requestId}`)
   }
 
@@ -509,16 +502,6 @@ export function RequestNewPage() {
       )}
 
       <div className="mt-6 space-y-3">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            checked={goToQuoteAfter}
-            onChange={(e) => setGoToQuoteAfter(e.target.checked)}
-            disabled={lecturaLoading}
-          />
-          Al terminar, ir directo a crear cotización
-        </label>
         <Button
           onClick={handleSubmit}
           disabled={lecturaLoading || !hasInput || !clientId}

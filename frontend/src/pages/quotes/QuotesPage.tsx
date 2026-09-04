@@ -15,7 +15,7 @@ import { quoteTotals } from '@/lib/calculations'
 import { formatCurrency, formatDate } from '@/lib/format'
 import { matchesQuoteListFilters } from '@/lib/quote-list-filters'
 import { buildQuoteSearchParams } from '@/lib/quote-search-params'
-import { QUOTE_STATUS_ORDER } from '@/lib/quote-status'
+import { QUOTE_WORKFLOW_ORDER } from '@/lib/quote-status'
 import { listQuotes, openQuotePdf, isPersistedQuoteId } from '@/lib/quotes-api'
 import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
 import { QUOTE_STATUS_LABELS, type Quote, type QuoteStatus } from '@/types'
@@ -29,6 +29,8 @@ export function QuotesPage() {
 
   const statusFilter = (searchParams.get('status') ?? '') as QuoteStatus | ''
   const urlSearch = searchParams.get('q') ?? ''
+  const dateFrom = searchParams.get('from') ?? ''
+  const dateTo = searchParams.get('to') ?? ''
   const listScope = parseViewerListScope(searchParams.get('scope'), user?.role)
 
   const [searchInput, setSearchInput] = useState(urlSearch)
@@ -67,6 +69,8 @@ export function QuotesPage() {
       search: urlSearch.trim() || undefined,
       status: statusFilter || undefined,
       scope: listScope,
+      from: dateFrom || undefined,
+      to: dateTo || undefined,
     })
       .then((data) => {
         if (cancelled) return
@@ -83,18 +87,20 @@ export function QuotesPage() {
     return () => {
       cancelled = true
     }
-  }, [urlSearch, statusFilter, listScope, saveQuote])
+  }, [urlSearch, statusFilter, listScope, dateFrom, dateTo, saveQuote])
 
   const quotes = useMemo(() => {
     const source = error ? localQuotes : apiQuotes
     const filtered = error
-      ? source.filter((q) => matchesQuoteListFilters(q, urlSearch, statusFilter))
+      ? source.filter((q) =>
+          matchesQuoteListFilters(q, urlSearch, statusFilter, dateFrom || undefined, dateTo || undefined),
+        )
       : source
 
     return [...filtered].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     )
-  }, [apiQuotes, localQuotes, error, urlSearch, statusFilter])
+  }, [apiQuotes, localQuotes, error, urlSearch, statusFilter, dateFrom, dateTo])
 
   const setListScope = (value: ViewerListScope) => {
     setSearchParams(
@@ -127,7 +133,22 @@ export function QuotesPage() {
     )
   }
 
-  const hasActiveFilters = Boolean(urlSearch.trim() || statusFilter)
+  const setDateFilter = (key: 'from' | 'to', value: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value) {
+          next.set(key, value)
+        } else {
+          next.delete(key)
+        }
+        return next
+      },
+      { replace: true },
+    )
+  }
+
+  const hasActiveFilters = Boolean(urlSearch.trim() || statusFilter || dateFrom || dateTo)
 
   return (
     <div>
@@ -155,7 +176,7 @@ export function QuotesPage() {
         </p>
       )}
 
-      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:max-w-3xl">
+      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:max-w-5xl">
         <div>
           <Label htmlFor="quote-search">Buscar por folio o cliente</Label>
           <div className="relative mt-1">
@@ -165,7 +186,7 @@ export function QuotesPage() {
               type="search"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Ej. demo-001, COT-DEMO-0001 o ACME"
+              placeholder="Buscar folio o cliente (ej. demo-001)…"
               className="pl-9"
             />
           </div>
@@ -179,12 +200,36 @@ export function QuotesPage() {
             onChange={(e) => setStatusFilter(e.target.value as QuoteStatus | '')}
           >
             <option value="">Todos los estatus</option>
-            {QUOTE_STATUS_ORDER.map((status) => (
-              <option key={status} value={status}>
-                {QUOTE_STATUS_LABELS[status]}
-              </option>
-            ))}
+            {QUOTE_WORKFLOW_ORDER.filter((status) => status !== 'solicitud_cotizaciones').map(
+              (status) => (
+                <option key={status} value={status}>
+                  {QUOTE_STATUS_LABELS[status]}
+                </option>
+              ),
+            )}
           </Select>
+        </div>
+        <div>
+          <Label htmlFor="quote-date-from">Desde</Label>
+          <Input
+            id="quote-date-from"
+            type="date"
+            className="mt-1"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFilter('from', e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="quote-date-to">Hasta</Label>
+          <Input
+            id="quote-date-to"
+            type="date"
+            className="mt-1"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateFilter('to', e.target.value)}
+          />
         </div>
       </div>
 

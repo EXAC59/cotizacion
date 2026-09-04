@@ -219,6 +219,32 @@ class SalesNotificationService
     }
 
     /**
+     * Aviso directo de asignación (compras↔ventas) sin reglas de elegibilidad.
+     */
+    public function notifyAssignment(
+        Quote $quote,
+        User $sender,
+        User $recipient,
+        string $audience,
+        string $message,
+    ): SalesNotification {
+        $text = trim($message);
+        if ($text === '') {
+            $text = "Cotización {$quote->folio} asignada para tu seguimiento.";
+        }
+
+        return SalesNotification::query()->create([
+            'quote_id' => $quote->id,
+            'sender_id' => $sender->id,
+            'recipient_id' => $recipient->id,
+            'audience' => $audience,
+            'reason_code' => self::REASON_COMENTARIO,
+            'message' => $text,
+            'read_at' => null,
+        ]);
+    }
+
+    /**
      * Compras envía un comentario sobre el recordatorio al vendedor de la cotización.
      *
      * @throws ValidationException

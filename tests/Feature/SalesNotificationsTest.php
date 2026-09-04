@@ -146,6 +146,22 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function follow_up_rejected_when_quote_is_still_in_elaboration(): void
+    {
+        $this->actingAsDemoUser('ventas');
+        $quote = $this->createQuote([
+            'status' => 'en_elaboracion',
+            'sent_at' => null,
+        ]);
+
+        $this->patchJson("/api/cotizaciones/{$quote->id}/seguimiento", [
+            'status' => 'negociacion',
+            'remindDate' => now()->toDateString(),
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['status']);
+    }
+
+    #[Test]
     public function follow_up_negociacion_rejects_past_date(): void
     {
         $this->actingAsDemoUser('ventas');

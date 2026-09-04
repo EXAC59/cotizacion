@@ -229,8 +229,8 @@ class DashboardAnalyticsService
             'integrationIssues' => $this->integrationIssues(),
             'expiringQuotes' => $this->expiringQuotes($viewer),
             'stuckProcessingRequests' => $this->stuckProcessingRequests(),
-            'pendingReviewRequests' => $this->pendingReviewRequests(),
-            'unsentRequests' => $this->unsentRequests(),
+            'pendingReviewRequests' => $this->pendingReviewRequests($viewer),
+            'unsentRequests' => $this->unsentRequests($viewer),
         ];
     }
 
@@ -251,6 +251,21 @@ class DashboardAnalyticsService
         });
 
         return $query;
+    }
+
+    /**
+     * Ventas solo ve solicitudes hechas por su cuenta (id o “Hecha por”).
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<QuoteRequest>  $query
+     * @return \Illuminate\Database\Eloquent\Builder<QuoteRequest>
+     */
+    private function constrainRequestMaker($query, ?User $viewer)
+    {
+        if ($viewer?->role_slug !== 'ventas') {
+            return $query;
+        }
+
+        return $query->ownedByUser($viewer);
     }
 
     /**
@@ -279,20 +294,25 @@ class DashboardAnalyticsService
 
     /**
      * Solicitudes que nadie ha abierto aún (sin revisar por un humano).
+     * Ventas: solo las creadas por su cuenta.
      *
      * @return list<array{id: string, fileName: string|null, clientName: string, createdAt: string}>
      */
-    private function pendingReviewRequests(): array
+    private function pendingReviewRequests(?User $viewer = null): array
     {
-        return QuoteRequest::query()
+        $query = QuoteRequest::query()
             ->with('client')
             ->where('workflow_status', 'en_elaboracion')
             ->whereNotIn('status', ['procesando', 'error'])
             ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
-            ->where(function ($query) {
-                $query->whereNull('reviewed_by')
+            ->where(function ($inner) {
+                $inner->whereNull('reviewed_by')
                     ->orWhereColumn('reviewed_by', 'created_by');
-            })
+            });
+
+        $this->constrainRequestMaker($query, $viewer);
+
+        return $query
             ->orderByDesc('created_at')
             ->limit(20)
             ->get()
@@ -307,15 +327,20 @@ class DashboardAnalyticsService
     }
 
     /**
-     * Solicitudes que compras todavía no ha convertido en una cotización enviada.
+     * Solicitudes en En elaboración o Lista / Terminada (aún no enviadas).
+     * Ventas: solo las creadas por su cuenta.
      *
      * @return list<array{id: string, fileName: string|null, clientName: string, createdByName: string|null, workflowStatus: string, createdAt: string}>
      */
-    private function unsentRequests(): array
+    private function unsentRequests(?User $viewer = null): array
     {
-        return QuoteRequest::query()
+        $query = QuoteRequest::query()
             ->with(['client', 'creator'])
-            ->whereIn('workflow_status', ['en_elaboracion', 'pendiente_envio'])
+            ->whereIn('workflow_status', ['en_elaboracion', 'pendiente_envio']);
+
+        $this->constrainRequestMaker($query, $viewer);
+
+        return $query
             ->orderByDesc('updated_at')
             ->limit(20)
             ->get()

@@ -11,10 +11,8 @@ use Illuminate\Validation\ValidationException;
 
 class QuoteFollowUpService
 {
-    /** Recordatorios: cotizaciones que ventas aún no envía al cliente. */
+    /** Recordatorios: cotizaciones listas para que ventas negocie con el cliente. */
     public const UNSENT_FOR_CLIENT_STATUSES = [
-        'solicitud_cotizaciones',
-        'en_elaboracion',
         'pendiente_envio',
     ];
 
@@ -47,7 +45,7 @@ class QuoteFollowUpService
 
         if (! self::isUnsentForClient($quote)) {
             throw ValidationException::withMessages([
-                'status' => 'El recordatorio solo aplica a cotizaciones que ventas aún no ha enviado al cliente.',
+                'status' => 'El recordatorio solo aplica a cotizaciones en Lista / Terminada que aún no se han enviado al cliente.',
             ]);
         }
 

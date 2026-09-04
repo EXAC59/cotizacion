@@ -11,7 +11,6 @@ import { LoadingState, StatGridSkeleton } from '@/components/ui/LoadingState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
 import { StatCard } from '@/components/ui/StatCard'
-import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
 import {
@@ -19,10 +18,8 @@ import {
 } from '@/lib/notification-focus'
 import { formatCurrency } from '@/lib/format'
 import {
-  QUOTE_STATUS_LABELS,
   type DashboardAlerts,
   type DashboardAnalytics,
-  type QuoteStatus,
 } from '@/types'
 
 const EMPTY_ALERTS: DashboardAlerts = {
@@ -37,13 +34,6 @@ const EMPTY_ALERTS: DashboardAlerts = {
   unsentRequests: [],
 }
 
-const CURRENT_QUOTE_STATUSES: QuoteStatus[] = [
-  'en_elaboracion',
-  'pendiente_envio',
-  'enviada',
-  'modificacion',
-]
-
 function SectionTitle({ children }: { children: ReactNode }) {
   return (
     <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -53,11 +43,12 @@ function SectionTitle({ children }: { children: ReactNode }) {
 }
 
 export function DashboardPage() {
-  const { dashboard: localDashboard } = useData()
-  const { canViewDashboardExecutive, canViewWholesalerIntegrationAlerts } = usePermission()
+  const { user, canViewDashboardExecutive, canViewWholesalerIntegrationAlerts } = usePermission()
   const canViewExecutive = canViewDashboardExecutive()
   const canViewIntegrationAlerts = canViewWholesalerIntegrationAlerts()
-  const canViewUnsentRequests = canViewIntegrationAlerts
+  // Compras/admin: todas. Ventas: las suyas (API las filtra por creador).
+  const canViewUnsentRequests =
+    canViewIntegrationAlerts || user?.role === 'ventas'
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -77,7 +68,6 @@ export function DashboardPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  const quotesByStatus = analytics?.quotesByStatus ?? localDashboard.quotesByStatus
   const recentQuotes = analytics?.recentQuotes ?? []
   const alerts = analytics?.alerts ?? EMPTY_ALERTS
 
@@ -116,7 +106,7 @@ export function DashboardPage() {
         <StatCard
           label="Solicitudes de cotización sin revisión"
           value={String(alerts.pendingReviewRequests.length)}
-          hint="De ventas, en elaboración, sin apertura de compras/admin"
+          hint="Creadas por ventas y pendientes de revisión"
           icon={Inbox}
         />
         <StatCard
@@ -139,50 +129,8 @@ export function DashboardPage() {
         )}
       </div>
 
-      {canViewUnsentRequests && (
-        <Card className="mt-6 min-w-0 overflow-hidden">
-          <CardHeader
-            title="Solicitudes no enviadas"
-            subtitle="Permanecen en En elaboración o Lista / Terminada"
-            action={
-              <Link to="/solicitudes" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-                Ver solicitudes
-              </Link>
-            }
-          />
-          <CardBody className="space-y-2">
-            {alerts.unsentRequests.length === 0 ? (
-              <p className="text-sm text-slate-500">No hay solicitudes pendientes de envío.</p>
-            ) : (
-              alerts.unsentRequests.map((request) => (
-                <div
-                  key={request.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/30 px-3 py-2 text-sm"
-                >
-                  <div className="min-w-0">
-                    <Link
-                      to={`/solicitudes/${request.id}`}
-                      className="font-medium text-indigo-600 hover:underline"
-                    >
-                      {request.fileName || 'Solicitud'}
-                    </Link>
-                    <p className="truncate text-slate-500">
-                      {request.clientName || 'Sin cliente'}
-                    </p>
-                    <p className="text-xs text-slate-600">
-                      Hecha por: {request.createdByName?.trim() || 'Sin asignar'}
-                    </p>
-                  </div>
-                  <QuoteStatusBadge status={request.workflowStatus} />
-                </div>
-              ))
-            )}
-          </CardBody>
-        </Card>
-      )}
-
-      <div className="my-6 grid items-start gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      <div className="my-6">
+        <Card>
           <CardHeader
             title="Cotizaciones recientes"
             subtitle="Folio, cliente, quién la hizo y en qué estado está"
@@ -238,30 +186,54 @@ export function DashboardPage() {
             )}
           </CardBody>
         </Card>
-
-        <Card>
-          <CardHeader
-            title="Estado de cotizaciones"
-            subtitle="Cuántas hay en cada etapa (del periodo)"
-          />
-          <CardBody className="space-y-2">
-            {CURRENT_QUOTE_STATUSES.map((status) => (
-                <div key={status} className="flex items-center justify-between text-sm">
-                  <span className="text-slate-600">{QUOTE_STATUS_LABELS[status]}</span>
-                  <span className="font-semibold text-slate-900">{quotesByStatus[status] ?? 0}</span>
-                </div>
-              ))}
-            <p className="pt-2 text-xs text-slate-500">
-              Para ver quién hizo cada una, usa la tabla de cotizaciones recientes.
-            </p>
-          </CardBody>
-        </Card>
       </div>
 
       <div id="alertas" className="relative scroll-mt-28">
         <SectionTitle>Notificaciones y recordatorios</SectionTitle>
       </div>
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
+        {canViewUnsentRequests && (
+          <Card id="solicitudes-no-enviadas" className="relative scroll-mt-28 min-w-0 overflow-hidden">
+            <CardHeader
+              title="Solicitudes no enviadas"
+              subtitle="Permanecen en En elaboración o Lista / Terminada"
+              action={
+                <Link to="/solicitudes" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+                  Ver solicitudes
+                </Link>
+              }
+            />
+            <CardBody className="space-y-2">
+              {alerts.unsentRequests.length === 0 ? (
+                <p className="text-sm text-slate-500">No hay solicitudes pendientes de envío.</p>
+              ) : (
+                alerts.unsentRequests.map((request) => (
+                  <div
+                    key={request.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/30 px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <Link
+                        to={`/solicitudes/${request.id}`}
+                        className="font-medium text-indigo-600 hover:underline"
+                      >
+                        {request.fileName || 'Solicitud'}
+                      </Link>
+                      <p className="truncate text-slate-500">
+                        {request.clientName || 'Sin cliente'}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Hecha por: {request.createdByName?.trim() || 'Sin asignar'}
+                      </p>
+                    </div>
+                    <QuoteStatusBadge status={request.workflowStatus} />
+                  </div>
+                ))
+              )}
+            </CardBody>
+          </Card>
+        )}
+
         <Card id="cotizaciones-sin-avance" className="relative scroll-mt-28">
           <CardHeader
             title="Cotizaciones sin avance"
@@ -305,7 +277,7 @@ export function DashboardPage() {
         <Card id="solicitudes-sin-revisar" className="relative scroll-mt-28">
           <CardHeader
             title="Solicitudes sin revisar"
-            subtitle="Hechas por ventas, en elaboración y sin revisión de compras/admin"
+            subtitle="Creadas por ventas y pendientes de revisión"
             action={
               <Link to="/solicitudes" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
                 Ver solicitudes

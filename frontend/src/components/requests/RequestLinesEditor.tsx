@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle, useState } from 'react'
 
 import { ChevronDown, ChevronUp, Copy, Plus, Save, Trash2, X } from 'lucide-react'
 
@@ -19,69 +19,57 @@ type EditableWorkflowStatus = Extract<
   'en_elaboracion' | 'pendiente_envio'
 >
 
+export type RequestLinesEditorHandle = {
+  openSaveModal: () => void
+}
 
-
-export function RequestLinesEditor({
-
-  lines,
-
-  requestId,
-
-  preferredWarehouse = 'CDMX',
-
-  comparatorEnabled = true,
-
-  showComparator = true,
-
-  dirty = false,
-
-  saving = false,
-
-  forceSaveAvailable = false,
-
-  assignHint = false,
-
-  onChange,
-
-  onSave,
-
-  onCancel,
-
-}: {
-
-  lines: RequestLine[]
-
-  requestId?: string
-
-  preferredWarehouse?: string
-
-  autoApplyBest?: boolean
-
-  comparatorEnabled?: boolean
-
-  /** false para roles sin inventario (p. ej. ventas). */
-  showComparator?: boolean
-
-  dirty?: boolean
-
-  saving?: boolean
-
-  /** Permite Guardar aunque no haya cambios (p. ej. solo enviar a ventas). */
-  forceSaveAvailable?: boolean
-
-  /** Menciona en el modal que se asignará al vendedor elegido. */
-  assignHint?: boolean
-
-  onChange: (lines: RequestLine[]) => void
-
-  onSave?: (workflowStatus: EditableWorkflowStatus) => Promise<boolean>
-
-  onCancel?: () => void
-
-}) {
-
+export const RequestLinesEditor = forwardRef<
+  RequestLinesEditorHandle,
+  {
+    lines: RequestLine[]
+    requestId?: string
+    preferredWarehouse?: string
+    autoApplyBest?: boolean
+    comparatorEnabled?: boolean
+    /** false para roles sin inventario (p. ej. ventas). */
+    showComparator?: boolean
+    dirty?: boolean
+    saving?: boolean
+    /** Permite Guardar aunque no haya cambios (p. ej. solo enviar a ventas). */
+    forceSaveAvailable?: boolean
+    /** Menciona en el modal que se asignará al área elegida. */
+    assignHint?: boolean
+    onChange: (lines: RequestLine[]) => void
+    onSave?: (workflowStatus: EditableWorkflowStatus) => Promise<boolean>
+    onCancel?: () => void
+  }
+>(function RequestLinesEditor(
+  {
+    lines,
+    requestId,
+    preferredWarehouse = 'CDMX',
+    comparatorEnabled = true,
+    showComparator = true,
+    dirty = false,
+    saving = false,
+    forceSaveAvailable = false,
+    assignHint = false,
+    onChange,
+    onSave,
+    onCancel,
+  },
+  ref,
+) {
   const [activeLineId, setActiveLineId] = useState<string | null>(null)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
+
+  useImperativeHandle(ref, () => ({
+    openSaveModal: () => {
+      if (!onSave) return
+      if (!(dirty || forceSaveAvailable)) return
+      setSaveModalOpen(true)
+    },
+  }))
 
   const saveWithStatus = async (workflowStatus: EditableWorkflowStatus) => {
     if (!onSave) return
@@ -560,7 +548,7 @@ export function RequestLinesEditor({
                   Selecciona uno de los dos estados para guardar tus cambios.
 
                   {assignHint
-                    ? ' Al confirmar, también se enviará al vendedor seleccionado.'
+                    ? ' Al confirmar, también se enviará a la persona seleccionada.'
                     : ''}
 
                 </p>
@@ -627,4 +615,6 @@ export function RequestLinesEditor({
 
   )
 
-}
+})
+
+RequestLinesEditor.displayName = 'RequestLinesEditor'

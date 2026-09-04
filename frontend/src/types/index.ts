@@ -104,6 +104,7 @@ export interface QuoteRequest {
   createdBy?: string | null
   createdByName?: string
   assignedToSales?: boolean
+  assignedToCompras?: boolean
   needsExternalReview?: boolean
   reviewedBy?: string | null
   reviewedByName?: string
@@ -257,6 +258,7 @@ export interface Quote {
   createdByName?: string
   ownedByViewer?: boolean
   assignedToSales?: boolean
+  assignedToCompras?: boolean
   statusHistory?: QuoteStatusHistoryEntry[]
   followUp?: QuoteFollowUp | null
   followUpHistory?: QuoteFollowUpHistoryEntry[]

@@ -54,6 +54,22 @@ class AssignToSalesTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function compras_cannot_list_compras_users(): void
+    {
+        $this->actingAs($this->demoUser('gerente_compras'));
+        $this->getJson('/api/usuarios/compras')->assertStatus(422);
+    }
+
+    #[Test]
+    public function admin_can_list_both_teams(): void
+    {
+        $this->actingAs($this->demoUser('administrador'));
+
+        $this->getJson('/api/usuarios/ventas')->assertOk();
+        $this->getJson('/api/usuarios/compras')->assertOk();
+    }
+
+    #[Test]
     public function compras_assigns_quote_regenerates_folio_and_notifies(): void
     {
         $compras = $this->demoUser('gerente_compras');
@@ -127,21 +143,24 @@ class AssignToSalesTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function ventas_cannot_assign_quote(): void
+    public function ventas_cannot_assign_quote_to_other_ventas(): void
     {
         $ventas = $this->demoUser('ventas');
         $other = User::factory()->create([
             'role_id' => DB::table('roles')->where('slug', 'ventas')->value('id'),
             'active' => true,
             'name' => 'Otro Vendedor',
+            'folio_code' => 'OTRO2',
         ]);
         $quote = $this->createQuoteFor($ventas);
 
         $this->actingAs($ventas);
         $this->postJson("/api/cotizaciones/{$quote->id}/asignar-ventas", [
             'recipientId' => $other->id,
-            'message' => 'No debería poder.',
+            'message' => 'Te paso esta cotización.',
         ])->assertStatus(422);
+
+        $this->assertSame($ventas->id, (int) $quote->fresh()->created_by);
     }
 
     #[Test]
@@ -159,7 +178,7 @@ class AssignToSalesTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function cannot_reassign_quote_already_sent_to_sales(): void
+    public function can_reassign_quote_already_sent_to_sales(): void
     {
         $compras = $this->demoUser('gerente_compras');
         $ventas = $this->demoUser('ventas');
@@ -174,13 +193,153 @@ class AssignToSalesTest extends AuthenticatedFeatureTestCase
         ]);
 
         $this->actingAs($compras);
-        $first = $this->postJson("/api/cotizaciones/{$quote->id}/asignar-ventas", [
+        $this->postJson("/api/cotizaciones/{$quote->id}/asignar-ventas", [
             'recipientId' => $ventas->id,
         ])->assertOk();
 
-        $this->assertTrue($first->json('assignedToSales'));
-
         $this->postJson("/api/cotizaciones/{$quote->id}/asignar-ventas", [
+            'recipientId' => $otroVentas->id,
+        ])->assertOk();
+
+        $this->assertSame($otroVentas->id, (int) $quote->fresh()->created_by);
+    }
+
+    #[Test]
+    public function ventas_can_list_active_compras(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+        $this->actingAs($ventas);
+
+        $response = $this->getJson('/api/usuarios/compras')->assertOk();
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($compras->id));
+        $this->assertFalse($ids->contains($ventas->id));
+    }
+
+    #[Test]
+    public function compras_cannot_list_compras_users_for_handoff(): void
+    {
+        $compras = $this->demoUser('gerente_compras');
+        $this->actingAs($compras);
+        $this->getJson('/api/usuarios/compras')->assertStatus(422);
+    }
+
+    #[Test]
+    public function ventas_assigns_quote_to_compras(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+        $quote = $this->createQuoteFor($ventas, [
+            'folio' => 'COT-VENTAS-TO-COMPRAS',
+        ]);
+
+        $this->actingAs($ventas);
+        $response = $this->postJson("/api/cotizaciones/{$quote->id}/asignar-compras", [
+            'recipientId' => $compras->id,
+        ])->assertOk();
+
+        $newFolio = $response->json('folio');
+        $this->assertNotSame('COT-VENTAS-TO-COMPRAS', $newFolio);
+        $this->assertTrue($response->json('assignedToCompras'));
+        $this->assertFalse($response->json('assignedToSales'));
+        $this->assertSame($compras->id, (int) $quote->fresh()->created_by);
+
+        $this->assertSame(
+            1,
+            SalesNotification::query()
+                ->where('quote_id', $quote->id)
+                ->where('recipient_id', $compras->id)
+                ->where('audience', 'compras')
+                ->count()
+        );
+    }
+
+    #[Test]
+    public function ventas_assigns_solicitud_to_compras(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+
+        $request = QuoteRequest::query()->create([
+            'source' => 'text',
+            'status' => 'procesada',
+            'raw_text' => 'producto de prueba',
+            'folio' => 'SOL-VENTAS-001',
+            'created_by' => $ventas->id,
+        ]);
+
+        $this->actingAs($ventas);
+        $response = $this->postJson("/api/solicitudes/{$request->id}/asignar-compras", [
+            'recipientId' => $compras->id,
+        ])->assertOk();
+
+        $this->assertTrue($response->json('assigned_to_compras'));
+        $this->assertSame($compras->id, (int) $request->fresh()->created_by);
+    }
+
+    #[Test]
+    public function can_reassign_quote_already_sent_to_compras(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+        $otroCompras = User::factory()->create([
+            'role_id' => DB::table('roles')->where('slug', 'gerente_compras')->value('id'),
+            'active' => true,
+            'name' => 'Otro Compras',
+            'folio_code' => 'OTROC',
+        ]);
+        $quote = $this->createQuoteFor($ventas, [
+            'folio' => 'COT-VENTAS-ONCE',
+        ]);
+
+        $this->actingAs($ventas);
+        $this->postJson("/api/cotizaciones/{$quote->id}/asignar-compras", [
+            'recipientId' => $compras->id,
+        ])->assertOk();
+
+        $this->actingAs($this->demoUser('administrador'));
+        $this->postJson("/api/cotizaciones/{$quote->id}/asignar-compras", [
+            'recipientId' => $otroCompras->id,
+        ])->assertOk();
+
+        $this->assertSame($otroCompras->id, (int) $quote->fresh()->created_by);
+    }
+
+    #[Test]
+    public function assign_without_recipient_uses_default_team_user(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+        $quote = $this->createQuoteFor($ventas, [
+            'folio' => 'COT-DEFAULT-TEAM',
+        ]);
+
+        $this->actingAs($ventas);
+        $response = $this->postJson("/api/cotizaciones/{$quote->id}/asignar-compras", [])
+            ->assertOk();
+
+        $this->assertSame($compras->id, (int) $quote->fresh()->created_by);
+        $this->assertNotSame('', (string) $response->json('folio'));
+        $this->assertNotSame('COT-DEFAULT-TEAM', (string) $response->json('folio'));
+    }
+
+    #[Test]
+    public function compras_destination_rejects_non_compras_user(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $otroVentas = User::factory()->create([
+            'role_id' => DB::table('roles')->where('slug', 'ventas')->value('id'),
+            'active' => true,
+            'name' => 'Otro Ventas Destino',
+            'folio_code' => 'OVDES',
+        ]);
+        $quote = $this->createQuoteFor($ventas, [
+            'folio' => 'COT-ANY-USER',
+        ]);
+
+        $this->actingAs($ventas);
+        $this->postJson("/api/cotizaciones/{$quote->id}/asignar-compras", [
             'recipientId' => $otroVentas->id,
         ])->assertStatus(422);
 

@@ -124,6 +124,8 @@ type QuoteApiResponse = {
 
   assignedToSales?: boolean
 
+  assignedToCompras?: boolean
+
   lockedBy?: { id: string; name: string; email: string }
 
   lockedAt?: string
@@ -161,6 +163,8 @@ type QuoteSummaryApi = {
   ownedByViewer?: boolean
 
   assignedToSales?: boolean
+
+  assignedToCompras?: boolean
 
   invoiceNumber?: string | null
 
@@ -231,6 +235,8 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     ownedByViewer: data.ownedByViewer,
 
     assignedToSales: data.assignedToSales,
+
+    assignedToCompras: data.assignedToCompras,
 
     lines: (data.lines ?? []).map((line): QuoteLine => ({
 
@@ -437,12 +443,16 @@ export async function listQuotes(params?: {
   search?: string
   status?: Quote['status']
   scope?: 'mine' | 'all'
+  from?: string
+  to?: string
 }): Promise<Quote[]> {
 
   const qs = new URLSearchParams()
   if (params?.search?.trim()) qs.set('search', params.search.trim())
   if (params?.status) qs.set('status', params.status)
   if (params?.scope) qs.set('scope', params.scope)
+  if (params?.from) qs.set('from', params.from)
+  if (params?.to) qs.set('to', params.to)
   const query = qs.toString()
 
   const response = await apiFetch(`${getApiBase()}/cotizaciones${query ? `?${query}` : ''}`)
@@ -492,6 +502,7 @@ export async function listQuotes(params?: {
     createdByName: row.createdByName ?? undefined,
     ownedByViewer: row.ownedByViewer,
     assignedToSales: row.assignedToSales,
+    assignedToCompras: row.assignedToCompras,
 
     involucrado: row.involucrado ?? undefined,
 

@@ -40,6 +40,8 @@ class SolicitudController extends Controller
             'workflow_status' => ['nullable', 'string', Rule::in(config('solicitudes.workflow_statuses', []))],
             'q' => ['nullable', 'string', 'max:120'],
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
 
         $query = QuoteRequest::query()
@@ -67,6 +69,14 @@ class SolicitudController extends Controller
                     ->where('id', 'like', $term)
                     ->orWhereHas('client', fn ($client) => $client->where('company', 'like', $term));
             });
+        }
+
+        if (! empty($validated['from'])) {
+            $query->whereDate('created_at', '>=', $validated['from']);
+        }
+
+        if (! empty($validated['to'])) {
+            $query->whereDate('created_at', '<=', $validated['to']);
         }
 
         $requests = $query->limit(100)->get();
@@ -322,7 +332,7 @@ class SolicitudController extends Controller
     public function asignarVentas(string $id, Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'recipientId' => ['required', 'integer', 'exists:users,id'],
+            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
         $actor = $request->user();
@@ -331,14 +341,42 @@ class SolicitudController extends Controller
         }
 
         $quoteRequest = QuoteRequest::query()->findOrFail($id);
+        $this->ensureVentasCanMutateSolicitud($request, $quoteRequest);
         $result = $this->assignToSales->assignSolicitud(
             $quoteRequest,
             $actor,
-            (int) $validated['recipientId'],
+            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
         );
 
         return response()->json([
             'message' => 'Solicitud asignada a ventas.',
+            'previousFolio' => $result['previousFolio'],
+            'folio' => $result['folio'],
+            ...$this->lecturaService->toApiArray($result['request']),
+        ]);
+    }
+
+    public function asignarCompras(string $id, Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
+        ]);
+
+        $actor = $request->user();
+        if ($actor === null) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        }
+
+        $quoteRequest = QuoteRequest::query()->findOrFail($id);
+        $this->ensureVentasCanMutateSolicitud($request, $quoteRequest);
+        $result = $this->assignToSales->assignSolicitudToCompras(
+            $quoteRequest,
+            $actor,
+            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
+        );
+
+        return response()->json([
+            'message' => 'Solicitud asignada a compras.',
             'previousFolio' => $result['previousFolio'],
             'folio' => $result['folio'],
             ...$this->lecturaService->toApiArray($result['request']),

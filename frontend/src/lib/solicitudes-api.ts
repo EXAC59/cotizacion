@@ -33,6 +33,7 @@ export type SolicitudApi = {
   created_by?: string | null
   created_by_name?: string | null
   assigned_to_sales?: boolean
+  assigned_to_compras?: boolean
   needs_external_review?: boolean
   reviewed_by?: string | null
   reviewed_by_name?: string | null
@@ -109,6 +110,7 @@ export function mapSolicitudApiToQuoteRequest(
     createdBy: api.created_by ?? null,
     createdByName: api.created_by_name ?? undefined,
     assignedToSales: api.assigned_to_sales ?? false,
+    assignedToCompras: api.assigned_to_compras ?? false,
     needsExternalReview: api.needs_external_review ?? false,
     reviewedBy: api.reviewed_by ?? null,
     reviewedByName: api.reviewed_by_name ?? undefined,
@@ -151,12 +153,16 @@ export async function listSolicitudes(params: {
   workflowStatus?: RequestWorkflowStatus
   q?: string
   scope?: 'mine' | 'all'
+  from?: string
+  to?: string
 } = {}): Promise<SolicitudApi[]> {
   const search = new URLSearchParams()
   if (params.status) search.set('status', params.status)
   if (params.workflowStatus) search.set('workflow_status', params.workflowStatus)
   if (params.q?.trim()) search.set('q', params.q.trim())
   if (params.scope) search.set('scope', params.scope)
+  if (params.from) search.set('from', params.from)
+  if (params.to) search.set('to', params.to)
 
   const query = search.toString()
   const url = `${getApiBase()}/solicitudes${query ? `?${query}` : ''}`

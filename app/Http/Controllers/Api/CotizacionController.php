@@ -44,6 +44,8 @@ class CotizacionController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'status' => ['nullable', 'string', Rule::in($this->quoteStatuses())],
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
 
         $query = Quote::query()
@@ -64,6 +66,14 @@ class CotizacionController extends Controller
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
+        }
+
+        if (! empty($validated['from'])) {
+            $query->whereDate('created_at', '>=', $validated['from']);
+        }
+
+        if (! empty($validated['to'])) {
+            $query->whereDate('created_at', '<=', $validated['to']);
         }
 
         $quotes = $query->limit(200)->get();
@@ -334,7 +344,7 @@ class CotizacionController extends Controller
         }
 
         $validated = $request->validate([
-            'recipientId' => ['required', 'integer', 'exists:users,id'],
+            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
             'message' => ['nullable', 'string', 'min:3', 'max:1000'],
         ]);
 
@@ -344,15 +354,49 @@ class CotizacionController extends Controller
         }
 
         $quote = Quote::query()->findOrFail($id);
+        $this->ensureVentasCanMutateQuote($request, $quote);
         $result = $this->assignToSales->assignQuote(
             $quote,
             $actor,
-            (int) $validated['recipientId'],
+            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
             $validated['message'] ?? null,
         );
 
         return response()->json([
             'message' => 'Cotización asignada a ventas.',
+            'previousFolio' => $result['previousFolio'],
+            'folio' => $result['folio'],
+            ...$this->toApiArray($result['quote']),
+        ]);
+    }
+
+    public function asignarCompras(string $id, Request $request): JsonResponse
+    {
+        if (! Str::isUuid($id)) {
+            abort(404, 'Cotización no encontrada.');
+        }
+
+        $validated = $request->validate([
+            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
+            'message' => ['nullable', 'string', 'min:3', 'max:1000'],
+        ]);
+
+        $actor = $request->user();
+        if ($actor === null) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        }
+
+        $quote = Quote::query()->findOrFail($id);
+        $this->ensureVentasCanMutateQuote($request, $quote);
+        $result = $this->assignToSales->assignQuoteToCompras(
+            $quote,
+            $actor,
+            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
+            $validated['message'] ?? null,
+        );
+
+        return response()->json([
+            'message' => 'Cotización asignada a compras.',
             'previousFolio' => $result['previousFolio'],
             'folio' => $result['folio'],
             ...$this->toApiArray($result['quote']),
@@ -382,6 +426,7 @@ class CotizacionController extends Controller
             'createdByName' => $quote->creator?->name,
             'ownedByViewer' => $this->viewerOwnsQuote($quote),
             'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
+            'assignedToCompras' => $this->assignToSales->isAssignedToCompras($quote->creator),
             'involucrado' => $quote->involucrado,
             'followUp' => $this->followUps->followUpPayload($quote),
             'eligibility' => $this->salesNotifications->eligibility($quote),
@@ -425,6 +470,7 @@ class CotizacionController extends Controller
             'createdByName' => $quote->creator?->name,
             'ownedByViewer' => $this->viewerOwnsQuote($quote),
             'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
+            'assignedToCompras' => $this->assignToSales->isAssignedToCompras($quote->creator),
             'involucrado' => $quote->involucrado,
             'editLock' => $this->quoteLockService->lockPayload($quote),
             'statusHistory' => $this->statusHistory->timelineForQuote($quote),

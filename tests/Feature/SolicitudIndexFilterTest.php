@@ -11,6 +11,44 @@ class SolicitudIndexFilterTest extends AuthenticatedFeatureTestCase
 {
 
     #[Test]
+    public function it_filters_by_created_date_range(): void
+    {
+        $old = QuoteRequest::query()->create([
+            'source' => 'text',
+            'status' => 'procesada',
+            'raw_text' => 'antigua',
+        ]);
+        $mid = QuoteRequest::query()->create([
+            'source' => 'text',
+            'status' => 'procesada',
+            'raw_text' => 'media',
+        ]);
+        $new = QuoteRequest::query()->create([
+            'source' => 'text',
+            'status' => 'procesada',
+            'raw_text' => 'nueva',
+        ]);
+
+        \Illuminate\Support\Facades\DB::table('quote_requests')->where('id', $old->id)->update([
+            'created_at' => '2026-01-10 12:00:00',
+            'updated_at' => '2026-01-10 12:00:00',
+        ]);
+        \Illuminate\Support\Facades\DB::table('quote_requests')->where('id', $mid->id)->update([
+            'created_at' => '2026-02-15 12:00:00',
+            'updated_at' => '2026-02-15 12:00:00',
+        ]);
+        \Illuminate\Support\Facades\DB::table('quote_requests')->where('id', $new->id)->update([
+            'created_at' => '2026-03-20 12:00:00',
+            'updated_at' => '2026-03-20 12:00:00',
+        ]);
+
+        $response = $this->getJson('/api/solicitudes?from=2026-02-01&to=2026-02-28');
+
+        $response->assertOk()->assertJsonCount(1, 'data');
+        $this->assertSame($mid->id, $response->json('data.0.id'));
+    }
+
+    #[Test]
     public function it_filters_by_status(): void
     {
         QuoteRequest::query()->create([

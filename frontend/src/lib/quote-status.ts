@@ -45,7 +45,7 @@ export function isPreSentStatus(status: QuoteStatus): boolean {
   )
 }
 
-/** Recordatorios: aún no enviada por ventas al cliente. */
+/** Recordatorios: lista para que ventas negocie con el cliente. */
 export function isUnsentForClientQuote(quote: {
   status: QuoteStatus | string
   sentAt?: string | null
@@ -55,11 +55,7 @@ export function isUnsentForClientQuote(quote: {
   }
 
   const status = normalizeQuoteStatus(String(quote.status))
-  return (
-    status === 'solicitud_cotizaciones' ||
-    status === 'en_elaboracion' ||
-    status === 'pendiente_envio'
-  )
+  return status === 'pendiente_envio'
 }
 
 export function quoteStatusIndex(status: QuoteStatus | string): number {

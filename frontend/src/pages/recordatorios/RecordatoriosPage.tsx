@@ -138,8 +138,8 @@ export function RecordatoriosPage() {
         title={showVentasDashboard ? 'Dashboard — Recordatorios' : 'Recordatorios'}
         description={
           showVentasDashboard
-            ? 'Solo cotizaciones tuyas (o las que compras te envió), en elaboración o Lista / Terminada, todavía no enviadas al cliente.'
-            : 'Comentarios al vendedor sobre cotizaciones que aún no se envían al cliente.'
+            ? 'Solo cotizaciones en Lista / Terminada para negociar con el cliente.'
+            : 'Cotizaciones en Lista / Terminada para seguimiento de ventas con el cliente.'
         }
         actions={
           <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
@@ -219,8 +219,7 @@ function ComprasView({
       <section>
         <h2 className="text-base font-semibold text-slate-900">Cotizaciones sin avance</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Lista / Terminada, o En elaboración sin avance. Abre el detalle y escribe el comentario
-          para ventas.
+          Lista / Terminada. Abre el detalle y escribe el comentario para ventas.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {eligible.length === 0 && (
@@ -241,8 +240,8 @@ function ComprasView({
       <section>
         <h2 className="text-base font-semibold text-slate-900">Cotizaciones en seguimiento</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Siguen en elaboración dentro del plazo normal. Puedes abrirlas y dejar un comentario si
-          hace falta.
+          Lista / Terminada dentro del plazo normal. Puedes abrirlas y dejar un comentario si hace
+          falta.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {others.length === 0 && (
@@ -275,9 +274,9 @@ function VentasDashboard({
   onOpenDetail: (id: string, reagendar?: boolean) => void
 }) {
   const statColors: Record<FollowUpStatus, string> = {
-    negociacion: 'text-violet-700',
+    negociacion: 'text-indigo-700',
     ganada: 'text-emerald-700',
-    perdida: 'text-rose-700',
+    perdida: 'text-red-700',
   }
 
   return (

@@ -43,10 +43,10 @@ class DashboardController extends Controller
         }
 
         // Alertas de integración de mayoristas: solo compras y admin.
+        // Solicitudes no enviadas sí llegan a ventas (filtradas a las suyas en el servicio).
         if (! in_array($role, ['administrador', 'gerente_compras'], true)) {
             if (isset($payload['alerts']) && is_array($payload['alerts'])) {
                 $payload['alerts']['integrationIssues'] = [];
-                $payload['alerts']['unsentRequests'] = [];
             }
         }
 

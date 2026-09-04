@@ -20,10 +20,24 @@ class VentasUserController extends Controller
             return response()->json(['message' => 'No autenticado.'], 401);
         }
 
-        $this->assignToSales->assertCanAssign($actor);
+        $this->assignToSales->assertCanAssignToSales($actor);
 
         return response()->json([
             'data' => $this->assignToSales->listActiveSalespeople(),
+        ]);
+    }
+
+    public function compras(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if ($actor === null) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        }
+
+        $this->assignToSales->assertCanAssignToCompras($actor);
+
+        return response()->json([
+            'data' => $this->assignToSales->listActiveCompras(),
         ]);
     }
 }

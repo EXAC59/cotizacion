@@ -41,7 +41,7 @@ import {
   groupsFromApiOrFallback,
   type WarehousesByWholesalerGroup,
 } from '@/components/settings/PreferredWarehousesByWholesaler'
-import { assignQuoteToSales } from '@/lib/assign-to-sales-api'
+import { assignQuoteToCompras, assignQuoteToSales } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { formatDateTime } from '@/lib/format'
 import {
@@ -102,9 +102,12 @@ function QuoteFormEditor({
   const { can, canCreateQuotes, canEditMargins, canApproveQuotes, canSendQuotes, canConsultInventory } =
     usePermission()
   const canCreate = canCreateQuotes()
-  const canAssignToSales =
-    user?.role === 'gerente_compras' || user?.role === 'administrador'
+  const canAssignTeam =
+    user?.role === 'gerente_compras' ||
+    user?.role === 'ventas' ||
+    user?.role === 'administrador'
   const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
+  const [assignTarget, setAssignTarget] = useState<'ventas' | 'compras' | null>(null)
   const canEdit = can('cotizaciones', 'edit')
   const canApprove = canApproveQuotes()
   const canSendEmail = canSendQuotes()
@@ -117,12 +120,15 @@ function QuoteFormEditor({
   const [viewerCreatedByName, setViewerCreatedByName] = useState(
     () => localExisting?.createdByName ?? '',
   )
-  const [assignedToSales, setAssignedToSales] = useState(
-    () => localExisting?.assignedToSales ?? false,
-  )
   const viewingOthers = ownedByViewer === false
-  const showAssignToSales =
-    canAssignToSales && !viewingOthers && !assignedToSales && (canCreate || canEdit)
+  const assignTargets =
+    user?.role === 'gerente_compras'
+      ? (['ventas'] as const)
+      : user?.role === 'ventas'
+        ? (['compras'] as const)
+        : (['compras', 'ventas'] as const)
+  const showAssignPanel =
+    canAssignTeam && !viewingOthers && (canCreate || canEdit)
   const needsEditLock =
     !isNew &&
     isPersistedQuoteId(quoteId ?? '') &&
@@ -342,7 +348,6 @@ function QuoteFormEditor({
         setStatusHistory(quote.statusHistory ?? [])
         setOwnedByViewer(quote.ownedByViewer ?? true)
         setViewerCreatedByName(quote.createdByName ?? '')
-        setAssignedToSales(quote.assignedToSales ?? false)
         saveQuote(quote)
       })
       .catch(() => {
@@ -527,15 +532,21 @@ function QuoteFormEditor({
   }
 
   const assignAfterSaveIfNeeded = async (savedId: string): Promise<boolean> => {
-    if (!canAssignToSales || assignRecipientId == null) return false
+    if (!canAssignTeam || assignRecipientId == null || assignTarget == null) return false
     if (!isPersistedQuoteId(savedId)) return false
+    if (assignTarget !== 'ventas' && assignTarget !== 'compras') return false
+
+    const toSales = assignTarget === 'ventas'
 
     try {
-      const result = await assignQuoteToSales(savedId, assignRecipientId)
+      const result = toSales
+        ? await assignQuoteToSales(savedId, assignRecipientId)
+        : await assignQuoteToCompras(savedId, assignRecipientId)
+      const teamLabel = toSales ? 'ventas' : 'compras'
       toast(
         result.previousFolio && result.folio
-          ? `Guardada y asignada. Folio ${result.previousFolio} → ${result.folio}`
-          : 'Guardada y asignada a ventas.',
+          ? `Guardada y asignada a ${teamLabel}. Folio ${result.previousFolio} → ${result.folio}`
+          : `Guardada y asignada a ${teamLabel}.`,
       )
       setAllowLeave(true)
       navigate(`/cotizaciones/${result.id}`, { replace: true })
@@ -545,18 +556,19 @@ function QuoteFormEditor({
       setSavedStatus(refreshed.status)
       setViewerCreatedByName(refreshed.createdByName ?? '')
       setOwnedByViewer(refreshed.ownedByViewer ?? true)
-      setAssignedToSales(true)
       saveQuote(refreshed)
       setAssignRecipientId(null)
+      setAssignTarget(null)
       setAllowLeave(false)
       return true
     } catch (err: unknown) {
+      const teamLabel = toSales ? 'ventas' : 'compras'
       setSaveError(
         err instanceof Error
           ? err.message
-          : 'Se guardó, pero no se pudo asignar a ventas.',
+          : `Se guardó, pero no se pudo asignar a ${teamLabel}.`,
       )
-      toast('Se guardó, pero falló la asignación a ventas.')
+      toast(`Se guardó, pero falló la asignación a ${teamLabel}.`)
       return false
     }
   }
@@ -814,21 +826,25 @@ function QuoteFormEditor({
         </p>
       )}
 
-      {showAssignToSales && (
+      {showAssignPanel && (
         <div className="mb-4">
           <AssignToSalesPanel
             entityLabel="cotización"
+            allowedTargets={[...assignTargets]}
             disabled={saving || isBusy}
             saveWithParent
-            onRecipientChange={setAssignRecipientId}
+            onRecipientChange={(id, target) => {
+              setAssignRecipientId(id)
+              setAssignTarget(target)
+            }}
           />
         </div>
       )}
 
-      {canAssignToSales && assignedToSales && !viewingOthers && (
-        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          Ya enviada a ventas ({viewerCreatedByName.trim() || 'vendedor'}). No se puede volver a
-          asignar.
+      {canAssignTeam && viewingOthers && (
+        <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          Vista de otra persona ({viewerCreatedByName.trim() || 'equipo'}). Solo el responsable
+          actual puede enviarla a compras o ventas.
         </p>
       )}
 
@@ -882,8 +898,8 @@ function QuoteFormEditor({
                   <p className="mt-2 text-sm text-slate-600">
                     En elaboración no se marca como lista para ventas. Terminada sí queda lista
                     para el siguiente paso.
-                    {showAssignToSales && assignRecipientId != null
-                      ? ' Al confirmar, también se enviará al vendedor seleccionado.'
+                    {showAssignPanel && assignRecipientId != null && assignTarget
+                      ? ` Al confirmar, también se enviará a ${assignTarget}.`
                       : ''}
                   </p>
                 </div>

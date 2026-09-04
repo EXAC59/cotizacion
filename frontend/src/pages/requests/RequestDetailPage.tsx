@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, FileText, RefreshCw } from 'lucide-react'
+import { ArrowLeft, FileText, RefreshCw, Save, X } from 'lucide-react'
 import { AssignToSalesPanel } from '@/components/sales/AssignToSalesPanel'
-import { RequestLinesEditor } from '@/components/requests/RequestLinesEditor'
+import {
+  RequestLinesEditor,
+  type RequestLinesEditorHandle,
+} from '@/components/requests/RequestLinesEditor'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -13,7 +16,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { useToast } from '@/context/ToastProvider'
-import { assignSolicitudToSales } from '@/lib/assign-to-sales-api'
+import { assignSolicitudToCompras, assignSolicitudToSales } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { persistQuote } from '@/lib/quotes-api'
 import { buildLinesFromRequest } from '@/lib/quote-builder'
@@ -60,9 +63,18 @@ export function RequestDetailPage() {
   const { canConsultInventory } = usePermission()
   const { toast } = useToast()
   const canUseComparator = canConsultInventory()
-  const canAssignToSales =
-    user?.role === 'gerente_compras' || user?.role === 'administrador'
+  const canAssignTeam =
+    user?.role === 'gerente_compras' ||
+    user?.role === 'ventas' ||
+    user?.role === 'administrador'
+  const assignTargets =
+    user?.role === 'gerente_compras'
+      ? (['ventas'] as const)
+      : user?.role === 'ventas'
+        ? (['compras'] as const)
+        : (['compras', 'ventas'] as const)
   const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
+  const [assignTarget, setAssignTarget] = useState<'ventas' | 'compras' | null>(null)
   const [request, setRequest] = useState<QuoteRequest | null>(null)
   const [cotizaciones, setCotizaciones] = useState<SolicitudCotizacionApi[]>([])
   const [editLines, setEditLines] = useState<RequestLine[]>([])
@@ -74,6 +86,7 @@ export function RequestDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [validationErrors, setValidationErrors] = useState<string[]>([])
   const lastSaveErrorRef = useRef<string | null>(null)
+  const linesEditorRef = useRef<RequestLinesEditorHandle>(null)
   const [preferredWarehouse, setPreferredWarehouse] = useState(
     () => DEFAULT_PREFERRED_WAREHOUSES.join(','),
   )
@@ -202,26 +215,28 @@ export function RequestDetailPage() {
       let mapped = mapSolicitudApiToQuoteRequest(api)
       const nextWorkflow = mapped.workflowStatus ?? 'en_elaboracion'
 
-      if (
-        canAssignToSales &&
-        assignRecipientId != null &&
-        !mapped.assignedToSales
-      ) {
+      if (canAssignTeam && assignRecipientId != null && assignTarget != null) {
         try {
-          const result = await assignSolicitudToSales(id, assignRecipientId)
+          const result =
+            assignTarget === 'ventas'
+              ? await assignSolicitudToSales(id, assignRecipientId)
+              : await assignSolicitudToCompras(id, assignRecipientId)
+          const teamLabel = assignTarget
           toast(
             result.previousFolio && result.folio
-              ? `Guardada y asignada. Folio ${result.previousFolio} → ${result.folio}`
-              : `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()} y enviado a ventas.`,
+              ? `Guardada y asignada a ${teamLabel}. Folio ${result.previousFolio} → ${result.folio}`
+              : `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()} y enviado a ${teamLabel}.`,
           )
           const refreshed = await getSolicitud(id)
           mapped = mapSolicitudApiToQuoteRequest(refreshed)
           setAssignRecipientId(null)
+          setAssignTarget(null)
         } catch (assignErr: unknown) {
+          const teamLabel = assignTarget
           const assignMsg =
             assignErr instanceof Error
               ? assignErr.message
-              : 'Se guardó, pero no se pudo asignar a ventas.'
+              : `Se guardó, pero no se pudo asignar a ${teamLabel}.`
           toast(
             `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()}. ${assignMsg}`,
             'warning',
@@ -420,6 +435,29 @@ export function RequestDetailPage() {
                 Volver
               </Button>
             </Link>
+            {canEditLines && (linesDirty || (assignRecipientId != null && assignTarget != null)) && (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => linesEditorRef.current?.openSaveModal()}
+                  disabled={savingLines || sent}
+                >
+                  {savingLines ? <InlineBusy size="sm" /> : <Save className="h-4 w-4" />}
+                  Guardar cambios
+                </Button>
+                {linesDirty && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleCancelLines}
+                    disabled={savingLines}
+                  >
+                    <X className="h-4 w-4" />
+                    Cancelar
+                  </Button>
+                )}
+              </>
+            )}
             {request.status === 'error' && (
               <Button size="sm" onClick={handleReprocesar} disabled={reprocessing}>
                 {reprocessing ? (
@@ -461,22 +499,19 @@ export function RequestDetailPage() {
         </div>
       )}
 
-      {canAssignToSales && id && request && !request.assignedToSales && (
+      {canAssignTeam && id && request && (
         <div className="mb-4">
           <AssignToSalesPanel
             entityLabel="solicitud"
+            allowedTargets={[...assignTargets]}
             disabled={savingLines || loading || sent}
             saveWithParent
-            onRecipientChange={setAssignRecipientId}
+            onRecipientChange={(id, target) => {
+              setAssignRecipientId(id)
+              setAssignTarget(target)
+            }}
           />
         </div>
-      )}
-
-      {canAssignToSales && request?.assignedToSales && (
-        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          Ya enviada a ventas ({request.createdByName?.trim() || 'vendedor'}). No se puede volver a
-          asignar.
-        </p>
       )}
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
@@ -649,6 +684,7 @@ export function RequestDetailPage() {
           {canEditLines ? (
             <CardBody className="p-0 px-5 pb-5">
               <RequestLinesEditor
+                ref={linesEditorRef}
                 lines={editLines}
                 requestId={id}
                 preferredWarehouse={preferredWarehouse}
@@ -657,8 +693,8 @@ export function RequestDetailPage() {
                 showComparator={canUseComparator}
                 dirty={linesDirty}
                 saving={savingLines}
-                forceSaveAvailable={assignRecipientId != null && !request.assignedToSales}
-                assignHint={assignRecipientId != null && !request.assignedToSales}
+                forceSaveAvailable={assignRecipientId != null && assignTarget != null}
+                assignHint={assignRecipientId != null && assignTarget != null}
                 onChange={handleLinesChange}
                 onSave={handleSaveLines}
                 onCancel={handleCancelLines}

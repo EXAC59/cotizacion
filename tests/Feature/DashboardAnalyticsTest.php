@@ -531,9 +531,85 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
 
         $response->assertOk()
             ->assertJsonPath('alerts.integrationIssues', [])
-            ->assertJsonPath('alerts.unsentRequests', [])
             ->assertJsonPath('topRequestedProducts', [])
             ->assertJsonPath('topQuotedProducts', []);
+    }
+
+    #[Test]
+    public function ventas_only_sees_own_unsent_and_pending_review_requests(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $otroVentas = User::factory()->create([
+            'role_id' => $ventas->role_id,
+            'name' => 'Otro Vendedor Dashboard',
+            'email' => 'otro-ventas-dashboard@test.local',
+        ]);
+        $compras = $this->demoUser('gerente_compras');
+
+        $miaUnsent = QuoteRequest::query()->create([
+            'client_id' => $this->client->id,
+            'created_by' => $ventas->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+            'raw_text' => 'Mia no enviada',
+            'file_name' => 'mia-unsent.pdf',
+        ]);
+        $ajenaUnsent = QuoteRequest::query()->create([
+            'client_id' => $this->client->id,
+            'created_by' => $otroVentas->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'pendiente_envio',
+            'raw_text' => 'Ajena no enviada',
+            'file_name' => 'ajena-unsent.pdf',
+        ]);
+        $comprasUnsent = QuoteRequest::query()->create([
+            'client_id' => $this->client->id,
+            'created_by' => $compras->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+            'raw_text' => 'De compras',
+            'file_name' => 'compras-unsent.pdf',
+        ]);
+        $miaPending = QuoteRequest::query()->create([
+            'client_id' => $this->client->id,
+            'created_by' => $ventas->id,
+            'source' => 'pdf',
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+            'file_name' => 'mia-pending.pdf',
+        ]);
+        $ajenaPending = QuoteRequest::query()->create([
+            'client_id' => $this->client->id,
+            'created_by' => $otroVentas->id,
+            'source' => 'pdf',
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+            'file_name' => 'ajena-pending.pdf',
+        ]);
+
+        $this->actingAs($ventas);
+        $ventasPayload = $this->getJson('/api/dashboard')->assertOk();
+
+        $unsentIds = collect($ventasPayload->json('alerts.unsentRequests'))->pluck('id');
+        $this->assertTrue($unsentIds->contains($miaUnsent->id));
+        $this->assertTrue($unsentIds->contains($miaPending->id));
+        $this->assertFalse($unsentIds->contains($ajenaUnsent->id));
+        $this->assertFalse($unsentIds->contains($comprasUnsent->id));
+
+        $pendingIds = collect($ventasPayload->json('alerts.pendingReviewRequests'))->pluck('id');
+        $this->assertTrue($pendingIds->contains($miaPending->id));
+        $this->assertFalse($pendingIds->contains($ajenaPending->id));
+
+        $this->actingAs($compras);
+        $comprasUnsentIds = collect(
+            $this->getJson('/api/dashboard')->assertOk()->json('alerts.unsentRequests')
+        )->pluck('id');
+        $this->assertTrue($comprasUnsentIds->contains($miaUnsent->id));
+        $this->assertTrue($comprasUnsentIds->contains($ajenaUnsent->id));
+        $this->assertTrue($comprasUnsentIds->contains($comprasUnsent->id));
     }
 
     /**

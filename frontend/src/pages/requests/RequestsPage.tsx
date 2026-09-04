@@ -42,6 +42,8 @@ export function RequestsPage() {
   )
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [listScope, setListScope] = useState<ViewerListScope>(() =>
     parseViewerListScope(null, user?.role),
   )
@@ -59,6 +61,8 @@ export function RequestsPage() {
       workflowStatus: statusFilter || undefined,
       q: debouncedSearch || undefined,
       scope: listScope,
+      from: dateFrom || undefined,
+      to: dateTo || undefined,
     })
       .then((data) => {
         if (cancelled) return
@@ -76,7 +80,7 @@ export function RequestsPage() {
     return () => {
       cancelled = true
     }
-  }, [statusFilter, debouncedSearch, listScope])
+  }, [statusFilter, debouncedSearch, listScope, dateFrom, dateTo])
 
   return (
     <div>
@@ -95,10 +99,11 @@ export function RequestsPage() {
 
       <ViewerListScopeTabs value={listScope} onChange={setListScope} />
 
-      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:max-w-2xl">
+      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5 lg:max-w-6xl">
         <div>
-          <Label>Estado</Label>
+          <Label htmlFor="solicitud-status-filter">Estado</Label>
           <Select
+            id="solicitud-status-filter"
             value={statusFilter}
             onChange={(e) =>
               setStatusFilter(e.target.value as RequestWorkflowStatus | typeof ALL_STATUSES)
@@ -112,14 +117,17 @@ export function RequestsPage() {
             ))}
           </Select>
         </div>
-        <div>
-          <Label>Buscar</Label>
-          <div className="flex gap-2">
+        <div className="min-w-0 sm:col-span-2">
+          <Label htmlFor="solicitud-search">Buscar</Label>
+          <div className="flex items-center gap-2">
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
-                className="pl-9"
+                id="solicitud-search"
+                type="search"
+                className="h-10 pl-9"
                 placeholder="Cliente o ID de solicitud"
+                title="Cliente o ID de solicitud"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -137,6 +145,28 @@ export function RequestsPage() {
               </Link>
             )}
           </div>
+        </div>
+        <div>
+          <Label htmlFor="solicitud-date-from">Desde</Label>
+          <Input
+            id="solicitud-date-from"
+            type="date"
+            className="h-10"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="solicitud-date-to">Hasta</Label>
+          <Input
+            id="solicitud-date-to"
+            type="date"
+            className="h-10"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
         </div>
       </div>
 

@@ -202,6 +202,8 @@ class SolicitudLecturaService
             'created_by_name' => $request->creator?->name,
             'assigned_to_sales' => $request->creator !== null
                 && $request->creator->role_slug === 'ventas',
+            'assigned_to_compras' => $request->creator !== null
+                && $request->creator->role_slug === 'gerente_compras',
             'needs_external_review' => $this->needsExternalReview($request),
             'reviewed_by' => $reviewer !== null ? (string) $request->reviewed_by : null,
             'reviewed_by_name' => $reviewer?->name,
