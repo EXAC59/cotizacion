@@ -250,7 +250,15 @@ export async function createSolicitudFromText(payload: {
     description: string
     unit: string
   }>
-}): Promise<SolicitudApi & { request_id: string; interpretacion_via?: InterpretacionVia }> {
+}): Promise<
+  SolicitudApi & {
+    request_id: string
+    interpretacion_via?: InterpretacionVia
+    quote_id?: string
+    quote_folio?: string
+    quote_created?: boolean
+  }
+> {
   const response = await apiFetch(`${getApiBase()}/solicitudes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -262,6 +270,9 @@ export async function createSolicitudFromText(payload: {
       message?: string
       request_id?: string
       interpretacion_via?: InterpretacionVia
+      quote_id?: string
+      quote_folio?: string
+      quote_created?: boolean
     }
   >(response)
 
@@ -509,18 +520,24 @@ export function isBlankRequestDraftLine(line: RequestLine): boolean {
   return line.product.trim() === '' && line.partNumber.trim() === ''
 }
 
+export type UpdateSolicitudLineasResult = SolicitudApi & {
+  message?: string
+  quote_id?: string
+  quote_folio?: string
+  quote_created?: boolean
+}
+
 export async function updateSolicitudLineas(
   id: string,
   lineas: SolicitudLineaPayload[],
-  workflowStatus: Extract<RequestWorkflowStatus, 'en_elaboracion' | 'pendiente_envio'>,
-): Promise<SolicitudApi> {
+): Promise<UpdateSolicitudLineasResult> {
   const response = await apiFetch(`${getApiBase()}/solicitudes/${id}/lineas`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ lineas, workflow_status: workflowStatus }),
+    body: JSON.stringify({ lineas }),
   })
 
-  return parseApiJsonOrThrow<SolicitudApi & { message?: string }>(response)
+  return parseApiJsonOrThrow<UpdateSolicitudLineasResult>(response)
 }
 
 export function formatSolicitudValidationErrors(

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, FileText, RefreshCw, Save, X } from 'lucide-react'
 import { AssignToSalesPanel } from '@/components/sales/AssignToSalesPanel'
 import {
@@ -16,7 +16,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { useToast } from '@/context/ToastProvider'
-import { assignSolicitudToCompras, assignSolicitudToSales } from '@/lib/assign-to-sales-api'
+import { assignSolicitudToCompras } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { persistQuote } from '@/lib/quotes-api'
 import { buildLinesFromRequest } from '@/lib/quote-builder'
@@ -47,34 +47,23 @@ import {
 } from '@/lib/solicitudes-api'
 import {
   REQUEST_STATUS_LABELS,
-  REQUEST_WORKFLOW_LABELS,
-  REQUEST_WORKFLOW_ORDER,
   type Quote,
   type QuoteRequest,
   type RequestLine,
-  type RequestWorkflowStatus,
 } from '@/types'
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
 
 export function RequestDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const { saveQuote } = useData()
   const { canConsultInventory } = usePermission()
   const { toast } = useToast()
   const canUseComparator = canConsultInventory()
-  const canAssignTeam =
-    user?.role === 'gerente_compras' ||
-    user?.role === 'ventas' ||
-    user?.role === 'administrador'
-  const assignTargets =
-    user?.role === 'gerente_compras'
-      ? (['ventas'] as const)
-      : user?.role === 'ventas'
-        ? (['compras'] as const)
-        : (['compras', 'ventas'] as const)
+  const canAssignTeam = user?.role === 'ventas' || user?.role === 'administrador'
   const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
-  const [assignTarget, setAssignTarget] = useState<'ventas' | 'compras' | null>(null)
+  const [assignTarget, setAssignTarget] = useState<'compras' | null>(null)
   const [request, setRequest] = useState<QuoteRequest | null>(null)
   const [cotizaciones, setCotizaciones] = useState<SolicitudCotizacionApi[]>([])
   const [editLines, setEditLines] = useState<RequestLine[]>([])
@@ -185,9 +174,7 @@ export function RequestDetailPage() {
     setLinesDirty(false)
   }
 
-  const handleSaveLines = async (
-    workflowStatus: Extract<RequestWorkflowStatus, 'en_elaboracion' | 'pendiente_envio'>,
-  ): Promise<boolean> => {
+  const handleSaveLines = async (): Promise<boolean> => {
     if (!id) return false
     const linesToSave = editLines.filter((line) => !isBlankRequestDraftLine(line))
     if (linesToSave.length === 0) {
@@ -207,43 +194,30 @@ export function RequestDetailPage() {
     setError(null)
     lastSaveErrorRef.current = null
     try {
-      const api = await updateSolicitudLineas(
-        id,
-        linesToSave.map(requestLineToPayload),
-        workflowStatus,
-      )
+      const api = await updateSolicitudLineas(id, linesToSave.map(requestLineToPayload))
       let mapped = mapSolicitudApiToQuoteRequest(api)
-      const nextWorkflow = mapped.workflowStatus ?? 'en_elaboracion'
 
-      if (canAssignTeam && assignRecipientId != null && assignTarget != null) {
+      if (canAssignTeam && assignRecipientId != null && assignTarget === 'compras') {
         try {
-          const result =
-            assignTarget === 'ventas'
-              ? await assignSolicitudToSales(id, assignRecipientId)
-              : await assignSolicitudToCompras(id, assignRecipientId)
-          const teamLabel = assignTarget
+          const result = await assignSolicitudToCompras(id, assignRecipientId)
           toast(
             result.previousFolio && result.folio
-              ? `Guardada y asignada a ${teamLabel}. Folio ${result.previousFolio} → ${result.folio}`
-              : `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()} y enviado a ${teamLabel}.`,
+              ? `Guardada y asignada a compras. Folio ${result.previousFolio} → ${result.folio}`
+              : 'Guardado y enviado a compras.',
           )
           const refreshed = await getSolicitud(id)
           mapped = mapSolicitudApiToQuoteRequest(refreshed)
           setAssignRecipientId(null)
           setAssignTarget(null)
         } catch (assignErr: unknown) {
-          const teamLabel = assignTarget
           const assignMsg =
             assignErr instanceof Error
               ? assignErr.message
-              : `Se guardó, pero no se pudo asignar a ${teamLabel}.`
-          toast(
-            `Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()}. ${assignMsg}`,
-            'warning',
-          )
+              : 'Se guardó, pero no se pudo asignar a compras.'
+          toast(`Guardado. ${assignMsg}`, 'warning')
         }
       } else {
-        toast(`Guardado en ${REQUEST_WORKFLOW_LABELS[nextWorkflow].toLowerCase()}`)
+        toast('Líneas guardadas')
       }
 
       setRequest(mapped)
@@ -263,6 +237,31 @@ export function RequestDetailPage() {
           }))
       setEditLines(nextLines)
       setLinesDirty(false)
+
+      if (api.quote_id) {
+        try {
+          const linked = await listCotizacionesBySolicitud(id)
+          setCotizaciones(linked)
+        } catch {
+          setCotizaciones((prev) =>
+            prev.some((c) => c.id === api.quote_id)
+              ? prev
+              : [
+                  {
+                    id: api.quote_id!,
+                    folio: api.quote_folio ?? api.quote_id!,
+                    status: 'en_elaboracion',
+                    total: 0,
+                    createdAt: new Date().toISOString(),
+                    clientName: mapped.clientName ?? '',
+                  },
+                  ...prev,
+                ],
+          )
+        }
+        navigate(`/cotizaciones/${api.quote_id}`)
+      }
+
       return true
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'No se pudieron guardar las líneas.'
@@ -276,9 +275,7 @@ export function RequestDetailPage() {
 
   const { dialog: unsavedDialog } = useUnsavedChangesGuard(linesDirty, {
     onSave: async () => {
-      const ok = await handleSaveLines(
-        request?.workflowStatus === 'pendiente_envio' ? 'pendiente_envio' : 'en_elaboracion',
-      )
+      const ok = await handleSaveLines()
       if (!ok) {
         throw new Error(
           lastSaveErrorRef.current ||
@@ -318,11 +315,13 @@ export function RequestDetailPage() {
     }
   }
 
-  const sent = request?.workflowStatus === 'enviada'
+  const hasLinkedQuotes = cotizaciones.length > 0
   const canEditLines =
-    !sent && request?.status === 'procesada' && (request.lines?.length ?? 0) > 0
+    !hasLinkedQuotes &&
+    request?.status === 'procesada' &&
+    (request.lines?.length ?? 0) > 0
   const canCreateQuote =
-    !sent &&
+    !hasLinkedQuotes &&
     (request?.status === 'procesada' || request?.status === 'precios_listos') &&
     (request.lines?.length ?? 0) > 0
 
@@ -355,7 +354,6 @@ export function RequestDetailPage() {
       }
       const saved = await persistQuote(draft)
       saveQuote(saved)
-      setRequest({ ...request, workflowStatus: 'enviada' })
       try {
         const [updatedRequest, linkedQuotes] = await Promise.all([
           getSolicitud(request.id),
@@ -412,15 +410,6 @@ export function RequestDetailPage() {
           ? 'brand'
           : 'warning'
 
-  const workflowVariant: Record<RequestWorkflowStatus, 'brand' | 'warning' | 'success'> = {
-    en_elaboracion: 'brand',
-    pendiente_envio: 'warning',
-    enviada: 'success',
-  }
-
-  const workflowStatus: RequestWorkflowStatus = request.workflowStatus ?? 'en_elaboracion'
-  const workflowStep = REQUEST_WORKFLOW_ORDER.indexOf(workflowStatus)
-
   return (
     <div>
       {unsavedDialog}
@@ -440,7 +429,7 @@ export function RequestDetailPage() {
                 <Button
                   size="sm"
                   onClick={() => linesEditorRef.current?.openSaveModal()}
-                  disabled={savingLines || sent}
+                  disabled={savingLines || hasLinkedQuotes}
                 >
                   {savingLines ? <InlineBusy size="sm" /> : <Save className="h-4 w-4" />}
                   Guardar cambios
@@ -468,19 +457,28 @@ export function RequestDetailPage() {
                 Reintentar lectura
               </Button>
             )}
-            {canCreateQuote && (
-              <Button
-                size="sm"
-                onClick={() => void handleCreateQuote()}
-                disabled={creatingQuote}
-              >
-                {creatingQuote ? (
-                  <InlineBusy size="sm" />
-                ) : (
+            {hasLinkedQuotes ? (
+              <Link to={`/cotizaciones/${cotizaciones[0].id}`}>
+                <Button size="sm">
                   <FileText className="h-4 w-4" />
-                )}
-                {creatingQuote ? 'Creando cotización…' : 'Crear cotización'}
-              </Button>
+                  Abrir cotización
+                </Button>
+              </Link>
+            ) : (
+              canCreateQuote && (
+                <Button
+                  size="sm"
+                  onClick={() => void handleCreateQuote()}
+                  disabled={creatingQuote}
+                >
+                  {creatingQuote ? (
+                    <InlineBusy size="sm" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )}
+                  {creatingQuote ? 'Creando cotización…' : 'Crear cotización'}
+                </Button>
+              )
             )}
           </>
         }
@@ -503,8 +501,7 @@ export function RequestDetailPage() {
         <div className="mb-4">
           <AssignToSalesPanel
             entityLabel="solicitud"
-            allowedTargets={[...assignTargets]}
-            disabled={savingLines || loading || sent}
+            disabled={savingLines || loading || hasLinkedQuotes}
             saveWithParent
             onRecipientChange={(id, target) => {
               setAssignRecipientId(id)
@@ -515,52 +512,11 @@ export function RequestDetailPage() {
       )}
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        <span
-          className={`inline-flex items-center rounded-lg px-3 py-1 text-sm font-semibold ring-1 ${
-            workflowVariant[workflowStatus] === 'success'
-              ? 'bg-emerald-600 text-white ring-emerald-600'
-              : workflowVariant[workflowStatus] === 'warning'
-                ? 'bg-amber-500 text-white ring-amber-500'
-                : 'bg-indigo-600 text-white ring-indigo-600'
-          }`}
-        >
-          {REQUEST_WORKFLOW_LABELS[workflowStatus]}
-        </span>
         <Badge variant="brand">{request.source.toUpperCase()}</Badge>
         <Badge variant={statusVariant}>{REQUEST_STATUS_LABELS[request.status]}</Badge>
         {request.clientName && <Badge variant="muted">{request.clientName}</Badge>}
         {request.createdByName && <Badge variant="muted">{request.createdByName}</Badge>}
-      </div>
-
-      <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-          Estatus de la solicitud
-        </p>
-        <ol className="grid gap-1.5 sm:grid-cols-3">
-          {REQUEST_WORKFLOW_ORDER.map((stepStatus, index) => {
-            const active = workflowStep === index
-            const done = workflowStep > index
-            return (
-              <li
-                key={stepStatus}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs ${
-                  active
-                    ? 'border-indigo-400 bg-indigo-50 font-semibold text-indigo-900'
-                    : done
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                      : 'border-slate-200 bg-slate-50 text-slate-500'
-                }`}
-              >
-                <span className="mr-1 font-mono">{index + 1}.</span>
-                {REQUEST_WORKFLOW_LABELS[stepStatus]}
-              </li>
-            )
-          })}
-        </ol>
-        <p className="mt-2 text-xs text-slate-500">
-          Al guardar las líneas puedes dejar la solicitud «En elaboración» o marcarla «Lista /
-          Terminada». Al crear una cotización pasa a «Enviada».
-        </p>
+        {hasLinkedQuotes && <Badge variant="success">Con cotización</Badge>}
       </div>
 
       <p className="mb-6 text-sm text-slate-600">
@@ -579,11 +535,11 @@ export function RequestDetailPage() {
         </Card>
       )}
 
-      {sent && request.status === 'procesada' && (
+      {hasLinkedQuotes && (
         <Card className="mb-6 border-slate-200 bg-slate-50/70">
           <CardBody className="text-sm text-slate-700">
-            Esta solicitud ya fue enviada y está bloqueada para edición. La información fue copiada a
-            la cotización vinculada; cualquier ajuste debe hacerse en la cotización.
+            Esta solicitud ya tiene cotización vinculada y no se puede editar aquí. Continúa en
+            Cotizaciones; cualquier ajuste de partidas o precios se hace allá.
           </CardBody>
         </Card>
       )}

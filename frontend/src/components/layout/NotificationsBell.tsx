@@ -16,6 +16,7 @@ import {
   quoteDashboardFocus,
   quoteDetailFocus,
   recordatorioQuoteFocus,
+  requestDetailFocus,
 } from '@/lib/notification-focus'
 import { fetchDashboard } from '@/lib/dashboard-api'
 import { formatDateTime } from '@/lib/format'
@@ -153,7 +154,7 @@ export function NotificationsBell() {
   }
 
   const openQuote = async (item: SalesNotificationItem) => {
-    if (!item.read && item.kind !== 'pipeline') {
+    if (!item.read && item.kind !== 'pipeline' && item.kind !== 'pipeline_request') {
       try {
         await markNotificationRead(item.id)
         setItems((prev) =>
@@ -165,6 +166,16 @@ export function NotificationsBell() {
       }
     }
     setOpen(false)
+
+    if (item.requestId && item.kind === 'pipeline_request') {
+      navigateWithNotificationFocus(
+        navigate,
+        location,
+        { pathname: `/solicitudes/${item.requestId}` },
+        requestDetailFocus(item.folio ?? 'Solicitud', item.reasonLabel),
+      )
+      return
+    }
 
     if (item.quoteId && item.kind === 'pipeline') {
       navigateWithNotificationFocus(
@@ -193,8 +204,12 @@ export function NotificationsBell() {
     navigate('/recordatorios')
   }
 
-  const pipelineItems = items.filter((item) => item.kind === 'pipeline')
-  const inboxItems = items.filter((item) => item.kind !== 'pipeline')
+  const pipelineQuoteItems = items.filter((item) => item.kind === 'pipeline')
+  const pipelineRequestItems = items.filter((item) => item.kind === 'pipeline_request')
+  const inboxItems = items.filter(
+    (item) => item.kind !== 'pipeline' && item.kind !== 'pipeline_request',
+  )
+  const pipelineTotal = pipelineQuoteItems.length + pipelineRequestItems.length
 
   const panel =
     open && panelStyle && typeof document !== 'undefined'
@@ -211,7 +226,7 @@ export function NotificationsBell() {
                 {loading
                   ? 'Actualizando…'
                   : user?.role === 'ventas'
-                    ? `${pipelineItems.length} de tus cotizaciones · ${inboxItems.filter((i) => !i.read).length} avisos`
+                    ? `${pipelineTotal} pendientes · ${inboxItems.filter((i) => !i.read).length} avisos`
                     : `${unreadCount} en bandeja · ${operational.length} operativas`}
               </p>
             </div>
@@ -237,12 +252,35 @@ export function NotificationsBell() {
                   ))}
                 </>
               )}
-              {pipelineItems.length > 0 && (
+              {pipelineRequestItems.length > 0 && (
+                <>
+                  <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Tus solicitudes
+                  </li>
+                  {pipelineRequestItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2.5 text-left text-sm hover:bg-amber-50/60 bg-indigo-50/40"
+                        onClick={() => void openQuote(item)}
+                      >
+                        <span className="block font-medium text-slate-900">
+                          {item.folio ?? 'Solicitud'} · {item.reasonLabel}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">
+                          {item.message}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </>
+              )}
+              {pipelineQuoteItems.length > 0 && (
                 <>
                   <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     Tus cotizaciones
                   </li>
-                  {pipelineItems.map((item) => (
+                  {pipelineQuoteItems.map((item) => (
                     <li key={item.id}>
                       <button
                         type="button"

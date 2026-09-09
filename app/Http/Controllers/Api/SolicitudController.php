@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Services\LecturaInterpretacionService;
+use App\Services\Quotes\SolicitudToQuoteService;
 use App\Services\Sales\AssignToSalesService;
 use App\Services\SolicitudLecturaService;
 use App\Support\ViewerListScope;
@@ -31,13 +32,13 @@ class SolicitudController extends Controller
         private readonly SolicitudLecturaService $lecturaService,
         private readonly LecturaInterpretacionService $interpretacion,
         private readonly AssignToSalesService $assignToSales,
+        private readonly SolicitudToQuoteService $solicitudToQuote,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'status' => ['nullable', 'string', Rule::in(self::STATUSES)],
-            'workflow_status' => ['nullable', 'string', Rule::in(config('solicitudes.workflow_statuses', []))],
             'q' => ['nullable', 'string', 'max:120'],
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
             'from' => ['nullable', 'date'],
@@ -56,10 +57,6 @@ class SolicitudController extends Controller
 
         if (! empty($validated['status'])) {
             $query->where('status', $validated['status']);
-        }
-
-        if (! empty($validated['workflow_status'])) {
-            $query->where('workflow_status', $validated['workflow_status']);
         }
 
         if (! empty($validated['q'])) {
@@ -170,11 +167,20 @@ class SolicitudController extends Controller
             'interpretacion_via' => self::INTERPRETACION_VIA,
         ]);
 
+        $ensured = $this->solicitudToQuote->ensureQuoteForRequest(
+            $quoteRequest->fresh(['lines', 'client']),
+            $request->user(),
+        );
+
         return response()->json([
             'message' => 'Solicitud creada',
             'request_id' => $quoteRequest->id,
             'interpretacion_via' => self::INTERPRETACION_VIA,
-            ...$this->lecturaService->toApiArray($quoteRequest),
+            'quote_id' => $ensured['quote']?->id,
+            'quote_folio' => $ensured['quote']?->folio,
+            'quote_created' => $ensured['created'],
+            'quote_skipped_reason' => $ensured['skippedReason'],
+            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
         ], 201);
     }
 
@@ -275,7 +281,6 @@ class SolicitudController extends Controller
                 'lineas.*.referenceCost' => ['nullable', 'numeric', 'min:0'],
                 'lineas.*.selectedWholesalerId' => ['nullable', 'uuid'],
                 'lineas.*.warehouse' => ['nullable', 'string', 'max:20'],
-                'workflow_status' => ['nullable', 'string', Rule::in(['en_elaboracion', 'pendiente_envio'])],
             ],
             [
                 'lineas.required' => 'Indica al menos una partida.',
@@ -312,47 +317,25 @@ class SolicitudController extends Controller
         ])->all();
 
         try {
-            $quoteRequest = $this->lecturaService->reemplazarLineas(
-                $id,
-                $lineas,
-                $validated['workflow_status'] ?? 'pendiente_envio',
-            );
+            $quoteRequest = $this->lecturaService->reemplazarLineas($id, $lineas);
         } catch (HttpException $e) {
             return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         }
 
         $this->lecturaService->marcarRevisada($quoteRequest);
 
-        return response()->json([
-            'message' => 'Líneas actualizadas',
-            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
-        ]);
-    }
-
-    public function asignarVentas(string $id, Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
-        ]);
-
-        $actor = $request->user();
-        if ($actor === null) {
-            return response()->json(['message' => 'No autenticado.'], 401);
-        }
-
-        $quoteRequest = QuoteRequest::query()->findOrFail($id);
-        $this->ensureVentasCanMutateSolicitud($request, $quoteRequest);
-        $result = $this->assignToSales->assignSolicitud(
-            $quoteRequest,
-            $actor,
-            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
+        $ensured = $this->solicitudToQuote->ensureQuoteForRequest(
+            $quoteRequest->fresh(['lines', 'client']),
+            $request->user(),
         );
 
         return response()->json([
-            'message' => 'Solicitud asignada a ventas.',
-            'previousFolio' => $result['previousFolio'],
-            'folio' => $result['folio'],
-            ...$this->lecturaService->toApiArray($result['request']),
+            'message' => 'Líneas actualizadas',
+            'quote_id' => $ensured['quote']?->id,
+            'quote_folio' => $ensured['quote']?->folio,
+            'quote_created' => $ensured['created'],
+            'quote_skipped_reason' => $ensured['skippedReason'],
+            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
         ]);
     }
 

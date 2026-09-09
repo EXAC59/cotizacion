@@ -337,39 +337,6 @@ class CotizacionController extends Controller
         return response()->json(['locked' => false]);
     }
 
-    public function asignarVentas(string $id, Request $request): JsonResponse
-    {
-        if (! Str::isUuid($id)) {
-            abort(404, 'Cotización no encontrada.');
-        }
-
-        $validated = $request->validate([
-            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
-            'message' => ['nullable', 'string', 'min:3', 'max:1000'],
-        ]);
-
-        $actor = $request->user();
-        if ($actor === null) {
-            return response()->json(['message' => 'No autenticado.'], 401);
-        }
-
-        $quote = Quote::query()->findOrFail($id);
-        $this->ensureVentasCanMutateQuote($request, $quote);
-        $result = $this->assignToSales->assignQuote(
-            $quote,
-            $actor,
-            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
-            $validated['message'] ?? null,
-        );
-
-        return response()->json([
-            'message' => 'Cotización asignada a ventas.',
-            'previousFolio' => $result['previousFolio'],
-            'folio' => $result['folio'],
-            ...$this->toApiArray($result['quote']),
-        ]);
-    }
-
     public function asignarCompras(string $id, Request $request): JsonResponse
     {
         if (! Str::isUuid($id)) {

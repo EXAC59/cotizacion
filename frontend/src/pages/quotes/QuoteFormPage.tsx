@@ -41,7 +41,7 @@ import {
   groupsFromApiOrFallback,
   type WarehousesByWholesalerGroup,
 } from '@/components/settings/PreferredWarehousesByWholesaler'
-import { assignQuoteToCompras, assignQuoteToSales } from '@/lib/assign-to-sales-api'
+import { assignQuoteToCompras } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { formatDateTime } from '@/lib/format'
 import {
@@ -102,12 +102,9 @@ function QuoteFormEditor({
   const { can, canCreateQuotes, canEditMargins, canApproveQuotes, canSendQuotes, canConsultInventory } =
     usePermission()
   const canCreate = canCreateQuotes()
-  const canAssignTeam =
-    user?.role === 'gerente_compras' ||
-    user?.role === 'ventas' ||
-    user?.role === 'administrador'
+  const canAssignTeam = user?.role === 'ventas' || user?.role === 'administrador'
   const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
-  const [assignTarget, setAssignTarget] = useState<'ventas' | 'compras' | null>(null)
+  const [assignTarget, setAssignTarget] = useState<'compras' | null>(null)
   const canEdit = can('cotizaciones', 'edit')
   const canApprove = canApproveQuotes()
   const canSendEmail = canSendQuotes()
@@ -121,12 +118,6 @@ function QuoteFormEditor({
     () => localExisting?.createdByName ?? '',
   )
   const viewingOthers = ownedByViewer === false
-  const assignTargets =
-    user?.role === 'gerente_compras'
-      ? (['ventas'] as const)
-      : user?.role === 'ventas'
-        ? (['compras'] as const)
-        : (['compras', 'ventas'] as const)
   const showAssignPanel =
     canAssignTeam && !viewingOthers && (canCreate || canEdit)
   const needsEditLock =
@@ -534,19 +525,14 @@ function QuoteFormEditor({
   const assignAfterSaveIfNeeded = async (savedId: string): Promise<boolean> => {
     if (!canAssignTeam || assignRecipientId == null || assignTarget == null) return false
     if (!isPersistedQuoteId(savedId)) return false
-    if (assignTarget !== 'ventas' && assignTarget !== 'compras') return false
-
-    const toSales = assignTarget === 'ventas'
+    if (assignTarget !== 'compras') return false
 
     try {
-      const result = toSales
-        ? await assignQuoteToSales(savedId, assignRecipientId)
-        : await assignQuoteToCompras(savedId, assignRecipientId)
-      const teamLabel = toSales ? 'ventas' : 'compras'
+      const result = await assignQuoteToCompras(savedId, assignRecipientId)
       toast(
         result.previousFolio && result.folio
-          ? `Guardada y asignada a ${teamLabel}. Folio ${result.previousFolio} → ${result.folio}`
-          : `Guardada y asignada a ${teamLabel}.`,
+          ? `Guardada y asignada a compras. Folio ${result.previousFolio} → ${result.folio}`
+          : 'Guardada y asignada a compras.',
       )
       setAllowLeave(true)
       navigate(`/cotizaciones/${result.id}`, { replace: true })
@@ -562,13 +548,12 @@ function QuoteFormEditor({
       setAllowLeave(false)
       return true
     } catch (err: unknown) {
-      const teamLabel = toSales ? 'ventas' : 'compras'
       setSaveError(
         err instanceof Error
           ? err.message
-          : `Se guardó, pero no se pudo asignar a ${teamLabel}.`,
+          : 'Se guardó, pero no se pudo asignar a compras.',
       )
-      toast(`Se guardó, pero falló la asignación a ${teamLabel}.`)
+      toast('Se guardó, pero falló la asignación a compras.')
       return false
     }
   }
@@ -830,7 +815,6 @@ function QuoteFormEditor({
         <div className="mb-4">
           <AssignToSalesPanel
             entityLabel="cotización"
-            allowedTargets={[...assignTargets]}
             disabled={saving || isBusy}
             saveWithParent
             onRecipientChange={(id, target) => {
@@ -844,7 +828,7 @@ function QuoteFormEditor({
       {canAssignTeam && viewingOthers && (
         <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
           Vista de otra persona ({viewerCreatedByName.trim() || 'equipo'}). Solo el responsable
-          actual puede enviarla a compras o ventas.
+          actual puede enviarla a compras.
         </p>
       )}
 

@@ -208,6 +208,17 @@ export function RequestNewPage() {
     })
       .then((result) => {
         if (controller.signal.aborted) return
+        if (result.quote_id) {
+          setAllowLeave(true)
+          toast(
+            result.quote_folio
+              ? `Cotización ${result.quote_folio} creada`
+              : 'Cotización creada',
+            'success',
+          )
+          navigate(`/cotizaciones/${result.quote_id}`)
+          return
+        }
         void navigateAfterAnalyze(
           result.request_id,
           undefined,

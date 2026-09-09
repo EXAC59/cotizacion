@@ -6,7 +6,6 @@ use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteLine;
 use App\Models\QuoteLineOffer;
-use App\Models\QuoteRequest;
 use App\Models\Wholesaler;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -142,16 +141,8 @@ class QuotePersistenceService
                 ->whereNotIn('id', $keptLineIds)
                 ->delete();
 
-            // Al crear una cotización vinculada, la solicitud pasa a «Enviada»
-            // (su estatus propio, independiente del pipeline n8n).
-            $requestId = $this->nullableUuid($payload['requestId'] ?? null);
-            if ($requestId !== null) {
-                $allowedFrom = config('solicitudes.enviada_from_statuses', ['en_elaboracion', 'pendiente_envio']);
-                QuoteRequest::query()
-                    ->whereKey($requestId)
-                    ->whereIn('workflow_status', $allowedFrom)
-                    ->update(['workflow_status' => 'enviada']);
-            }
+            // Crear cotización vinculada NO implica envío al cliente ni cambia
+            // el workflow_status de la solicitud (concepto retirado del producto).
 
             if ($existingQuote === null) {
                 $fromRequest = $this->nullableUuid($payload['requestId'] ?? null) !== null;

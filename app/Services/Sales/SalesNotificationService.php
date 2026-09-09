@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use App\Models\AppSetting;
 use App\Models\Quote;
+use App\Models\QuoteRequest;
 use App\Models\SalesNotification;
 use App\Models\User;
 use Illuminate\Validation\ValidationException;
@@ -382,7 +383,9 @@ class SalesNotificationService
 
         if ($role === 'ventas') {
             $alreadyNotified = $items->pluck('quote_id')->filter()->all();
-            $pipeline = $this->pipelineAlertsForVentas($user, $alreadyNotified);
+            $pipelineQuotes = $this->pipelineAlertsForVentas($user, $alreadyNotified);
+            $pipelineRequests = $this->pipelineRequestAlertsForVentas($user);
+            $pipeline = array_values(array_merge($pipelineRequests, $pipelineQuotes));
             $data = array_values(array_merge($pipeline, $data));
             $unreadCount += count($pipeline);
         }
@@ -431,6 +434,7 @@ class SalesNotificationService
             return [
                 'id' => 'pipeline-'.$quote->id,
                 'quoteId' => $quote->id,
+                'requestId' => null,
                 'folio' => $quote->folio,
                 'clientName' => $quote->client?->company ?? '',
                 'audience' => self::AUDIENCE_VENTAS,
@@ -444,6 +448,51 @@ class SalesNotificationService
                 'readAt' => null,
                 'read' => false,
                 'kind' => 'pipeline',
+            ];
+        })->values()->all();
+    }
+
+    /**
+     * Solicitudes propias del vendedor que aún no tienen cotización vinculada.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function pipelineRequestAlertsForVentas(User $user): array
+    {
+        if ($user->role_slug !== 'ventas') {
+            return [];
+        }
+
+        $requests = QuoteRequest::query()
+            ->with('client')
+            ->ownedByUser($user)
+            ->whereDoesntHave('quotes')
+            ->whereNotIn('status', ['procesando', 'error'])
+            ->orderByDesc('updated_at')
+            ->limit(40)
+            ->get();
+
+        return $requests->map(function (QuoteRequest $request) use ($user) {
+            $label = $request->file_name
+                ?: ($request->folio ?: 'Solicitud');
+
+            return [
+                'id' => 'pipeline-request-'.$request->id,
+                'quoteId' => null,
+                'requestId' => $request->id,
+                'folio' => $label,
+                'clientName' => $request->client?->company ?? '',
+                'audience' => self::AUDIENCE_VENTAS,
+                'reasonCode' => self::REASON_EN_ELABORACION,
+                'reasonLabel' => $this->reasonLabel(self::REASON_EN_ELABORACION),
+                'message' => 'Solicitud pendiente de cotización en Compras.',
+                'senderName' => 'Sistema',
+                'recipientId' => $user->id,
+                'recipientName' => $user->name,
+                'createdAt' => ($request->updated_at ?? $request->created_at)?->toIso8601String(),
+                'readAt' => null,
+                'read' => false,
+                'kind' => 'pipeline_request',
             ];
         })->values()->all();
     }

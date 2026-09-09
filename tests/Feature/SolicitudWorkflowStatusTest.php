@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Client;
+use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Services\Quotes\QuotePersistenceService;
 use PHPUnit\Framework\Attributes\Test;
@@ -20,7 +21,7 @@ class SolicitudWorkflowStatusTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function nace_en_elaboracion(): void
+    public function nace_en_elaboracion_por_default_de_columna(): void
     {
         $request = $this->crearSolicitud();
 
@@ -28,67 +29,75 @@ class SolicitudWorkflowStatusTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function el_api_expone_workflow_status(): void
+    public function el_api_sigue_exponiendo_workflow_status_por_compatibilidad(): void
     {
         $request = $this->crearSolicitud();
 
         $response = $this->getJson("/api/solicitudes/{$request->id}");
 
         $response->assertOk()
-            ->assertJsonPath('workflow_status', 'en_elaboracion')
-            ->assertJsonPath('workflow_status_label', 'En elaboración');
-    }
-
-    #[Test]
-    public function guardar_lineas_pasa_a_lista_terminada(): void
-    {
-        $request = $this->crearSolicitud();
-
-        $response = $this->putJson("/api/solicitudes/{$request->id}/lineas", [
-            'lineas' => [
-                [
-                    'quantity' => 2,
-                    'product' => 'Tornillo',
-                    'partNumber' => 'TN-01',
-                    'brand' => 'Genérico',
-                ],
-            ],
-        ]);
-
-        $response->assertOk()
-            ->assertJsonPath('workflow_status', 'pendiente_envio');
-        $this->assertSame('pendiente_envio', $request->fresh()->workflow_status);
-    }
-
-    #[Test]
-    public function guardar_lineas_puede_permanecer_en_elaboracion(): void
-    {
-        $request = $this->crearSolicitud(['workflow_status' => 'pendiente_envio']);
-
-        $response = $this->putJson("/api/solicitudes/{$request->id}/lineas", [
-            'workflow_status' => 'en_elaboracion',
-            'lineas' => [
-                [
-                    'quantity' => 2,
-                    'product' => 'Tornillo',
-                    'partNumber' => 'TN-01',
-                    'brand' => 'Genérico',
-                ],
-            ],
-        ]);
-
-        $response->assertOk()
             ->assertJsonPath('workflow_status', 'en_elaboracion');
-        $this->assertSame('en_elaboracion', $request->fresh()->workflow_status);
     }
 
     #[Test]
-    public function guardar_lineas_rechaza_otro_estatus(): void
+    public function guardar_lineas_crea_cotizacion_sin_marcar_workflow_enviada(): void
     {
-        $request = $this->crearSolicitud();
+        $client = Client::query()->create([
+            'company' => 'Empresa Workflow',
+            'rfc' => 'EWF010101ABC',
+        ]);
+        $request = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+        ]);
+
+        $response = $this->putJson("/api/solicitudes/{$request->id}/lineas", [
+            'lineas' => [
+                [
+                    'quantity' => 2,
+                    'product' => 'Tornillo',
+                    'partNumber' => 'TN-01',
+                    'brand' => 'Genérico',
+                ],
+            ],
+        ]);
+
+        $response->assertOk();
+        $quoteId = $response->json('quote_id');
+        $this->assertNotEmpty($quoteId);
+
+        $quote = Quote::query()->findOrFail($quoteId);
+        $this->assertNull($quote->sent_at);
+        $this->assertNotSame('enviada', $quote->status);
+        $this->assertSame('en_elaboracion', $request->fresh()->workflow_status);
 
         $this->putJson("/api/solicitudes/{$request->id}/lineas", [
-            'workflow_status' => 'enviada',
+            'lineas' => [
+                [
+                    'quantity' => 3,
+                    'product' => 'Tornillo',
+                    'partNumber' => 'TN-01',
+                    'brand' => 'Genérico',
+                ],
+            ],
+        ])->assertStatus(403);
+    }
+
+    #[Test]
+    public function workflow_status_en_body_se_ignora(): void
+    {
+        $client = Client::query()->create([
+            'company' => 'Empresa Ignore WF',
+            'rfc' => 'EIW010101ABC',
+        ]);
+        $request = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'workflow_status' => 'en_elaboracion',
+        ]);
+
+        $response = $this->putJson("/api/solicitudes/{$request->id}/lineas", [
+            'workflow_status' => 'pendiente_envio',
             'lineas' => [
                 [
                     'quantity' => 1,
@@ -97,27 +106,26 @@ class SolicitudWorkflowStatusTest extends AuthenticatedFeatureTestCase
                     'brand' => 'Genérico',
                 ],
             ],
-        ])->assertUnprocessable()
-            ->assertJsonValidationErrors('workflow_status');
+        ]);
+
+        $response->assertOk();
+        $this->assertSame('en_elaboracion', $request->fresh()->workflow_status);
     }
 
     #[Test]
-    public function el_filtro_workflow_status_funciona(): void
+    public function el_filtro_workflow_status_ya_no_aplica(): void
     {
-        $lista = $this->crearSolicitud(['workflow_status' => 'pendiente_envio', 'raw_text' => 'a']);
-        $enviada = $this->crearSolicitud(['workflow_status' => 'enviada', 'raw_text' => 'b']);
+        $this->crearSolicitud(['workflow_status' => 'enviada', 'raw_text' => 'b']);
         $this->crearSolicitud(['workflow_status' => 'en_elaboracion', 'raw_text' => 'c']);
 
         $response = $this->getJson('/api/solicitudes?workflow_status=enviada');
 
-        $response->assertOk()
-            ->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.id', $enviada->id)
-            ->assertJsonPath('data.0.workflow_status', 'enviada');
+        $response->assertOk();
+        $this->assertGreaterThanOrEqual(2, count($response->json('data')));
     }
 
     #[Test]
-    public function crear_cotizacion_vinculada_marca_la_solicitud_enviada(): void
+    public function crear_cotizacion_vinculada_no_marca_solicitud_enviada(): void
     {
         $client = Client::query()->create([
             'company' => 'Empresa Test',
@@ -127,6 +135,7 @@ class SolicitudWorkflowStatusTest extends AuthenticatedFeatureTestCase
         $request = $this->crearSolicitud([
             'client_id' => $client->id,
             'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
         ]);
 
         $persistence = app(QuotePersistenceService::class);
@@ -147,7 +156,9 @@ class SolicitudWorkflowStatusTest extends AuthenticatedFeatureTestCase
             ],
         ]);
 
-        $this->assertSame('enviada', $request->fresh()->workflow_status);
+        $this->assertSame('en_elaboracion', $request->fresh()->workflow_status);
+        $this->assertNull($quote->sent_at);
+        $this->assertNotSame('enviada', $quote->status);
         $this->assertNotNull($quote->request_id);
     }
 }

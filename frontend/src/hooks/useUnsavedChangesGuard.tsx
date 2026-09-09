@@ -96,8 +96,13 @@ export function useUnsavedChangesGuard(
       return
     }
 
-    // Bloqueo liberado: si ya confirmamos salir, no cerrar el modal a mitad de salida.
-    if (leaveConfirmedRef.current) {
+    // Bloqueo liberado: no tocar destino/modal si estamos guardando o saliendo
+    // (RR7 cancela la navegación pendiente cuando `when` pasa a false tras guardar).
+    if (
+      leaveConfirmedRef.current ||
+      phaseRef.current === 'saving' ||
+      phaseRef.current === 'leaving'
+    ) {
       return
     }
 
@@ -150,6 +155,10 @@ export function useUnsavedChangesGuard(
       return
     }
     setLeaveError(null)
+    // Marcar salida confirmada ANTES de guardar: al limpiar dirty, RR7 libera el
+    // blocker y cancela la navegación; sin esto el efecto borraba pendingPath
+    // y el modal se cerraba sin salir (o se quedaba atascado).
+    leaveConfirmedRef.current = true
     setPhase('saving')
     await waitModalBusyPaint()
     const started = performance.now()
@@ -157,12 +166,14 @@ export function useUnsavedChangesGuard(
       const ok = await save()
       await waitMinBusyMs(started, 600)
       if (ok === false) {
+        leaveConfirmedRef.current = false
         setLeaveError('No se pudo guardar. Revisa los datos e intenta de nuevo.')
         setPhase('step2')
         return
       }
       await finishLeave()
     } catch (err) {
+      leaveConfirmedRef.current = false
       setLeaveError(
         err instanceof Error ? err.message : 'No se pudo guardar. Intenta de nuevo.',
       )

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Client;
 use App\Models\Quote;
+use App\Models\QuoteRequest;
 use App\Models\SalesNotification;
 use Carbon\Carbon;
 use PHPUnit\Framework\Attributes\Test;
@@ -366,6 +367,94 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
         $otherList = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
         $this->assertFalse($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownElab->id));
         $this->assertFalse($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownLista->id));
+    }
+
+    #[Test]
+    public function ventas_sees_pipeline_alerts_only_for_own_requests(): void
+    {
+        $creator = $this->demoUser('ventas');
+        $otherVentas = \App\Models\User::query()->create([
+            'name' => 'Otra Venta Req',
+            'email' => 'otra.venta.req.'.uniqid().'@test.local',
+            'username' => 'otra_venta_req_'.uniqid(),
+            'password' => bcrypt('demo'),
+            'role_id' => $creator->role_id,
+            'active' => true,
+        ]);
+        $client = Client::query()->create([
+            'company' => 'Cliente Pipeline Req',
+            'rfc' => 'CPR010101AAA',
+        ]);
+
+        $ownElab = QuoteRequest::query()->create([
+            'client_id' => $client->id,
+            'created_by' => $creator->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+            'file_name' => 'mia-elab.pdf',
+            'raw_text' => 'mia elab',
+        ]);
+        $ownLista = QuoteRequest::query()->create([
+            'client_id' => $client->id,
+            'created_by' => $creator->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'pendiente_envio',
+            'file_name' => 'mia-lista.pdf',
+            'raw_text' => 'mia lista',
+        ]);
+        $foreign = QuoteRequest::query()->create([
+            'client_id' => $client->id,
+            'created_by' => $otherVentas->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'en_elaboracion',
+            'file_name' => 'ajena.pdf',
+            'raw_text' => 'ajena',
+        ]);
+        $withQuote = QuoteRequest::query()->create([
+            'client_id' => $client->id,
+            'created_by' => $creator->id,
+            'source' => 'texto',
+            'status' => 'procesada',
+            'workflow_status' => 'enviada',
+            'file_name' => 'con-quote.pdf',
+            'raw_text' => 'con quote',
+        ]);
+        Quote::query()->create([
+            'folio' => 'COT-PIPE-REQ-'.uniqid(),
+            'client_id' => $client->id,
+            'request_id' => $withQuote->id,
+            'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'total' => 0,
+            'created_by' => $creator->id,
+        ]);
+
+        $this->actingAs($creator);
+        $list = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+
+        $this->assertTrue($list->contains(
+            fn ($n) => ($n['requestId'] ?? '') === $ownElab->id
+                && ($n['reasonCode'] ?? '') === 'en_elaboracion'
+                && ($n['kind'] ?? '') === 'pipeline_request'
+        ));
+        $this->assertTrue($list->contains(
+            fn ($n) => ($n['requestId'] ?? '') === $ownLista->id
+                && ($n['kind'] ?? '') === 'pipeline_request'
+        ));
+        $this->assertFalse($list->contains(fn ($n) => ($n['requestId'] ?? '') === $foreign->id));
+        $this->assertFalse($list->contains(fn ($n) => ($n['requestId'] ?? '') === $withQuote->id));
+
+        $this->actingAs($otherVentas);
+        $otherList = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+        $this->assertFalse($otherList->contains(fn ($n) => ($n['requestId'] ?? '') === $ownElab->id));
+        $this->assertFalse($otherList->contains(fn ($n) => ($n['requestId'] ?? '') === $ownLista->id));
     }
 
     #[Test]

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Client;
+use App\Models\Quote;
 use App\Models\QuoteRequest;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\AuthenticatedFeatureTestCase;
@@ -135,7 +136,7 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function el_dashboard_lista_solo_las_en_elaboracion(): void
+    public function el_dashboard_lista_solicitudes_sin_cotizacion_pendientes_de_revision(): void
     {
         $client = Client::query()->create([
             'company' => 'Revision Corp',
@@ -143,7 +144,7 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
         ]);
         $ventas = $this->demoUser('ventas');
 
-        $enElaboracion = $this->crearSolicitud([
+        $sinQuote = $this->crearSolicitud([
             'client_id' => $client->id,
             'created_by' => $ventas->id,
             'file_name' => 'pedido.pdf',
@@ -154,17 +155,23 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
             'status' => 'precios_listos',
             'file_name' => 'precios.xlsx',
         ]);
-        $pendienteEnvio = $this->crearSolicitud([
+        $conQuote = $this->crearSolicitud([
             'client_id' => $client->id,
             'created_by' => $ventas->id,
-            'workflow_status' => 'pendiente_envio',
-            'file_name' => 'lista.pdf',
+            'file_name' => 'ya-cotizada.pdf',
         ]);
-        $enviada = $this->crearSolicitud([
+        Quote::query()->create([
+            'folio' => 'COT-REV-'.uniqid(),
             'client_id' => $client->id,
-            'created_by' => $ventas->id,
-            'workflow_status' => 'enviada',
-            'file_name' => 'enviada.pdf',
+            'request_id' => $conQuote->id,
+            'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'total' => 0,
+            'created_by' => $this->demoUser('gerente_compras')->id,
         ]);
         $deCompras = $this->crearSolicitud([
             'client_id' => $client->id,
@@ -179,18 +186,10 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
             ->pluck('id')
             ->all();
 
-        $this->assertContains($enElaboracion->id, $pendingIds);
+        $this->assertContains($sinQuote->id, $pendingIds);
         $this->assertContains($preciosListos->id, $pendingIds);
-        $this->assertNotContains($pendienteEnvio->id, $pendingIds);
-        $this->assertNotContains($enviada->id, $pendingIds);
+        $this->assertNotContains($conQuote->id, $pendingIds);
         $this->assertNotContains($deCompras->id, $pendingIds);
-
-        // Las sin revisar no deben filtrarse por estado terminal de flujo.
-        $pendingStatuses = collect($response->json('alerts.pendingReviewRequests'))
-            ->map(fn ($item) => QuoteRequest::query()->find($item['id'])->status)
-            ->filter(fn ($status) => in_array($status, ['procesando', 'error'], true));
-
-        $this->assertCount(0, $pendingStatuses);
     }
 
     #[Test]
@@ -234,9 +233,29 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function no_permite_editar_lineas_una_vez_enviada(): void
+    public function no_permite_editar_lineas_si_ya_hay_cotizacion(): void
     {
-        $request = $this->crearSolicitud(['workflow_status' => 'enviada']);
+        $client = Client::query()->create([
+            'company' => 'Cliente Bloqueo Quote',
+            'rfc' => 'CBQ010101AAA',
+        ]);
+        $request = $this->crearSolicitud([
+            'client_id' => $client->id,
+            'created_by' => $this->demoUser('ventas')->id,
+        ]);
+        Quote::query()->create([
+            'folio' => 'COT-BLOCK-'.uniqid(),
+            'client_id' => $client->id,
+            'request_id' => $request->id,
+            'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'total' => 0,
+            'created_by' => $this->demoUser('gerente_compras')->id,
+        ]);
 
         $this->actingAs($this->demoUser('ventas'))
             ->putJson("/api/solicitudes/{$request->id}/lineas", [
@@ -274,7 +293,7 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
                 ],
             ])
             ->assertOk()
-            ->assertJsonPath('workflow_status', 'pendiente_envio')
+            ->assertJsonPath('workflow_status', 'en_elaboracion')
             ->assertJsonPath('needs_external_review', true)
             ->assertJsonPath('reviewed_by', null);
     }

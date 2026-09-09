@@ -317,7 +317,8 @@ export interface QuoteNotifyEligibility {
 
 export interface SalesNotificationItem {
   id: string
-  quoteId: string
+  quoteId?: string | null
+  requestId?: string | null
   folio?: string | null
   clientName: string
   audience: 'ventas' | 'compras'
@@ -330,7 +331,7 @@ export interface SalesNotificationItem {
   createdAt?: string | null
   readAt?: string | null
   read: boolean
-  kind?: 'inbox' | 'pipeline'
+  kind?: 'inbox' | 'pipeline' | 'pipeline_request'
 }
 
 export const FOLLOW_UP_STATUS_LABELS: Record<FollowUpStatus, string> = {
@@ -474,6 +475,8 @@ export interface DashboardAnalytics {
   alerts: DashboardAlerts
   pendingRequests: number
   unansweredQuoteDays?: number
+  quotesSent?: number
+  quotesUnsent?: number
   quotesByStatus: Record<QuoteStatus, number>
   recentQuotes: DashboardQuoteSummary[]
   topRequestedProducts: ProductRank[]

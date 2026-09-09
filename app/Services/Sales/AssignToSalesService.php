@@ -21,28 +21,12 @@ class AssignToSalesService
     /**
      * @return list<array{id: int, name: string, folioCode: string|null}>
      */
-    public function listActiveSalespeople(): array
-    {
-        return $this->listActiveUsersByRole('ventas');
-    }
-
-    /**
-     * @return list<array{id: int, name: string, folioCode: string|null}>
-     */
     public function listActiveCompras(): array
-    {
-        return $this->listActiveUsersByRole('gerente_compras');
-    }
-
-    /**
-     * @return list<array{id: int, name: string, folioCode: string|null}>
-     */
-    private function listActiveUsersByRole(string $roleSlug): array
     {
         return User::query()
             ->with('role')
             ->where('active', true)
-            ->whereHas('role', fn ($role) => $role->where('slug', $roleSlug))
+            ->whereHas('role', fn ($role) => $role->where('slug', 'gerente_compras'))
             ->orderBy('name')
             ->get()
             ->map(fn (User $user) => [
@@ -52,22 +36,6 @@ class AssignToSalesService
             ])
             ->values()
             ->all();
-    }
-
-    public function assertCanAssignToSales(User $actor): void
-    {
-        $actor->loadMissing('role');
-        if (! in_array($actor->role_slug, ['gerente_compras', 'administrador'], true)) {
-            throw ValidationException::withMessages([
-                'recipientId' => ['No tienes permiso para asignar a ventas.'],
-            ]);
-        }
-    }
-
-    /** @deprecated Use assertCanAssignToSales */
-    public function assertCanAssign(User $actor): void
-    {
-        $this->assertCanAssignToSales($actor);
     }
 
     public function assertCanAssignToCompras(User $actor): void
@@ -80,87 +48,51 @@ class AssignToSalesService
         }
     }
 
-    public function resolveActiveSalesperson(int $recipientId): User
-    {
-        return $this->resolveActiveUserByRole($recipientId, 'ventas', 'Elige un usuario de ventas activo.');
-    }
-
     public function resolveActiveComprasUser(int $recipientId): User
     {
-        return $this->resolveActiveUserByRole(
-            $recipientId,
-            'gerente_compras',
-            'Elige un usuario de compras activo.',
-        );
-    }
-
-    /** Primer usuario activo del área (cuando no se elige persona en UI). */
-    public function resolveDefaultSalesperson(): User
-    {
-        return $this->resolveDefaultUserByRole('ventas', 'No hay usuarios de ventas activos.');
-    }
-
-    /** Primer usuario activo de compras (cuando no se elige persona en UI). */
-    public function resolveDefaultComprasUser(): User
-    {
-        return $this->resolveDefaultUserByRole(
-            'gerente_compras',
-            'No hay usuarios de compras activos.',
-        );
-    }
-
-    private function resolveActiveUserByRole(int $recipientId, string $roleSlug, string $error): User
-    {
         $recipient = User::query()->with('role')->find($recipientId);
-        if ($recipient === null || $recipient->active === false || $recipient->role_slug !== $roleSlug) {
+        if ($recipient === null || $recipient->active === false || $recipient->role_slug !== 'gerente_compras') {
             throw ValidationException::withMessages([
-                'recipientId' => [$error],
+                'recipientId' => ['Elige un usuario de compras activo.'],
             ]);
         }
 
         return $recipient;
     }
 
-    private function resolveDefaultUserByRole(string $roleSlug, string $emptyError): User
+    public function resolveDefaultComprasUser(): User
     {
         $recipient = User::query()
             ->with('role')
             ->where('active', true)
-            ->whereHas('role', fn ($role) => $role->where('slug', $roleSlug))
+            ->whereHas('role', fn ($role) => $role->where('slug', 'gerente_compras'))
             ->orderBy('name')
             ->first();
 
         if ($recipient === null) {
             throw ValidationException::withMessages([
-                'recipientId' => [$emptyError],
+                'recipientId' => ['No hay usuarios de compras activos.'],
             ]);
         }
 
         return $recipient;
     }
 
-    private function resolveSalesperson(?int $recipientId): User
-    {
-        return $recipientId !== null
-            ? $this->resolveActiveSalesperson($recipientId)
-            : $this->resolveDefaultSalesperson();
-    }
-
-    private function resolveComprasUser(?int $recipientId): User
+    public function resolveComprasUser(?int $recipientId): User
     {
         return $recipientId !== null
             ? $this->resolveActiveComprasUser($recipientId)
             : $this->resolveDefaultComprasUser();
     }
 
-    public function isAssignedToSales(?User $creator): bool
-    {
-        return $this->creatorHasRole($creator, 'ventas');
-    }
-
     public function isAssignedToCompras(?User $creator): bool
     {
         return $this->creatorHasRole($creator, 'gerente_compras');
+    }
+
+    public function isAssignedToSales(?User $creator): bool
+    {
+        return $this->creatorHasRole($creator, 'ventas');
     }
 
     private function creatorHasRole(?User $creator, string $roleSlug): bool
@@ -173,57 +105,6 @@ class AssignToSalesService
         return $creator->role_slug === $roleSlug;
     }
 
-    public function assertNotAlreadyAssignedToSales(?User $creator, string $entityLabel): void
-    {
-        // Reasignación libre entre compras/ventas: no bloquear.
-    }
-
-    public function assertNotAlreadyAssignedToCompras(?User $creator, string $entityLabel): void
-    {
-        // Reasignación libre entre compras/ventas: no bloquear.
-    }
-
-    /**
-     * @return array{quote: Quote, previousFolio: string, folio: string}
-     */
-    public function assignQuote(Quote $quote, User $actor, ?int $recipientId = null, ?string $message = null): array
-    {
-        $this->assertCanAssignToSales($actor);
-        $quote->loadMissing('creator.role');
-        $this->assertNotAlreadyAssignedToSales($quote->creator, 'cotización');
-        $recipient = $this->resolveSalesperson($recipientId);
-        $previousFolio = (string) $quote->folio;
-
-        $quote = DB::transaction(function () use ($quote, $actor, $recipient, $message, $previousFolio) {
-            $newFolio = $this->quoteFolios->generate($recipient);
-            $quote->forceFill([
-                'created_by' => $recipient->id,
-                'folio' => $newFolio,
-            ])->save();
-
-            $text = trim((string) $message);
-            if ($text === '') {
-                $text = "Cotización {$previousFolio} asignada como {$newFolio} para tu seguimiento.";
-            }
-
-            $this->notifications->notifyAssignment(
-                $quote->fresh(),
-                $actor,
-                $recipient,
-                SalesNotificationService::AUDIENCE_VENTAS,
-                $text,
-            );
-
-            return $quote->fresh(['client', 'creator', 'lines.offers.wholesaler', 'internalNotes.user']);
-        });
-
-        return [
-            'quote' => $quote,
-            'previousFolio' => $previousFolio,
-            'folio' => (string) $quote->folio,
-        ];
-    }
-
     /**
      * @return array{quote: Quote, previousFolio: string, folio: string}
      */
@@ -231,7 +112,6 @@ class AssignToSalesService
     {
         $this->assertCanAssignToCompras($actor);
         $quote->loadMissing('creator.role');
-        $this->assertNotAlreadyAssignedToCompras($quote->creator, 'cotización');
         $recipient = $this->resolveComprasUser($recipientId);
         $previousFolio = (string) $quote->folio;
 
@@ -268,41 +148,10 @@ class AssignToSalesService
     /**
      * @return array{request: QuoteRequest, previousFolio: string|null, folio: string|null}
      */
-    public function assignSolicitud(QuoteRequest $request, User $actor, ?int $recipientId = null): array
-    {
-        $this->assertCanAssignToSales($actor);
-        $request->loadMissing('creator.role');
-        $this->assertNotAlreadyAssignedToSales($request->creator, 'solicitud');
-        $recipient = $this->resolveSalesperson($recipientId);
-        $previousFolio = $request->folio;
-
-        $request = DB::transaction(function () use ($request, $recipient, $actor) {
-            $newFolio = $this->solicitudFolios->generate($recipient);
-            $request->forceFill([
-                'created_by' => $recipient->id,
-                'folio' => $newFolio,
-                'reviewed_by' => $actor->id,
-                'reviewed_at' => now(),
-            ])->save();
-
-            return $request->fresh(['lines', 'client', 'creator.role', 'reviewer']);
-        });
-
-        return [
-            'request' => $request,
-            'previousFolio' => $previousFolio,
-            'folio' => $request->folio,
-        ];
-    }
-
-    /**
-     * @return array{request: QuoteRequest, previousFolio: string|null, folio: string|null}
-     */
     public function assignSolicitudToCompras(QuoteRequest $request, User $actor, ?int $recipientId = null): array
     {
         $this->assertCanAssignToCompras($actor);
         $request->loadMissing('creator.role');
-        $this->assertNotAlreadyAssignedToCompras($request->creator, 'solicitud');
         $recipient = $this->resolveComprasUser($recipientId);
         $previousFolio = $request->folio;
 

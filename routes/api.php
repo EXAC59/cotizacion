@@ -136,8 +136,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/comparador/{id}', [ComparadorController::class, 'show'])
         ->middleware('permission:mayoristas,view');
 
-    Route::get('/usuarios/ventas', [VentasUserController::class, 'index'])
-        ->middleware('permission:cotizaciones,edit');
     Route::get('/usuarios/compras', [VentasUserController::class, 'compras'])
         ->middleware('permission:cotizaciones,edit');
 
@@ -153,8 +151,6 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:cotizaciones,view');
     Route::post('/cotizaciones/{id}/enviar', [CotizacionController::class, 'enviar'])
         ->middleware('permission:cotizaciones,send');
-    Route::post('/cotizaciones/{id}/asignar-ventas', [CotizacionController::class, 'asignarVentas'])
-        ->middleware('permission:cotizaciones,edit');
     Route::post('/cotizaciones/{id}/asignar-compras', [CotizacionController::class, 'asignarCompras'])
         ->middleware('permission:cotizaciones,edit');
     Route::post('/cotizaciones/{id}/notas-internas', [CotizacionController::class, 'agregarNotaInterna'])
@@ -201,8 +197,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/solicitudes/lectura-texto', [SolicitudLecturaController::class, 'procesarTexto'])
         ->middleware('permission:solicitudes,create');
     Route::put('/solicitudes/{id}/lineas', [SolicitudController::class, 'updateLineas'])
-        ->middleware('permission:solicitudes,edit');
-    Route::post('/solicitudes/{id}/asignar-ventas', [SolicitudController::class, 'asignarVentas'])
         ->middleware('permission:solicitudes,edit');
     Route::post('/solicitudes/{id}/asignar-compras', [SolicitudController::class, 'asignarCompras'])
         ->middleware('permission:solicitudes,edit');

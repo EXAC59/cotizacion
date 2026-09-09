@@ -477,7 +477,80 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function admin_and_compras_receive_unsent_requests_with_creator_and_workflow_status(): void
+    public function dashboard_exposes_quotes_sent_and_unsent_counts(): void
+    {
+        $this->actingAsDemoUser('administrador');
+
+        $before = $this->getJson('/api/dashboard')->assertOk();
+        $sentBefore = (int) $before->json('quotesSent');
+        $unsentBefore = (int) $before->json('quotesUnsent');
+
+        // Caso A / C: auto-creada o sin evidencia → NO ENVIADA
+        $unsent = $this->createQuote('COT-UNSENT-1', 'en_elaboracion', [
+            ['product' => 'A', 'partNumber' => 'A1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 13],
+        ]);
+        $this->assertNull($unsent->sent_at);
+
+        // Caso D: status=enviada heredado SIN sent_at → NO ENVIADA
+        $legacyStatusOnly = $this->createQuote('COT-LEGACY-STATUS', 'en_elaboracion', [
+            ['product' => 'B', 'partNumber' => 'B1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 13],
+        ]);
+        $legacyStatusOnly->update(['status' => 'enviada', 'sent_at' => null]);
+
+        // Caso B: evidencia real sent_at → ENVIADA
+        $sentByDate = $this->createQuote('COT-SENT-DATE', 'pendiente_envio', [
+            ['product' => 'C', 'partNumber' => 'C1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 13],
+        ]);
+        $sentByDate->update(['sent_at' => now()]);
+
+        $response = $this->getJson('/api/dashboard')->assertOk();
+
+        $this->assertSame($unsentBefore + 2, (int) $response->json('quotesUnsent'));
+        $this->assertSame($sentBefore + 1, (int) $response->json('quotesSent'));
+    }
+
+    #[Test]
+    public function auto_quote_from_solicitud_counts_as_unsent_until_real_send(): void
+    {
+        $this->actingAsDemoUser('gerente_compras');
+        $before = $this->getJson('/api/dashboard')->assertOk();
+        $sentBefore = (int) $before->json('quotesSent');
+        $unsentBefore = (int) $before->json('quotesUnsent');
+
+        $create = $this->postJson('/api/solicitudes', [
+            'client_id' => $this->client->id,
+            'raw_text' => "1 Item\n",
+            'lineas' => [
+                [
+                    'quantity' => 1,
+                    'product' => 'Item',
+                    'partNumber' => 'IT-1',
+                    'brand' => 'X',
+                    'description' => 'Item',
+                    'unit' => 'pza',
+                ],
+            ],
+        ])->assertCreated();
+
+        $quoteId = $create->json('quote_id');
+        $this->assertNotEmpty($quoteId);
+        $quote = Quote::query()->findOrFail($quoteId);
+        $this->assertNull($quote->sent_at);
+        $this->assertNotSame('enviada', $quote->status);
+
+        $afterCreate = $this->getJson('/api/dashboard')->assertOk();
+        $this->assertSame($unsentBefore + 1, (int) $afterCreate->json('quotesUnsent'));
+        $this->assertSame($sentBefore, (int) $afterCreate->json('quotesSent'));
+
+        $quote->update(['sent_at' => now(), 'status' => 'enviada']);
+
+        $afterSend = $this->getJson('/api/dashboard')->assertOk();
+        $this->assertSame($unsentBefore, (int) $afterSend->json('quotesUnsent'));
+        $this->assertSame($sentBefore + 1, (int) $afterSend->json('quotesSent'));
+    }
+
+    #[Test]
+    public function admin_and_compras_receive_unsent_requests_without_linked_quote(): void
     {
         $creator = User::query()->whereHas('role', fn ($query) => $query->where('slug', 'gerente_compras'))->firstOrFail();
 
@@ -497,23 +570,36 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
             'workflow_status' => 'pendiente_envio',
             'file_name' => 'lista.pdf',
         ]);
-        $sent = QuoteRequest::query()->create([
+        $withQuote = QuoteRequest::query()->create([
             'client_id' => $this->client->id,
             'created_by' => $creator->id,
             'source' => 'pdf',
             'status' => 'procesada',
             'workflow_status' => 'enviada',
-            'file_name' => 'enviada.pdf',
+            'file_name' => 'con-quote.pdf',
+        ]);
+        Quote::query()->create([
+            'folio' => 'COT-UNSENT-REQ-'.uniqid(),
+            'client_id' => $this->client->id,
+            'request_id' => $withQuote->id,
+            'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'total' => 0,
+            'created_by' => $creator->id,
         ]);
 
         $requests = collect(
             $this->getJson('/api/dashboard')->assertOk()->json('alerts.unsentRequests')
         );
 
-        $this->assertSame('en_elaboracion', $requests->firstWhere('id', $draft->id)['workflowStatus'] ?? null);
-        $this->assertSame('pendiente_envio', $requests->firstWhere('id', $ready->id)['workflowStatus'] ?? null);
+        $this->assertTrue($requests->contains('id', $draft->id));
+        $this->assertTrue($requests->contains('id', $ready->id));
         $this->assertSame($creator->name, $requests->firstWhere('id', $draft->id)['createdByName'] ?? null);
-        $this->assertFalse($requests->contains('id', $sent->id));
+        $this->assertFalse($requests->contains('id', $withQuote->id));
 
         $this->actingAs($creator);
         $this->assertTrue(

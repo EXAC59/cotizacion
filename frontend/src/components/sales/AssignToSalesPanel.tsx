@@ -3,13 +3,10 @@ import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Label, Select } from '@/components/ui/Input'
 import { InlineBusy } from '@/components/ui/LoadingState'
-import {
-  listComprasUsers,
-  listSalespeople,
-  type AssignRecipientOption,
-} from '@/lib/assign-to-sales-api'
+import { listComprasUsers, type AssignRecipientOption } from '@/lib/assign-to-sales-api'
 
-export type AssignTarget = 'ventas' | 'compras'
+/** Destino de asignación: solo compras (el flujo hacia ventas se eliminó). */
+export type AssignTarget = 'compras'
 
 type TeamCopy = {
   empty: string
@@ -18,19 +15,11 @@ type TeamCopy = {
   pickError: string
 }
 
-const TEAM_COPY: Record<AssignTarget, TeamCopy> = {
-  ventas: {
-    empty: 'Sin vendedores activos',
-    select: 'Selecciona vendedor',
-    loadError: 'No se pudieron cargar vendedores.',
-    pickError: 'Elige a quién de ventas enviar.',
-  },
-  compras: {
-    empty: 'Sin usuarios de compras activos',
-    select: 'Selecciona compras',
-    loadError: 'No se pudieron cargar usuarios de compras.',
-    pickError: 'Elige a quién de compras enviar.',
-  },
+const COMPRAS_COPY: TeamCopy = {
+  empty: 'Sin usuarios de compras activos',
+  select: 'Selecciona compras',
+  loadError: 'No se pudieron cargar usuarios de compras.',
+  pickError: 'Elige a quién de compras enviar.',
 }
 
 export function AssignToSalesPanel({
@@ -39,18 +28,15 @@ export function AssignToSalesPanel({
   onRecipientChange,
   entityLabel = 'documento',
   saveWithParent = false,
-  /** Destinos permitidos (compras y/o ventas). */
-  allowedTargets = ['ventas'],
 }: {
   disabled?: boolean
   entityLabel?: string
+  /** @deprecated Solo compras; se ignora si se pasa otro valor. */
   allowedTargets?: AssignTarget[]
   onAssign?: (recipientId: number, target: AssignTarget) => Promise<void>
   onRecipientChange?: (recipientId: number | null, target: AssignTarget | null) => void
   saveWithParent?: boolean
 }) {
-  const targets = allowedTargets.filter((t, i, arr) => arr.indexOf(t) === i)
-  const [target, setTarget] = useState<AssignTarget>(() => targets[0] ?? 'ventas')
   const [options, setOptions] = useState<AssignRecipientOption[]>([])
   const [recipientId, setRecipientId] = useState('')
   const [loadingOptions, setLoadingOptions] = useState(true)
@@ -58,31 +44,21 @@ export function AssignToSalesPanel({
   const [error, setError] = useState<string | null>(null)
 
   const showOwnButton = Boolean(onAssign) && !saveWithParent
-  const copy = TEAM_COPY[target]
-  const canPickTeam = targets.length > 1
+  const copy = COMPRAS_COPY
 
   useEffect(() => {
-    if (targets.length === 0) return
-    if (!targets.includes(target)) {
-      setTarget(targets[0])
-    }
-  }, [targets.join('|'), target])
-
-  useEffect(() => {
-    if (targets.length === 0) return
     let cancelled = false
     setLoadingOptions(true)
     setRecipientId('')
     onRecipientChange?.(null, null)
-    const loader = target === 'compras' ? listComprasUsers : listSalespeople
-    loader()
+    listComprasUsers()
       .then((rows) => {
         if (cancelled) return
         setOptions(rows)
         if (rows.length === 1 && !saveWithParent) {
           const id = String(rows[0].id)
           setRecipientId(id)
-          onRecipientChange?.(rows[0].id, target)
+          onRecipientChange?.(rows[0].id, 'compras')
         }
       })
       .catch((err: unknown) => {
@@ -98,123 +74,74 @@ export function AssignToSalesPanel({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target])
+  }, [])
 
-  const handleTeamChange = (next: AssignTarget) => {
-    setTarget(next)
-    setError(null)
-  }
-
-  const handleRecipientChange = (value: string) => {
-    setRecipientId(value)
-    setError(null)
-    onRecipientChange?.(value ? Number(value) : null, value ? target : null)
-  }
-
-  const handleSubmit = async () => {
+  const handleAssign = async () => {
     if (!onAssign) return
-    if (!recipientId) {
+    const id = Number(recipientId)
+    if (!Number.isFinite(id) || id <= 0) {
       setError(copy.pickError)
       return
     }
     setSubmitting(true)
     setError(null)
     try {
-      await onAssign(Number(recipientId), target)
+      await onAssign(id, 'compras')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : `No se pudo enviar la ${entityLabel}.`)
+      setError(err instanceof Error ? err.message : `No se pudo asignar la ${entityLabel}.`)
     } finally {
       setSubmitting(false)
     }
   }
 
-  if (targets.length === 0) return null
-
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
-      <p className="text-sm font-medium text-slate-900">Enviar a compras / ventas</p>
-
-      {canPickTeam && (
-        <div className="mt-3 flex gap-2">
-          {targets.includes('compras') && (
-            <button
-              type="button"
-              disabled={disabled || submitting}
-              onClick={() => handleTeamChange('compras')}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition ${
-                target === 'compras'
-                  ? 'bg-amber-600 text-white ring-amber-600'
-                  : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              Compras
-            </button>
-          )}
-          {targets.includes('ventas') && (
-            <button
-              type="button"
-              disabled={disabled || submitting}
-              onClick={() => handleTeamChange('ventas')}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition ${
-                target === 'ventas'
-                  ? 'bg-indigo-600 text-white ring-indigo-600'
-                  : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              Ventas
-            </button>
-          )}
-        </div>
-      )}
-
-      <div
-        className={
-          showOwnButton
-            ? 'mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end'
-            : 'mt-3'
-        }
-      >
-        <div>
-          <Label htmlFor={`assign-to-${target}`}>
-            {target === 'ventas' ? 'Persona de ventas' : 'Persona de compras'}
-          </Label>
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-[12rem] flex-1">
+          <Label htmlFor="assign-compras-recipient">Persona de compras</Label>
           <Select
-            id={`assign-to-${target}`}
-            className="mt-1"
+            id="assign-compras-recipient"
             value={recipientId}
             disabled={disabled || loadingOptions || submitting || options.length === 0}
-            onChange={(e) => handleRecipientChange(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value
+              setRecipientId(value)
+              const id = Number(value)
+              onRecipientChange?.(
+                Number.isFinite(id) && id > 0 ? id : null,
+                Number.isFinite(id) && id > 0 ? 'compras' : null,
+              )
+            }}
           >
-            <option value="">
-              {loadingOptions
-                ? 'Cargando…'
-                : options.length === 0
-                  ? copy.empty
-                  : saveWithParent
-                    ? 'Sin reasignar (opcional)'
-                    : copy.select}
-            </option>
-            {options.map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.name}
-                {person.folioCode ? ` (${person.folioCode})` : ''}
+            <option value="">{loadingOptions ? 'Cargando…' : copy.select}</option>
+            {options.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
               </option>
             ))}
           </Select>
+          {options.length === 0 && !loadingOptions && (
+            <p className="mt-1 text-xs text-slate-500">{copy.empty}</p>
+          )}
         </div>
         {showOwnButton && (
           <Button
             type="button"
             size="sm"
-            disabled={disabled || submitting || !recipientId}
-            onClick={() => void handleSubmit()}
+            disabled={disabled || submitting || loadingOptions || !recipientId}
+            onClick={() => void handleAssign()}
           >
             {submitting ? <InlineBusy size="sm" /> : <Send className="h-4 w-4" />}
-            {submitting ? 'Enviando…' : `Enviar a ${target}`}
+            Enviar a compras
           </Button>
         )}
       </div>
       {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+      {saveWithParent && (
+        <p className="mt-2 text-xs text-slate-500">
+          La asignación a compras se confirma al guardar la {entityLabel}.
+        </p>
+      )}
     </div>
   )
 }

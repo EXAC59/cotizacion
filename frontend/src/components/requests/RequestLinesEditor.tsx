@@ -12,12 +12,7 @@ import { InlineBusy, ModalBusyPanel } from '@/components/ui/LoadingState'
 
 import { preventNegativeNumberKey, sanitizeQuantityInput } from '@/lib/quantity-input'
 
-import type { RequestLine, RequestWorkflowStatus, WholesalerOffer } from '@/types'
-
-type EditableWorkflowStatus = Extract<
-  RequestWorkflowStatus,
-  'en_elaboracion' | 'pendiente_envio'
->
+import type { RequestLine, WholesalerOffer } from '@/types'
 
 export type RequestLinesEditorHandle = {
   openSaveModal: () => void
@@ -35,12 +30,12 @@ export const RequestLinesEditor = forwardRef<
     showComparator?: boolean
     dirty?: boolean
     saving?: boolean
-    /** Permite Guardar aunque no haya cambios (p. ej. solo enviar a ventas). */
+    /** Permite Guardar aunque no haya cambios (p. ej. solo enviar a compras). */
     forceSaveAvailable?: boolean
     /** Menciona en el modal que se asignará al área elegida. */
     assignHint?: boolean
     onChange: (lines: RequestLine[]) => void
-    onSave?: (workflowStatus: EditableWorkflowStatus) => Promise<boolean>
+    onSave?: () => Promise<boolean>
     onCancel?: () => void
   }
 >(function RequestLinesEditor(
@@ -71,9 +66,9 @@ export const RequestLinesEditor = forwardRef<
     },
   }))
 
-  const saveWithStatus = async (workflowStatus: EditableWorkflowStatus) => {
+  const handleSave = async () => {
     if (!onSave) return
-    const saved = await onSave(workflowStatus)
+    const saved = await onSave()
     if (saved) setSaveModalOpen(false)
   }
 
@@ -539,13 +534,13 @@ export const RequestLinesEditor = forwardRef<
 
                 <h3 id="save-request-lines-title" className="text-lg font-bold text-slate-900">
 
-                  ¿Cómo deseas guardar la solicitud?
+                  ¿Guardar cambios?
 
                 </h3>
 
                 <p className="mt-2 text-sm text-slate-600">
 
-                  Selecciona uno de los dos estados para guardar tus cambios.
+                  Se guardarán las partidas de la solicitud.
 
                   {assignHint
                     ? ' Al confirmar, también se enviará a la persona seleccionada.'
@@ -561,27 +556,11 @@ export const RequestLinesEditor = forwardRef<
 
                     className="w-full justify-center"
 
-                    onClick={() => void saveWithStatus('pendiente_envio')}
+                    onClick={() => void handleSave()}
 
                   >
 
-                    Guardar como Lista / Terminada
-
-                  </Button>
-
-                  <Button
-
-                    variant="secondary"
-
-                    size="sm"
-
-                    className="w-full justify-center"
-
-                    onClick={() => void saveWithStatus('en_elaboracion')}
-
-                  >
-
-                    Guardar como En elaboración
+                    Guardar
 
                   </Button>
 

@@ -14,18 +14,17 @@ import { formatDateTime } from '@/lib/format'
 import { listSolicitudes, mapSolicitudApiToQuoteRequest } from '@/lib/solicitudes-api'
 import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
 import {
-  REQUEST_WORKFLOW_LABELS,
+  REQUEST_STATUS_LABELS,
   type QuoteRequest,
-  type RequestWorkflowStatus,
+  type RequestStatus,
 } from '@/types'
 
-const workflowVariant: Record<
-  RequestWorkflowStatus,
-  'warning' | 'brand' | 'success' | 'danger'
-> = {
-  en_elaboracion: 'brand',
-  pendiente_envio: 'warning',
-  enviada: 'success',
+const statusVariant: Record<RequestStatus, 'warning' | 'brand' | 'success' | 'danger' | 'muted'> = {
+  pendiente: 'muted',
+  procesando: 'warning',
+  procesada: 'success',
+  precios_listos: 'brand',
+  error: 'danger',
 }
 
 const ALL_STATUSES = '' as const
@@ -37,7 +36,7 @@ export function RequestsPage() {
   const [requests, setRequests] = useState<QuoteRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<RequestWorkflowStatus | typeof ALL_STATUSES>(
+  const [statusFilter, setStatusFilter] = useState<RequestStatus | typeof ALL_STATUSES>(
     ALL_STATUSES,
   )
   const [search, setSearch] = useState('')
@@ -58,7 +57,7 @@ export function RequestsPage() {
     setLoading(true)
 
     listSolicitudes({
-      workflowStatus: statusFilter || undefined,
+      status: statusFilter || undefined,
       q: debouncedSearch || undefined,
       scope: listScope,
       from: dateFrom || undefined,
@@ -106,13 +105,13 @@ export function RequestsPage() {
             id="solicitud-status-filter"
             value={statusFilter}
             onChange={(e) =>
-              setStatusFilter(e.target.value as RequestWorkflowStatus | typeof ALL_STATUSES)
+              setStatusFilter(e.target.value as RequestStatus | typeof ALL_STATUSES)
             }
           >
             <option value={ALL_STATUSES}>Todos</option>
-            {(Object.keys(REQUEST_WORKFLOW_LABELS) as RequestWorkflowStatus[]).map((status) => (
+            {(Object.keys(REQUEST_STATUS_LABELS) as RequestStatus[]).map((status) => (
               <option key={status} value={status}>
-                {REQUEST_WORKFLOW_LABELS[status]}
+                {REQUEST_STATUS_LABELS[status]}
               </option>
             ))}
           </Select>
@@ -219,8 +218,8 @@ export function RequestsPage() {
                       {r.fileName ?? r.rawText?.slice(0, 50) ?? '—'}
                     </td>
                     <td className="px-5 py-3">
-                      <Badge variant={workflowVariant[r.workflowStatus ?? 'en_elaboracion']}>
-                        {REQUEST_WORKFLOW_LABELS[r.workflowStatus ?? 'en_elaboracion']}
+                      <Badge variant={statusVariant[r.status]}>
+                        {REQUEST_STATUS_LABELS[r.status]}
                       </Badge>
                     </td>
                     <td className="px-5 py-3">
@@ -238,7 +237,7 @@ export function RequestsPage() {
                       {r.lecturaAt
                         ? formatDateTime(r.lecturaAt)
                         : r.status === 'procesando'
-                          ? 'En proceso'
+                          ? 'En espera'
                           : '—'}
                     </td>
                   </tr>

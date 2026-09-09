@@ -74,6 +74,13 @@ export function quoteDetailFocus(folio: string, label: string): NotificationFocu
   }
 }
 
+export function requestDetailFocus(folio: string, label: string): NotificationFocusTarget {
+  return {
+    elementId: 'request-detail-panel',
+    label: `${folio} · ${label}`,
+  }
+}
+
 export function isDashboardPath(pathname: string): boolean {
   return /\/dashboard\/?$/.test(pathname)
 }

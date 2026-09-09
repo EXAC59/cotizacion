@@ -66,4 +66,9 @@ class QuoteRequest extends Model
     {
         return $this->hasMany(QuoteRequestLine::class, 'request_id')->orderBy('line_order');
     }
+
+    public function quotes(): HasMany
+    {
+        return $this->hasMany(Quote::class, 'request_id');
+    }
 }

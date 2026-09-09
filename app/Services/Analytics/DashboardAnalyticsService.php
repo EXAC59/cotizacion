@@ -73,12 +73,15 @@ class DashboardAnalyticsService
     public function dashboardPayload(?string $from = null, ?string $to = null, ?User $viewer = null): array
     {
         $period = $this->resolvePeriod($from, $to);
+        $sentUnsent = $this->quotesSentUnsentCounts($viewer);
 
         return [
             'period' => $this->periodArray($period),
             ...$this->kpiBlock($period),
             'alerts' => $this->alertsBlock($viewer),
             'quotesByStatus' => $this->quotesByStatus($period),
+            'quotesSent' => $sentUnsent['sent'],
+            'quotesUnsent' => $sentUnsent['unsent'],
             'recentQuotes' => $this->recentQuotes($viewer),
             'pendingRequests' => $this->pendingRequestsCount(),
             'unansweredQuoteDays' => AppSetting::current()->resolvedUnansweredQuoteDays(),
@@ -269,6 +272,23 @@ class DashboardAnalyticsService
     }
 
     /**
+     * @return array{sent: int, unsent: int}
+     */
+    private function quotesSentUnsentCounts(?User $viewer = null): array
+    {
+        $base = $this->constrainQuoteMaker(Quote::query(), $viewer);
+
+        // Evidencia real de envío al cliente: solo sent_at (no status ni workflow_status).
+        $sent = (clone $base)->whereNotNull('sent_at')->count();
+        $unsent = (clone $base)->whereNull('sent_at')->count();
+
+        return [
+            'sent' => $sent,
+            'unsent' => $unsent,
+        ];
+    }
+
+    /**
      * Cotizaciones que siguen en elaboración y nunca llegaron a Lista / Terminada.
      *
      * @return list<array{id: string, folio: string, clientName: string, createdByName: string|null, updatedAt: string}>
@@ -293,7 +313,7 @@ class DashboardAnalyticsService
     }
 
     /**
-     * Solicitudes que nadie ha abierto aún (sin revisar por un humano).
+     * Solicitudes sin cotización vinculada y sin revisión externa (creadas por ventas).
      * Ventas: solo las creadas por su cuenta.
      *
      * @return list<array{id: string, fileName: string|null, clientName: string, createdAt: string}>
@@ -302,7 +322,7 @@ class DashboardAnalyticsService
     {
         $query = QuoteRequest::query()
             ->with('client')
-            ->where('workflow_status', 'en_elaboracion')
+            ->whereDoesntHave('quotes')
             ->whereNotIn('status', ['procesando', 'error'])
             ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
             ->where(function ($inner) {
@@ -327,16 +347,17 @@ class DashboardAnalyticsService
     }
 
     /**
-     * Solicitudes en En elaboración o Lista / Terminada (aún no enviadas).
+     * Solicitudes aún sin cotización vinculada (pendientes de pasar a Compras/cotizar).
      * Ventas: solo las creadas por su cuenta.
      *
-     * @return list<array{id: string, fileName: string|null, clientName: string, createdByName: string|null, workflowStatus: string, createdAt: string}>
+     * @return list<array{id: string, fileName: string|null, clientName: string, createdByName: string|null, workflowStatus: string|null, createdAt: string}>
      */
     private function unsentRequests(?User $viewer = null): array
     {
         $query = QuoteRequest::query()
             ->with(['client', 'creator'])
-            ->whereIn('workflow_status', ['en_elaboracion', 'pendiente_envio']);
+            ->whereDoesntHave('quotes')
+            ->whereNotIn('status', ['procesando', 'error']);
 
         $this->constrainRequestMaker($query, $viewer);
 

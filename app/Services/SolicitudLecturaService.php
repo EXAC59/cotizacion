@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\SolicitudFormatoException;
+use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Models\QuoteRequestLine;
 use Illuminate\Support\Facades\DB;
@@ -45,13 +46,13 @@ class SolicitudLecturaService
     public function reemplazarLineas(
         string $requestId,
         array $lineas,
-        string $workflowStatus = 'pendiente_envio',
+        ?string $workflowStatus = null,
     ): QuoteRequest {
-        return DB::transaction(function () use ($requestId, $lineas, $workflowStatus) {
+        return DB::transaction(function () use ($requestId, $lineas) {
             $request = QuoteRequest::query()->findOrFail($requestId);
 
-            if ($request->workflow_status === 'enviada') {
-                abort(403, 'La solicitud ya fue enviada y no se puede editar.');
+            if (Quote::query()->where('request_id', $request->id)->exists()) {
+                abort(403, 'Esta solicitud ya tiene cotización. Ábrela en Cotizaciones para continuar.');
             }
 
             if (! in_array($request->status, ['procesada', 'precios_listos'], true)) {
@@ -60,8 +61,6 @@ class SolicitudLecturaService
 
             QuoteRequestLine::query()->where('request_id', '=', $request->id)->delete();
             $this->guardarLineas($request, $lineas);
-
-            $request->update(['workflow_status' => $workflowStatus]);
 
             return $request->fresh(['lines', 'client']);
         });
@@ -156,33 +155,19 @@ class SolicitudLecturaService
     }
 
     /**
-     * Pasa la solicitud a «Lista / Terminada» tras guardar sus líneas.
-     * Idempotente: solo avanza desde «En elaboración», no regresa estados.
+     * @deprecated El producto ya no usa workflow_status de solicitudes.
      */
     public function marcarLista(QuoteRequest $request): void
     {
-        if ($request->workflow_status === 'pendiente_envio') {
-            return;
-        }
-
-        if (in_array($request->workflow_status, config('solicitudes.lista_from_statuses', ['en_elaboracion']), true)) {
-            $request->update(['workflow_status' => 'pendiente_envio']);
-        }
+        // No-op: el flujo de elaboración/lista/enviada en solicitudes se retiró.
     }
 
     /**
-     * Marca la solicitud como enviada (se creó una cotización vinculada).
-     * Idempotente: primer evento gana, no se retrocede.
+     * @deprecated Crear cotización no marca la solicitud como enviada.
      */
     public function marcarEnviada(QuoteRequest $request): void
     {
-        if ($request->workflow_status === 'enviada') {
-            return;
-        }
-
-        if (in_array($request->workflow_status, config('solicitudes.enviada_from_statuses', ['en_elaboracion', 'pendiente_envio']), true)) {
-            $request->update(['workflow_status' => 'enviada']);
-        }
+        // No-op: el envío real es quotes.sent_at vía /enviar.
     }
 
     /**
