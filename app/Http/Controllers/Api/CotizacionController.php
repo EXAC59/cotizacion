@@ -255,9 +255,26 @@ class CotizacionController extends Controller
             $request->user()?->id,
         );
 
+        $previousStatus = $quote->status;
+        $sentFrom = config('quotes.sent_from_statuses', []);
+        if (in_array($previousStatus, $sentFrom, true)) {
+            $quote->update([
+                'status' => 'enviada',
+                'sent_at' => $quote->sent_at ?? now(),
+                'response_received_at' => null,
+            ]);
+            $this->statusHistory->record($quote, $previousStatus, 'enviada');
+        } elseif ($previousStatus === 'enviada' && $quote->sent_at === null) {
+            $quote->update(['sent_at' => now()]);
+        }
+
+        $quote = $quote->fresh();
+
         return response()->json([
             'queued' => true,
-            'message' => 'Cotización encolada para envío por correo.',
+            'message' => 'Cotización marcada como enviada al cliente.',
+            'status' => $quote?->status,
+            'sentAt' => $quote?->sent_at?->toIso8601String(),
         ], 202);
     }
 
@@ -304,21 +321,11 @@ class CotizacionController extends Controller
         }
 
         $quote = $quote->fresh(['lockedByUser']);
-        $statusChanged = false;
-        // Solo borradores: al abrir, Solicitud / Lista → En elaboración.
-        // Enviada/aceptada/facturada NO pasan a modificación solo por abrir.
-        if ($quote !== null && in_array($quote->status, config('quotes.elaboracion_from_statuses', ['solicitud_cotizaciones', 'pendiente_envio']), true)) {
-            $fromStatus = $quote->status;
-            $quote->update(['status' => 'en_elaboracion']);
-            $quote = $quote->fresh(['lockedByUser']);
-            $this->statusHistory->record($quote, $fromStatus, 'en_elaboracion');
-            $statusChanged = true;
-        }
 
         return response()->json([
             'locked' => true,
             'status' => $quote?->status,
-            'statusChanged' => $statusChanged,
+            'statusChanged' => false,
             'statusHistory' => $quote ? $this->statusHistory->timelineForQuote($quote) : [],
             'editLock' => $this->quoteLockService->lockPayload($quote),
             'heartbeatSeconds' => (int) config('quotes.lock_heartbeat_seconds', 60),
@@ -335,39 +342,6 @@ class CotizacionController extends Controller
         $this->quoteLockService->release($quote);
 
         return response()->json(['locked' => false]);
-    }
-
-    public function asignarCompras(string $id, Request $request): JsonResponse
-    {
-        if (! Str::isUuid($id)) {
-            abort(404, 'Cotización no encontrada.');
-        }
-
-        $validated = $request->validate([
-            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
-            'message' => ['nullable', 'string', 'min:3', 'max:1000'],
-        ]);
-
-        $actor = $request->user();
-        if ($actor === null) {
-            return response()->json(['message' => 'No autenticado.'], 401);
-        }
-
-        $quote = Quote::query()->findOrFail($id);
-        $this->ensureVentasCanMutateQuote($request, $quote);
-        $result = $this->assignToSales->assignQuoteToCompras(
-            $quote,
-            $actor,
-            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
-            $validated['message'] ?? null,
-        );
-
-        return response()->json([
-            'message' => 'Cotización asignada a compras.',
-            'previousFolio' => $result['previousFolio'],
-            'folio' => $result['folio'],
-            ...$this->toApiArray($result['quote']),
-        ]);
     }
 
     /**

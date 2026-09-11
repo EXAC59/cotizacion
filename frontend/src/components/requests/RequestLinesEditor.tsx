@@ -30,10 +30,6 @@ export const RequestLinesEditor = forwardRef<
     showComparator?: boolean
     dirty?: boolean
     saving?: boolean
-    /** Permite Guardar aunque no haya cambios (p. ej. solo enviar a compras). */
-    forceSaveAvailable?: boolean
-    /** Menciona en el modal que se asignará al área elegida. */
-    assignHint?: boolean
     onChange: (lines: RequestLine[]) => void
     onSave?: () => Promise<boolean>
     onCancel?: () => void
@@ -47,8 +43,6 @@ export const RequestLinesEditor = forwardRef<
     showComparator = true,
     dirty = false,
     saving = false,
-    forceSaveAvailable = false,
-    assignHint = false,
     onChange,
     onSave,
     onCancel,
@@ -61,7 +55,7 @@ export const RequestLinesEditor = forwardRef<
   useImperativeHandle(ref, () => ({
     openSaveModal: () => {
       if (!onSave) return
-      if (!(dirty || forceSaveAvailable)) return
+      if (!dirty) return
       setSaveModalOpen(true)
     },
   }))
@@ -428,7 +422,7 @@ export const RequestLinesEditor = forwardRef<
 
           </Button>
 
-          {(dirty || forceSaveAvailable) && onSave ? (
+          {(dirty) && onSave ? (
 
             <>
 
@@ -539,13 +533,7 @@ export const RequestLinesEditor = forwardRef<
                 </h3>
 
                 <p className="mt-2 text-sm text-slate-600">
-
                   Se guardarán las partidas de la solicitud.
-
-                  {assignHint
-                    ? ' Al confirmar, también se enviará a la persona seleccionada.'
-                    : ''}
-
                 </p>
 
                 <div className="mt-5 flex flex-col gap-3">

@@ -660,6 +660,8 @@ export type SendQuoteEmailOptions = {
 export type SendQuoteEmailResult = {
   queued: boolean
   message: string
+  status?: QuoteStatus
+  sentAt?: string
 }
 
 export async function sendQuoteByEmail(
@@ -689,6 +691,8 @@ export async function sendQuoteByEmail(
   return {
     queued: data.queued ?? true,
     message: data.message ?? 'Cotización encolada para envío por correo.',
+    status: data.status ? normalizeQuoteStatus(data.status) : undefined,
+    sentAt: data.sentAt,
   }
 }
 

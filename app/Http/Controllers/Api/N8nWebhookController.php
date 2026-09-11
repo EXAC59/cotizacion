@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ComparisonJob;
 use App\Models\QuoteRequest;
 use App\Services\LecturaLineParser;
+use App\Services\Quotes\SolicitudToQuoteService;
 use App\Services\SolicitudLecturaService;
 use App\Services\SolicitudLineasValidator;
 use App\Services\Wholesalers\ComparatorJobService;
@@ -19,6 +20,7 @@ class N8nWebhookController extends Controller
     public function __construct(
         private readonly SolicitudLecturaService $lecturaService,
         private readonly SolicitudLineasValidator $lineasValidator,
+        private readonly SolicitudToQuoteService $solicitudToQuote,
     ) {}
 
     /**
@@ -109,6 +111,20 @@ class N8nWebhookController extends Controller
                     null,
                     $interpretacionVia,
                 );
+                $ensured = $this->solicitudToQuote->ensureQuoteForRequest(
+                    $quoteRequest->fresh(['lines', 'client']),
+                    null,
+                );
+
+                return response()->json([
+                    'message' => 'Lectura registrada correctamente',
+                    'received_at' => now()->toIso8601String(),
+                    'request_id' => $quoteRequest->id,
+                    'quote_id' => $ensured['quote']?->id,
+                    'quote_folio' => $ensured['quote']?->folio,
+                    'quote_created' => $ensured['created'],
+                    'solicitud' => $this->lecturaService->toApiArray($quoteRequest),
+                ], 201);
             }
 
             return response()->json([

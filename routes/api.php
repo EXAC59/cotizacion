@@ -17,7 +17,6 @@ use App\Http\Controllers\Api\RbacController;
 use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SolicitudController;
 use App\Http\Controllers\Api\SolicitudLecturaController;
-use App\Http\Controllers\Api\VentasUserController;
 use App\Http\Controllers\Api\WhatsAppWebhookController;
 use Illuminate\Support\Facades\Route;
 
@@ -136,9 +135,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/comparador/{id}', [ComparadorController::class, 'show'])
         ->middleware('permission:mayoristas,view');
 
-    Route::get('/usuarios/compras', [VentasUserController::class, 'compras'])
-        ->middleware('permission:cotizaciones,edit');
-
     Route::get('/cotizaciones', [CotizacionController::class, 'index'])
         ->middleware('permission:cotizaciones,view');
     Route::get('/cotizaciones/proximo-folio', [CotizacionController::class, 'proximoFolio'])
@@ -151,8 +147,6 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:cotizaciones,view');
     Route::post('/cotizaciones/{id}/enviar', [CotizacionController::class, 'enviar'])
         ->middleware('permission:cotizaciones,send');
-    Route::post('/cotizaciones/{id}/asignar-compras', [CotizacionController::class, 'asignarCompras'])
-        ->middleware('permission:cotizaciones,edit');
     Route::post('/cotizaciones/{id}/notas-internas', [CotizacionController::class, 'agregarNotaInterna'])
         ->middleware('permission:cotizaciones,create|edit');
     Route::patch('/cotizaciones/{id}/seguimiento', [NotificacionController::class, 'seguimiento'])
@@ -197,8 +191,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/solicitudes/lectura-texto', [SolicitudLecturaController::class, 'procesarTexto'])
         ->middleware('permission:solicitudes,create');
     Route::put('/solicitudes/{id}/lineas', [SolicitudController::class, 'updateLineas'])
-        ->middleware('permission:solicitudes,edit');
-    Route::post('/solicitudes/{id}/asignar-compras', [SolicitudController::class, 'asignarCompras'])
         ->middleware('permission:solicitudes,edit');
     Route::get('/solicitudes/{id}/cotizaciones', [SolicitudController::class, 'cotizaciones'])
         ->middleware('permission:solicitudes,view');

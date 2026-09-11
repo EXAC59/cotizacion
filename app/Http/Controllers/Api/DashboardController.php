@@ -50,6 +50,11 @@ class DashboardController extends Controller
             }
         }
 
+        // Lecturas atascadas (n8n/Docling): solo admin.
+        if ($role !== 'administrador' && isset($payload['alerts']) && is_array($payload['alerts'])) {
+            $payload['alerts']['stuckProcessingRequests'] = [];
+        }
+
         return $payload;
     }
 

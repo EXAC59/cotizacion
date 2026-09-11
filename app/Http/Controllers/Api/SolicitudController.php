@@ -8,7 +8,6 @@ use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Services\LecturaInterpretacionService;
 use App\Services\Quotes\SolicitudToQuoteService;
-use App\Services\Sales\AssignToSalesService;
 use App\Services\SolicitudLecturaService;
 use App\Support\ViewerListScope;
 use Illuminate\Http\JsonResponse;
@@ -31,7 +30,6 @@ class SolicitudController extends Controller
     public function __construct(
         private readonly SolicitudLecturaService $lecturaService,
         private readonly LecturaInterpretacionService $interpretacion,
-        private readonly AssignToSalesService $assignToSales,
         private readonly SolicitudToQuoteService $solicitudToQuote,
     ) {}
 
@@ -46,7 +44,12 @@ class SolicitudController extends Controller
         ]);
 
         $query = QuoteRequest::query()
-            ->with(['lines', 'client', 'creator'])
+            ->with([
+                'lines',
+                'client',
+                'creator',
+                'quotes' => fn ($q) => $q->select('id', 'folio', 'request_id', 'created_at')->orderByDesc('created_at'),
+            ])
             ->orderByDesc('created_at');
 
         $user = $request->user();
@@ -85,12 +88,14 @@ class SolicitudController extends Controller
 
     public function show(Request $httpRequest, string $id): JsonResponse
     {
-        $request = QuoteRequest::query()->with(['lines', 'client', 'creator'])->findOrFail($id);
-        $user = $httpRequest->user();
-        $user?->loadMissing('role');
-        if ($user?->role_slug !== 'ventas' || $request->isOwnedByUser($user)) {
-            $this->lecturaService->marcarRevisada($request);
-        }
+        $request = QuoteRequest::query()
+            ->with([
+                'lines',
+                'client',
+                'creator',
+                'quotes' => fn ($q) => $q->select('id', 'folio', 'request_id', 'created_at')->orderByDesc('created_at'),
+            ])
+            ->findOrFail($id);
 
         return response()->json($this->lecturaService->toApiArray($request));
     }
@@ -173,14 +178,15 @@ class SolicitudController extends Controller
         );
 
         return response()->json([
+            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
             'message' => 'Solicitud creada',
             'request_id' => $quoteRequest->id,
             'interpretacion_via' => self::INTERPRETACION_VIA,
+            // Después de toApiArray para que no se pierda si el eager load aún no ve la cotización.
             'quote_id' => $ensured['quote']?->id,
             'quote_folio' => $ensured['quote']?->folio,
             'quote_created' => $ensured['created'],
             'quote_skipped_reason' => $ensured['skippedReason'],
-            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
         ], 201);
     }
 
@@ -243,15 +249,6 @@ class SolicitudController extends Controller
             ], 422);
         }
 
-        if ($requestId) {
-            $this->lecturaService->actualizarDesdeN8n(
-                $requestId,
-                $lineas,
-                null,
-                self::INTERPRETACION_VIA,
-            );
-        }
-
         $payload = [
             'message' => 'Interpretación completada',
             'interpretacion_via' => self::INTERPRETACION_VIA,
@@ -261,6 +258,23 @@ class SolicitudController extends Controller
         ];
 
         if ($requestId) {
+            $this->lecturaService->actualizarDesdeN8n(
+                $requestId,
+                $lineas,
+                null,
+                self::INTERPRETACION_VIA,
+            );
+            $quoteRequest = QuoteRequest::query()->with(['lines', 'client'])->find($requestId);
+            if ($quoteRequest !== null) {
+                $ensured = $this->solicitudToQuote->ensureQuoteForRequest(
+                    $quoteRequest,
+                    $request->user(),
+                );
+                $payload['quote_id'] = $ensured['quote']?->id;
+                $payload['quote_folio'] = $ensured['quote']?->folio;
+                $payload['quote_created'] = $ensured['created'];
+                $payload['quote_skipped_reason'] = $ensured['skippedReason'];
+            }
             $payload['request_id'] = $requestId;
         }
 
@@ -322,47 +336,18 @@ class SolicitudController extends Controller
             return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         }
 
-        $this->lecturaService->marcarRevisada($quoteRequest);
-
-        $ensured = $this->solicitudToQuote->ensureQuoteForRequest(
+        $ensured = $this->solicitudToQuote->syncQuoteFromRequest(
             $quoteRequest->fresh(['lines', 'client']),
             $request->user(),
         );
 
         return response()->json([
+            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
             'message' => 'Líneas actualizadas',
             'quote_id' => $ensured['quote']?->id,
             'quote_folio' => $ensured['quote']?->folio,
             'quote_created' => $ensured['created'],
             'quote_skipped_reason' => $ensured['skippedReason'],
-            ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
-        ]);
-    }
-
-    public function asignarCompras(string $id, Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'recipientId' => ['nullable', 'integer', 'exists:users,id'],
-        ]);
-
-        $actor = $request->user();
-        if ($actor === null) {
-            return response()->json(['message' => 'No autenticado.'], 401);
-        }
-
-        $quoteRequest = QuoteRequest::query()->findOrFail($id);
-        $this->ensureVentasCanMutateSolicitud($request, $quoteRequest);
-        $result = $this->assignToSales->assignSolicitudToCompras(
-            $quoteRequest,
-            $actor,
-            isset($validated['recipientId']) ? (int) $validated['recipientId'] : null,
-        );
-
-        return response()->json([
-            'message' => 'Solicitud asignada a compras.',
-            'previousFolio' => $result['previousFolio'],
-            'folio' => $result['folio'],
-            ...$this->lecturaService->toApiArray($result['request']),
         ]);
     }
 

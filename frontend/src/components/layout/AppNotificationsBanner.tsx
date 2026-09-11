@@ -7,7 +7,7 @@ import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
 
 export function AppNotificationsBanner() {
-  const { can } = usePermission()
+  const { can, isAdmin } = usePermission()
   const canViewDashboard = can('dashboard', 'view')
   const location = useLocation()
   const navigate = useNavigate()
@@ -25,7 +25,7 @@ export function AppNotificationsBanner() {
         if (cancelled) return
         const alerts = data.alerts
         const unanswered = alerts.unansweredQuotes.length
-        const stuck = alerts.stuckProcessingRequests?.length ?? 0
+        const stuck = isAdmin ? (alerts.stuckProcessingRequests?.length ?? 0) : 0
         const total = unanswered + stuck
 
         setAlertCount(total)
@@ -49,7 +49,7 @@ export function AppNotificationsBanner() {
     return () => {
       cancelled = true
     }
-  }, [canViewDashboard])
+  }, [canViewDashboard, isAdmin])
 
   if (!canViewDashboard || alertCount === 0) {
     return null

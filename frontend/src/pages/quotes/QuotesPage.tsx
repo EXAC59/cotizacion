@@ -200,13 +200,11 @@ export function QuotesPage() {
             onChange={(e) => setStatusFilter(e.target.value as QuoteStatus | '')}
           >
             <option value="">Todos los estatus</option>
-            {QUOTE_WORKFLOW_ORDER.filter((status) => status !== 'solicitud_cotizaciones').map(
-              (status) => (
-                <option key={status} value={status}>
-                  {QUOTE_STATUS_LABELS[status]}
-                </option>
-              ),
-            )}
+            {QUOTE_WORKFLOW_ORDER.map((status) => (
+              <option key={status} value={status}>
+                {QUOTE_STATUS_LABELS[status]}
+              </option>
+            ))}
           </Select>
         </div>
         <div>

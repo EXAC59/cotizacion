@@ -13,6 +13,7 @@ use App\Services\DoclingMarkdownExtractor;
 use App\Services\LecturaArchivoPreparer;
 use App\Services\LecturaInterpretacionService;
 use App\Services\N8nClient;
+use App\Services\Quotes\SolicitudToQuoteService;
 use App\Services\SolicitudLecturaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -29,6 +30,7 @@ class SolicitudLecturaController extends Controller
         private readonly LecturaInterpretacionService $interpretacion,
         private readonly SolicitudLecturaService $lecturaService,
         private readonly LecturaArchivoPreparer $archivoPreparer,
+        private readonly SolicitudToQuoteService $solicitudToQuote,
     ) {}
 
     /**
@@ -228,10 +230,12 @@ class SolicitudLecturaController extends Controller
             }
 
             $updated = $this->lecturaService->completarReprocesamiento($id, $lineas, self::INTERPRETACION_VIA);
+            $ensured = $this->ensureQuotePayload($updated, request()->user());
 
             return response()->json([
                 'message' => 'Solicitud reprocesada correctamente',
                 ...$this->lecturaService->toApiArray($updated),
+                ...$ensured,
             ]);
         } catch (DoclingConversionException $e) {
             $this->lecturaService->fallarReprocesamiento($id, $e->userMessage(), self::INTERPRETACION_VIA);
@@ -283,10 +287,12 @@ class SolicitudLecturaController extends Controller
         }
 
         $updated = $this->lecturaService->completarReprocesamiento($id, $lineas, self::INTERPRETACION_VIA);
+        $ensured = $this->ensureQuotePayload($updated, request()->user());
 
         return response()->json([
             'message' => 'Solicitud reprocesada correctamente',
             ...$this->lecturaService->toApiArray($updated),
+            ...$ensured,
         ]);
     }
 
@@ -467,6 +473,8 @@ class SolicitudLecturaController extends Controller
             ]);
         }
 
+        $ensured = $this->ensureQuotePayload($quoteRequest, request()->user());
+
         return response()->json([
             'message' => 'Lectura completada',
             'modo' => 'docling',
@@ -478,7 +486,26 @@ class SolicitudLecturaController extends Controller
             'markdown' => $markdown,
             'lineas' => $lineas,
             'lineas_count' => count($lineas),
+            ...$ensured,
             'solicitud' => $this->lecturaService->toApiArray($quoteRequest),
         ]);
+    }
+
+    /**
+     * @return array{quote_id: string|null, quote_folio: string|null, quote_created: bool, quote_skipped_reason: string|null}
+     */
+    private function ensureQuotePayload(QuoteRequest $quoteRequest, mixed $actor): array
+    {
+        $ensured = $this->solicitudToQuote->ensureQuoteForRequest(
+            $quoteRequest->fresh(['lines', 'client']),
+            $actor instanceof \App\Models\User ? $actor : null,
+        );
+
+        return [
+            'quote_id' => $ensured['quote']?->id,
+            'quote_folio' => $ensured['quote']?->folio,
+            'quote_created' => $ensured['created'],
+            'quote_skipped_reason' => $ensured['skippedReason'],
+        ];
     }
 }

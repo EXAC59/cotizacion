@@ -34,7 +34,7 @@ export const DASHBOARD_SECTIONS: Record<string, NotificationFocusTarget> = {
   },
   'solicitudes-sin-revisar': {
     elementId: 'solicitudes-sin-revisar',
-    label: 'Solicitudes sin revisar',
+    label: 'Solicitudes',
   },
   'lecturas-atascadas': {
     elementId: 'lecturas-atascadas',

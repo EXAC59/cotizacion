@@ -82,6 +82,8 @@ class DashboardAnalyticsService
             'quotesByStatus' => $this->quotesByStatus($period),
             'quotesSent' => $sentUnsent['sent'],
             'quotesUnsent' => $sentUnsent['unsent'],
+            'sentQuotes' => $this->quotesBySentFlag($viewer, true),
+            'unsentQuotes' => $this->quotesBySentFlag($viewer, false),
             'recentQuotes' => $this->recentQuotes($viewer),
             'pendingRequests' => $this->pendingRequestsCount(),
             'unansweredQuoteDays' => AppSetting::current()->resolvedUnansweredQuoteDays(),
@@ -289,6 +291,48 @@ class DashboardAnalyticsService
     }
 
     /**
+     * Listado operativo para el selector Enviadas / No enviadas del dashboard.
+     * Criterio: solo sent_at (igual que los conteos).
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function quotesBySentFlag(?User $viewer, bool $sent, int $limit = 20): array
+    {
+        $query = $this->constrainQuoteMaker(Quote::query()->with(['client', 'creator']), $viewer);
+
+        if ($sent) {
+            $query->whereNotNull('sent_at')->orderByDesc('sent_at');
+        } else {
+            $query->whereNull('sent_at')->orderByDesc('updated_at');
+        }
+
+        return $query
+            ->limit($limit)
+            ->get()
+            ->map(fn (Quote $quote) => $this->mapQuoteSummary($quote))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function mapQuoteSummary(Quote $quote): array
+    {
+        return [
+            'id' => $quote->id,
+            'folio' => $quote->folio,
+            'clientName' => $quote->client?->company ?? '',
+            'createdByName' => $quote->creator?->name,
+            'status' => $quote->status,
+            'total' => (float) $quote->total,
+            'taxPercent' => (float) $quote->tax_percent,
+            'createdAt' => $quote->created_at?->toIso8601String(),
+            'sentAt' => $quote->sent_at?->toIso8601String(),
+        ];
+    }
+
+    /**
      * Cotizaciones que siguen en elaboración y nunca llegaron a Lista / Terminada.
      *
      * @return list<array{id: string, folio: string, clientName: string, createdByName: string|null, updatedAt: string}>
@@ -313,37 +357,13 @@ class DashboardAnalyticsService
     }
 
     /**
-     * Solicitudes sin cotización vinculada y sin revisión externa (creadas por ventas).
-     * Ventas: solo las creadas por su cuenta.
+     * @deprecated La revisión externa de solicitudes se retiró; siempre vacío.
      *
      * @return list<array{id: string, fileName: string|null, clientName: string, createdAt: string}>
      */
     private function pendingReviewRequests(?User $viewer = null): array
     {
-        $query = QuoteRequest::query()
-            ->with('client')
-            ->whereDoesntHave('quotes')
-            ->whereNotIn('status', ['procesando', 'error'])
-            ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
-            ->where(function ($inner) {
-                $inner->whereNull('reviewed_by')
-                    ->orWhereColumn('reviewed_by', 'created_by');
-            });
-
-        $this->constrainRequestMaker($query, $viewer);
-
-        return $query
-            ->orderByDesc('created_at')
-            ->limit(20)
-            ->get()
-            ->map(fn (QuoteRequest $request) => [
-                'id' => $request->id,
-                'fileName' => $request->file_name,
-                'clientName' => $request->client?->company ?? '',
-                'createdAt' => $request->created_at?->toIso8601String() ?? '',
-            ])
-            ->values()
-            ->all();
+        return [];
     }
 
     /**
@@ -737,16 +757,7 @@ class DashboardAnalyticsService
             ->orderByDesc('created_at')
             ->limit(5)
             ->get()
-            ->map(fn (Quote $quote) => [
-                'id' => $quote->id,
-                'folio' => $quote->folio,
-                'clientName' => $quote->client?->company ?? '',
-                'createdByName' => $quote->creator?->name,
-                'status' => $quote->status,
-                'total' => (float) $quote->total,
-                'taxPercent' => (float) $quote->tax_percent,
-                'createdAt' => $quote->created_at?->toIso8601String(),
-            ])
+            ->map(fn (Quote $quote) => $this->mapQuoteSummary($quote))
             ->values()
             ->all();
     }

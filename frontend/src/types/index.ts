@@ -128,6 +128,9 @@ export interface QuoteRequest {
   pricingUploadedAt?: string
   /** Usuarios involucrados en la solicitud (1., 2., …) */
   involucrado?: string
+  /** Cotización vinculada (si ya se creó al guardar) */
+  quoteId?: string
+  quoteFolio?: string
 }
 
 export interface RequestLine {
@@ -457,6 +460,7 @@ export interface DashboardQuoteSummary {
   total: number
   taxPercent: number
   createdAt?: string
+  sentAt?: string | null
 }
 
 export interface AnalyticsPeriod {
@@ -477,6 +481,8 @@ export interface DashboardAnalytics {
   unansweredQuoteDays?: number
   quotesSent?: number
   quotesUnsent?: number
+  sentQuotes?: DashboardQuoteSummary[]
+  unsentQuotes?: DashboardQuoteSummary[]
   quotesByStatus: Record<QuoteStatus, number>
   recentQuotes: DashboardQuoteSummary[]
   topRequestedProducts: ProductRank[]

@@ -37,8 +37,8 @@ return [
     /** Al guardar cambios sobre enviada/aceptada/facturada → pasa a modificación (no al solo abrir). */
     'modificacion_from_statuses' => ['enviada', 'aceptada', 'facturada'],
 
-    /** Al abrir/bloquear una cotización en estos estatus → vuelve a elaboración. */
-    'elaboracion_from_statuses' => ['solicitud_cotizaciones', 'pendiente_envio'],
+    /** Abrir o bloquear una cotización nunca cambia el estatus elegido al guardar. */
+    'elaboracion_from_statuses' => [],
 
     /** Migración de estatus anteriores al flujo comercial actual. */
     'legacy_status_map' => [

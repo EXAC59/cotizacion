@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
   Download,
@@ -9,7 +9,6 @@ import {
   Save,
   X,
 } from 'lucide-react'
-import { AssignToSalesPanel } from '@/components/sales/AssignToSalesPanel'
 import { ClientSearchSelect } from '@/components/clients/ClientSearchSelect'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -23,10 +22,9 @@ import {
   waitModalBusyPaint,
 } from '@/components/ui/LoadingState'
 import { PageHeader } from '@/components/ui/PageHeader'
-import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
+import { QuoteStatusBadge, QUOTE_STATUS_STEP_TONE } from '@/components/ui/QuoteStatusBadge'
 import { QuoteLinesEditor } from '@/components/quotes/QuoteLinesEditor'
 import { QuoteTotalsPanel } from '@/components/quotes/QuoteTotals'
-import { useToast } from '@/context/ToastProvider'
 import { useData } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
@@ -41,7 +39,6 @@ import {
   groupsFromApiOrFallback,
   type WarehousesByWholesalerGroup,
 } from '@/components/settings/PreferredWarehousesByWholesaler'
-import { assignQuoteToCompras } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { formatDateTime } from '@/lib/format'
 import {
@@ -96,15 +93,12 @@ function QuoteFormEditor({
 }) {
   const isNew = !quoteId || quoteId === 'nueva'
   const navigate = useNavigate()
+  const location = useLocation()
   const { getQuote, saveQuote } = useData()
-  const { toast } = useToast()
   const { user } = useAuth()
   const { can, canCreateQuotes, canEditMargins, canApproveQuotes, canSendQuotes, canConsultInventory } =
     usePermission()
   const canCreate = canCreateQuotes()
-  const canAssignTeam = user?.role === 'ventas' || user?.role === 'administrador'
-  const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
-  const [assignTarget, setAssignTarget] = useState<'compras' | null>(null)
   const canEdit = can('cotizaciones', 'edit')
   const canApprove = canApproveQuotes()
   const canSendEmail = canSendQuotes()
@@ -118,8 +112,6 @@ function QuoteFormEditor({
     () => localExisting?.createdByName ?? '',
   )
   const viewingOthers = ownedByViewer === false
-  const showAssignPanel =
-    canAssignTeam && !viewingOthers && (canCreate || canEdit)
   const needsEditLock =
     !isNew &&
     isPersistedQuoteId(quoteId ?? '') &&
@@ -140,11 +132,12 @@ function QuoteFormEditor({
   const [clientId, setClientId] = useState(() => localExisting?.clientId ?? clientIdParam ?? '')
   const [status, setStatus] = useState<QuoteStatus>(() => {
     if (localExisting?.status) return localExisting.status
-    // Desde solicitud (incl. “ir directo a cotización”) → En elaboración.
+    // Desde solicitud → Solicitud de cotizaciones (no En elaboración).
+    if (requestId) return 'solicitud_cotizaciones'
     return 'en_elaboracion'
   })
   const [savedStatus, setSavedStatus] = useState<QuoteStatus>(
-    () => localExisting?.status ?? 'en_elaboracion',
+    () => localExisting?.status ?? (requestId ? 'solicitud_cotizaciones' : 'en_elaboracion'),
   )
   const [globalMargin, setGlobalMargin] = useState(
     () => localExisting?.globalMarginPercent ?? DEFAULT_MARGIN,
@@ -176,6 +169,7 @@ function QuoteFormEditor({
   const [actionLoading, setActionLoading] = useState<'pdf' | 'email' | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveModalOpen, setSaveModalOpen] = useState(false)
+  const [sendReadyModalOpen, setSendReadyModalOpen] = useState(false)
   const [emailModalOpen, setEmailModalOpen] = useState(false)
   const [emailTo, setEmailTo] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
@@ -188,6 +182,13 @@ function QuoteFormEditor({
     () => localExisting?.statusHistory ?? [],
   )
   const [allowLeave, setAllowLeave] = useState(false)
+
+  useEffect(() => {
+    const showSendReady = (location.state as { showSendReady?: boolean } | null)?.showSendReady
+    if (!showSendReady) return
+    setSendReadyModalOpen(true)
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
+  }, [location.pathname, location.search, location.state, navigate])
 
   const handleLockAcquired = (result: {
     status?: QuoteStatus
@@ -210,11 +211,12 @@ function QuoteFormEditor({
     handleLockAcquired,
   )
 
-  // Nueva cotización desde solicitud: asegurar En elaboración (no modificación).
+  // Nueva cotización manual desde solicitud (sin quote aún): no forzar modificación.
+  // Si ya viene como solicitud_cotizaciones (auto-creada), se respeta.
   useEffect(() => {
     if (!isNew || !requestId) return
-    if (status === 'modificacion' || status === 'solicitud_cotizaciones') {
-      setStatus('en_elaboracion')
+    if (status === 'modificacion') {
+      setStatus('solicitud_cotizaciones')
     }
   }, [isNew, requestId, status])
 
@@ -411,7 +413,8 @@ function QuoteFormEditor({
   // aceptada/facturada quedan fuera del stepper (1–5): se muestran ya completas.
   const workflowStep = rawWorkflowStep === -1 ? QUOTE_WORKFLOW_ORDER.length : rawWorkflowStep
   const canUseQuoteActions = lines.length > 0 && Boolean(clientId)
-  const canEmail = canSendEmail && canUseQuoteActions && !viewingOthers
+  const isListaTerminada = savedStatus === 'pendiente_envio'
+  const canEmail = canSendEmail && canUseQuoteActions && !viewingOthers && isListaTerminada
   const isBusy = saving || actionLoading !== null
 
   const buildDraftQuote = (): Quote | null => {
@@ -522,43 +525,10 @@ function QuoteFormEditor({
     return id != null
   }
 
-  const assignAfterSaveIfNeeded = async (savedId: string): Promise<boolean> => {
-    if (!canAssignTeam || assignRecipientId == null || assignTarget == null) return false
-    if (!isPersistedQuoteId(savedId)) return false
-    if (assignTarget !== 'compras') return false
-
-    try {
-      const result = await assignQuoteToCompras(savedId, assignRecipientId)
-      toast(
-        result.previousFolio && result.folio
-          ? `Guardada y asignada a compras. Folio ${result.previousFolio} → ${result.folio}`
-          : 'Guardada y asignada a compras.',
-      )
-      setAllowLeave(true)
-      navigate(`/cotizaciones/${result.id}`, { replace: true })
-      const refreshed = await getQuoteById(result.id)
-      setFolio(refreshed.folio)
-      setStatus(refreshed.status)
-      setSavedStatus(refreshed.status)
-      setViewerCreatedByName(refreshed.createdByName ?? '')
-      setOwnedByViewer(refreshed.ownedByViewer ?? true)
-      saveQuote(refreshed)
-      setAssignRecipientId(null)
-      setAssignTarget(null)
-      setAllowLeave(false)
-      return true
-    } catch (err: unknown) {
-      setSaveError(
-        err instanceof Error
-          ? err.message
-          : 'Se guardó, pero no se pudo asignar a compras.',
-      )
-      toast('Se guardó, pero falló la asignación a compras.')
-      return false
-    }
-  }
-
-  const confirmSaveWithStatus = async (targetStatus: QuoteStatus) => {
+  const confirmSaveWithStatus = async (
+    targetStatus: QuoteStatus,
+    options?: { skipSendHint?: boolean },
+  ) => {
     const draft = buildDraftQuote()
     if (!draft) return
 
@@ -569,17 +539,20 @@ function QuoteFormEditor({
       status: targetStatus,
       ...(serverQuoteId && isPersistedQuoteId(serverQuoteId) ? { id: serverQuoteId } : {}),
     }
-    // No navegar aún: si hay vendedor, asignar en el mismo flujo Guardar.
     const savedId = await saveDraft(payload, false)
     if (!savedId) return
 
-    const assigned = await assignAfterSaveIfNeeded(savedId)
-    if (!assigned) {
-      setAllowLeave(true)
-      navigate(`/cotizaciones/${savedId}`, { replace: isNew })
-      setAllowLeave(false)
-    }
+    const showSendReady = targetStatus === 'pendiente_envio' && !options?.skipSendHint
+    setAllowLeave(true)
+    navigate(`/cotizaciones/${savedId}`, {
+      replace: isNew,
+      state: showSendReady ? { showSendReady: true } : undefined,
+    })
+    setAllowLeave(false)
     setSaveModalOpen(false)
+    if (showSendReady) {
+      setSendReadyModalOpen(true)
+    }
   }
 
   const openSaveModal = () => {
@@ -598,6 +571,11 @@ function QuoteFormEditor({
 
     if (isNew || savedStatus === 'en_elaboracion' || savedStatus === 'solicitud_cotizaciones') {
       setSaveModalOpen(true)
+      return
+    }
+
+    if (savedStatus === 'pendiente_envio') {
+      setSendReadyModalOpen(true)
       return
     }
 
@@ -651,13 +629,18 @@ function QuoteFormEditor({
         subject: emailSubject.trim() || undefined,
         message: emailMessage.trim() || undefined,
       })
+      const nextStatus = result.status ?? 'enviada'
+      const nextSentAt = result.sentAt ?? new Date().toISOString()
+      setStatus(nextStatus)
+      setSavedStatus(nextStatus)
+      setSentAt(nextSentAt)
       await waitMinBusyMs(busyStarted)
       setEmailModalOpen(false)
       setEmailFeedback(
         result.message ||
-          'Correo encolado. Se enviará en unos segundos si el worker de cola está activo.',
+          'Cotización marcada como enviada al cliente.',
       )
-      window.setTimeout(() => void refreshQuoteAfterSend(quoteIdForSend), 2500)
+      void refreshQuoteAfterSend(quoteIdForSend)
     } catch (err: unknown) {
       setEmailFeedback(
         err instanceof Error ? err.message : 'No se pudo encolar el envío por correo.',
@@ -777,22 +760,35 @@ function QuoteFormEditor({
             <Button
               variant="secondary"
               size="sm"
+              className={isListaTerminada ? 'ring-2 ring-yellow-400 ring-offset-1' : ''}
               disabled={!canEmail || isBusy}
               title={
                 !canSendEmail
                   ? 'No tienes permiso para enviar cotizaciones'
-                  : !clientId
-                    ? 'Selecciona un cliente'
-                    : lines.length === 0
-                      ? 'Agrega partidas para enviar'
-                      : 'Enviar cotización por correo'
+                  : !isListaTerminada
+                    ? 'Disponible cuando la cotización esté en Lista / Terminada'
+                    : !clientId
+                      ? 'Selecciona un cliente'
+                      : lines.length === 0
+                        ? 'Agrega partidas para enviar'
+                        : 'Enviar cotización por correo'
               }
               onClick={openEmailModal}
             >
               <Mail className="h-4 w-4" />
               Email
             </Button>
-            <Button variant="secondary" size="sm" disabled title="Próximamente">
+            <Button
+              variant="secondary"
+              size="sm"
+              className={isListaTerminada ? 'ring-2 ring-yellow-400 ring-offset-1' : ''}
+              disabled
+              title={
+                isListaTerminada
+                  ? 'Próximamente — envío por WhatsApp'
+                  : 'Disponible cuando la cotización esté en Lista / Terminada'
+              }
+            >
               <MessageCircle className="h-4 w-4" />
               WhatsApp
             </Button>
@@ -804,31 +800,17 @@ function QuoteFormEditor({
         }
       />
 
+      {isListaTerminada && !viewingOthers && (
+        <p className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-950">
+          Esta cotización está en <strong>Lista / Terminada</strong>. Para enviarla al cliente usa
+          los botones <strong>Email</strong> o <strong>WhatsApp</strong> (arriba a la derecha).
+        </p>
+      )}
+
       {viewingOthers && (
         <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
           Vista de otra persona ({viewerCreatedByName.trim() || 'equipo'}). Puedes consultarla; no
           se guarda ni se envía desde ventas.
-        </p>
-      )}
-
-      {showAssignPanel && (
-        <div className="mb-4">
-          <AssignToSalesPanel
-            entityLabel="cotización"
-            disabled={saving || isBusy}
-            saveWithParent
-            onRecipientChange={(id, target) => {
-              setAssignRecipientId(id)
-              setAssignTarget(target)
-            }}
-          />
-        </div>
-      )}
-
-      {canAssignTeam && viewingOthers && (
-        <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-          Vista de otra persona ({viewerCreatedByName.trim() || 'equipo'}). Solo el responsable
-          actual puede enviarla a compras.
         </p>
       )}
 
@@ -882,9 +864,6 @@ function QuoteFormEditor({
                   <p className="mt-2 text-sm text-slate-600">
                     En elaboración no se marca como lista para ventas. Terminada sí queda lista
                     para el siguiente paso.
-                    {showAssignPanel && assignRecipientId != null && assignTarget
-                      ? ` Al confirmar, también se enviará a ${assignTarget}.`
-                      : ''}
                   </p>
                 </div>
 
@@ -926,9 +905,85 @@ function QuoteFormEditor({
         </div>
       )}
 
+      {sendReadyModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/50 px-4 pb-4 pt-[12vh]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="send-ready-title"
+          onClick={() => !saving && setSendReadyModalOpen(false)}
+        >
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {saving ? (
+              <ModalBusyPanel label="Guardando cotización…" />
+            ) : (
+              <>
+                <div className="mb-5">
+                  <h3 id="send-ready-title" className="text-lg font-bold text-slate-900">
+                    Cotización lista para enviar
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Ya está en <strong>Lista / Terminada</strong>. El envío se hace con los botones{' '}
+                    <strong>Email</strong> y <strong>WhatsApp</strong> de arriba.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <Button
+                    size="sm"
+                    className="w-full justify-center"
+                    disabled={!canEmail || isBusy}
+                    onClick={() => {
+                      setSendReadyModalOpen(false)
+                      openEmailModal()
+                    }}
+                  >
+                    <Mail className="h-4 w-4" />
+                    Enviar por Email
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full justify-center"
+                    disabled
+                    title="Próximamente"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    WhatsApp (próximamente)
+                  </Button>
+                  {editDirty && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full justify-center"
+                      disabled={!canSaveQuote || isBusy}
+                      onClick={() => void confirmSaveWithStatus('pendiente_envio', { skipSendHint: true })}
+                    >
+                      <Save className="h-4 w-4" />
+                      Guardar cambios
+                    </Button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="mt-5 text-sm text-slate-500 hover:text-slate-700"
+                  onClick={() => setSendReadyModalOpen(false)}
+                >
+                  Cerrar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {emailModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 px-4 pb-4 pt-4 sm:pt-[3vh]"
           role="dialog"
           aria-modal="true"
           aria-labelledby="email-quote-title"
@@ -1095,9 +1150,9 @@ function QuoteFormEditor({
                         key={stepStatus}
                         className={`rounded-lg border px-2.5 py-1.5 text-xs ${
                           active
-                            ? 'border-indigo-400 bg-indigo-50 font-semibold text-indigo-900'
+                            ? QUOTE_STATUS_STEP_TONE[stepStatus].active
                             : done
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                              ? QUOTE_STATUS_STEP_TONE[stepStatus].done
                               : 'border-slate-200 bg-slate-50 text-slate-500'
                         }`}
                       >

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, FileText, RefreshCw, Save, X } from 'lucide-react'
-import { AssignToSalesPanel } from '@/components/sales/AssignToSalesPanel'
+import { createPortal } from 'react-dom'
+import { Link, useParams } from 'react-router-dom'
+import { AlertCircle, ArrowLeft, FileText, RefreshCw, Save, X } from 'lucide-react'
 import {
   RequestLinesEditor,
   type RequestLinesEditorHandle,
@@ -16,7 +16,6 @@ import { useAuth } from '@/hooks/useAuth'
 import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { useToast } from '@/context/ToastProvider'
-import { assignSolicitudToCompras } from '@/lib/assign-to-sales-api'
 import { getCommercialSettings } from '@/lib/pricing-api'
 import { persistQuote } from '@/lib/quotes-api'
 import { buildLinesFromRequest } from '@/lib/quote-builder'
@@ -32,6 +31,7 @@ import {
   type WarehousesByWholesalerGroup,
 } from '@/components/settings/PreferredWarehousesByWholesaler'
 import { formatCurrency, formatDateTime } from '@/lib/format'
+import { getRouterBasename } from '@/lib/app-paths'
 import { ApiRequestError } from '@/lib/api-response'
 import {
   formatSolicitudValidationErrors,
@@ -46,7 +46,6 @@ import {
   type SolicitudCotizacionApi,
 } from '@/lib/solicitudes-api'
 import {
-  REQUEST_STATUS_LABELS,
   type Quote,
   type QuoteRequest,
   type RequestLine,
@@ -55,15 +54,11 @@ import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
 
 export function RequestDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const { user } = useAuth()
   const { saveQuote } = useData()
   const { canConsultInventory } = usePermission()
   const { toast } = useToast()
   const canUseComparator = canConsultInventory()
-  const canAssignTeam = user?.role === 'ventas' || user?.role === 'administrador'
-  const [assignRecipientId, setAssignRecipientId] = useState<number | null>(null)
-  const [assignTarget, setAssignTarget] = useState<'compras' | null>(null)
   const [request, setRequest] = useState<QuoteRequest | null>(null)
   const [cotizaciones, setCotizaciones] = useState<SolicitudCotizacionApi[]>([])
   const [editLines, setEditLines] = useState<RequestLine[]>([])
@@ -87,6 +82,8 @@ export function RequestDetailPage() {
   const [warehouseGroups, setWarehouseGroups] = useState<WarehousesByWholesalerGroup[]>(() =>
     groupsFromApiOrFallback(),
   )
+  const [sendConfirmOpen, setSendConfirmOpen] = useState(false)
+  const [sendingToQuotes, setSendingToQuotes] = useState(false)
 
   const loadRequest = async (signal?: AbortSignal) => {
     if (!id) return
@@ -97,6 +94,8 @@ export function RequestDetailPage() {
       if (api.status === 'procesando') {
         api = await pollSolicitud(id, { signal })
       }
+      if (signal?.aborted) return
+
       const mapped = mapSolicitudApiToQuoteRequest(api)
       setRequest(mapped)
       setEditLines(mapped.lines ?? [])
@@ -113,7 +112,7 @@ export function RequestDetailPage() {
       setError(err instanceof Error ? err.message : 'No se pudo cargar la solicitud.')
       setRequest(null)
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }
 
@@ -195,30 +194,8 @@ export function RequestDetailPage() {
     lastSaveErrorRef.current = null
     try {
       const api = await updateSolicitudLineas(id, linesToSave.map(requestLineToPayload))
-      let mapped = mapSolicitudApiToQuoteRequest(api)
-
-      if (canAssignTeam && assignRecipientId != null && assignTarget === 'compras') {
-        try {
-          const result = await assignSolicitudToCompras(id, assignRecipientId)
-          toast(
-            result.previousFolio && result.folio
-              ? `Guardada y asignada a compras. Folio ${result.previousFolio} → ${result.folio}`
-              : 'Guardado y enviado a compras.',
-          )
-          const refreshed = await getSolicitud(id)
-          mapped = mapSolicitudApiToQuoteRequest(refreshed)
-          setAssignRecipientId(null)
-          setAssignTarget(null)
-        } catch (assignErr: unknown) {
-          const assignMsg =
-            assignErr instanceof Error
-              ? assignErr.message
-              : 'Se guardó, pero no se pudo asignar a compras.'
-          toast(`Guardado. ${assignMsg}`, 'warning')
-        }
-      } else {
-        toast('Líneas guardadas')
-      }
+      const mapped = mapSolicitudApiToQuoteRequest(api)
+      toast('Líneas guardadas')
 
       setRequest(mapped)
       const nextLines = mapped.lines?.length
@@ -250,7 +227,7 @@ export function RequestDetailPage() {
                   {
                     id: api.quote_id!,
                     folio: api.quote_folio ?? api.quote_id!,
-                    status: 'en_elaboracion',
+                    status: 'solicitud_cotizaciones',
                     total: 0,
                     createdAt: new Date().toISOString(),
                     clientName: mapped.clientName ?? '',
@@ -259,7 +236,6 @@ export function RequestDetailPage() {
                 ],
           )
         }
-        navigate(`/cotizaciones/${api.quote_id}`)
       }
 
       return true
@@ -317,13 +293,42 @@ export function RequestDetailPage() {
 
   const hasLinkedQuotes = cotizaciones.length > 0
   const canEditLines =
-    !hasLinkedQuotes &&
-    request?.status === 'procesada' &&
-    (request.lines?.length ?? 0) > 0
+    request?.status === 'procesada' && (request.lines?.length ?? 0) > 0
+  const linkedQuoteId = cotizaciones[0]?.id ?? request?.quoteId
+  const linkedQuoteFolio = cotizaciones[0]?.folio ?? request?.quoteFolio
+  const canSendToQuotes =
+    Boolean(linkedQuoteId) &&
+    (request?.status === 'procesada' || request?.status === 'precios_listos')
   const canCreateQuote =
     !hasLinkedQuotes &&
     (request?.status === 'procesada' || request?.status === 'precios_listos') &&
     (request.lines?.length ?? 0) > 0
+
+  const handleSendToQuotes = async () => {
+    if (!id || !linkedQuoteId) return
+    setSendingToQuotes(true)
+    setError(null)
+    try {
+      if (linesDirty) {
+        const ok = await handleSaveLines()
+        if (!ok) {
+          setSendConfirmOpen(false)
+          return
+        }
+      }
+      setSendConfirmOpen(false)
+      toast(
+        linkedQuoteFolio
+          ? `Cotización ${linkedQuoteFolio} abierta en Cotizaciones`
+          : 'Abierta en Cotizaciones',
+        'success',
+      )
+      const base = getRouterBasename().replace(/\/$/, '')
+      window.location.assign(`${base}/cotizaciones/${encodeURIComponent(linkedQuoteId)}`)
+    } finally {
+      setSendingToQuotes(false)
+    }
+  }
 
   const handleCreateQuote = async () => {
     if (!request || !request.clientId) {
@@ -345,7 +350,7 @@ export function RequestDetailPage() {
         clientId: request.clientId,
         clientName: request.clientName ?? '',
         requestId: request.id,
-        status: 'en_elaboracion',
+        status: 'solicitud_cotizaciones',
         globalMarginPercent: settings.defaultMarginPercent,
         taxPercent: settings.taxPercent,
         notes: '',
@@ -365,7 +370,7 @@ export function RequestDetailPage() {
         // La cotización ya quedó creada; una recarga recuperará los datos vinculados.
       }
       setLinesDirty(false)
-      toast('Cotización creada en En elaboración.')
+      toast('Cotización creada en Compras.')
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : 'No se pudo crear la cotización desde la solicitud.',
@@ -401,15 +406,6 @@ export function RequestDetailPage() {
     )
   }
 
-  const statusVariant =
-    request.status === 'precios_listos' || request.status === 'procesada'
-      ? 'success'
-      : request.status === 'error'
-        ? 'danger'
-        : request.status === 'procesando'
-          ? 'brand'
-          : 'warning'
-
   return (
     <div>
       {unsavedDialog}
@@ -424,12 +420,12 @@ export function RequestDetailPage() {
                 Volver
               </Button>
             </Link>
-            {canEditLines && (linesDirty || (assignRecipientId != null && assignTarget != null)) && (
+            {canEditLines && linesDirty && (
               <>
                 <Button
                   size="sm"
                   onClick={() => linesEditorRef.current?.openSaveModal()}
-                  disabled={savingLines || hasLinkedQuotes}
+                  disabled={savingLines}
                 >
                   {savingLines ? <InlineBusy size="sm" /> : <Save className="h-4 w-4" />}
                   Guardar cambios
@@ -457,28 +453,30 @@ export function RequestDetailPage() {
                 Reintentar lectura
               </Button>
             )}
-            {hasLinkedQuotes ? (
-              <Link to={`/cotizaciones/${cotizaciones[0].id}`}>
-                <Button size="sm">
+            {canSendToQuotes && (
+              <Button
+                size="sm"
+                onClick={() => setSendConfirmOpen(true)}
+                disabled={savingLines || sendingToQuotes}
+                title="Enviar al apartado de Cotizaciones"
+              >
+                {sendingToQuotes ? <InlineBusy size="sm" /> : <FileText className="h-4 w-4" />}
+                Enviar a Cotizaciones
+              </Button>
+            )}
+            {canCreateQuote && (
+              <Button
+                size="sm"
+                onClick={() => void handleCreateQuote()}
+                disabled={creatingQuote}
+              >
+                {creatingQuote ? (
+                  <InlineBusy size="sm" />
+                ) : (
                   <FileText className="h-4 w-4" />
-                  Abrir cotización
-                </Button>
-              </Link>
-            ) : (
-              canCreateQuote && (
-                <Button
-                  size="sm"
-                  onClick={() => void handleCreateQuote()}
-                  disabled={creatingQuote}
-                >
-                  {creatingQuote ? (
-                    <InlineBusy size="sm" />
-                  ) : (
-                    <FileText className="h-4 w-4" />
-                  )}
-                  {creatingQuote ? 'Creando cotización…' : 'Crear cotización'}
-                </Button>
-              )
+                )}
+                {creatingQuote ? 'Creando cotización…' : 'Crear cotización'}
+              </Button>
             )}
           </>
         }
@@ -497,23 +495,8 @@ export function RequestDetailPage() {
         </div>
       )}
 
-      {canAssignTeam && id && request && (
-        <div className="mb-4">
-          <AssignToSalesPanel
-            entityLabel="solicitud"
-            disabled={savingLines || loading || hasLinkedQuotes}
-            saveWithParent
-            onRecipientChange={(id, target) => {
-              setAssignRecipientId(id)
-              setAssignTarget(target)
-            }}
-          />
-        </div>
-      )}
-
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge variant="brand">{request.source.toUpperCase()}</Badge>
-        <Badge variant={statusVariant}>{REQUEST_STATUS_LABELS[request.status]}</Badge>
         {request.clientName && <Badge variant="muted">{request.clientName}</Badge>}
         {request.createdByName && <Badge variant="muted">{request.createdByName}</Badge>}
         {hasLinkedQuotes && <Badge variant="success">Con cotización</Badge>}
@@ -538,8 +521,8 @@ export function RequestDetailPage() {
       {hasLinkedQuotes && (
         <Card className="mb-6 border-slate-200 bg-slate-50/70">
           <CardBody className="text-sm text-slate-700">
-            Esta solicitud ya tiene cotización vinculada y no se puede editar aquí. Continúa en
-            Cotizaciones; cualquier ajuste de partidas o precios se hace allá.
+            Puedes editar las partidas aquí. Cuando estén listas, pulsa{' '}
+            <strong>Enviar a Cotizaciones</strong> para continuar precios y márgenes allá.
           </CardBody>
         </Card>
       )}
@@ -547,8 +530,8 @@ export function RequestDetailPage() {
       {request.status === 'procesada' && canEditLines && !linesDirty && (
         <Card className="mb-6 border-amber-200 bg-amber-50/50">
           <CardBody className="text-sm text-amber-900">
-            Revisa las líneas de la solicitud detectada. Haz clic en cualquier celda de la tabla para
-            corregir cantidades, SKU o descripción y luego pulsa <strong>Guardar cambios</strong>.
+            Revisa las líneas detectadas. Haz clic en cualquier celda para corregir cantidades, SKU o
+            descripción y luego pulsa <strong>Guardar cambios</strong>.
           </CardBody>
         </Card>
       )}
@@ -556,7 +539,7 @@ export function RequestDetailPage() {
       {request.status === 'procesada' && canEditLines && linesDirty && (
         <Card className="mb-6 border-indigo-200 bg-indigo-50/40">
           <CardBody className="text-sm text-indigo-900">
-            Tienes cambios sin guardar en las líneas. Guarda antes de crear la cotización.
+            Tienes cambios sin guardar. Guárdalos antes de enviar a Cotizaciones.
           </CardBody>
         </Card>
       )}
@@ -649,8 +632,6 @@ export function RequestDetailPage() {
                 showComparator={canUseComparator}
                 dirty={linesDirty}
                 saving={savingLines}
-                forceSaveAvailable={assignRecipientId != null && assignTarget != null}
-                assignHint={assignRecipientId != null && assignTarget != null}
                 onChange={handleLinesChange}
                 onSave={handleSaveLines}
                 onCancel={handleCancelLines}
@@ -697,6 +678,59 @@ export function RequestDetailPage() {
           </CardBody>
         </Card>
       )}
+
+      {sendConfirmOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="send-to-quotes-title"
+            onClick={() => !sendingToQuotes && setSendConfirmOpen(false)}
+          >
+            <div
+              className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+                  <AlertCircle className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h3 id="send-to-quotes-title" className="text-lg font-bold text-slate-900">
+                    ¿Enviar a Cotizaciones?
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Se abrirá{' '}
+                    <strong>{linkedQuoteFolio ?? 'la cotización vinculada'}</strong> en el apartado
+                    Cotizaciones para continuar con precios y márgenes.
+                    {linesDirty ? ' Primero se guardarán tus cambios en las partidas.' : null}
+                  </p>
+                  <div className="mt-5 flex flex-wrap justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={sendingToQuotes}
+                      onClick={() => setSendConfirmOpen(false)}
+                    >
+                      Seguir editando
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={sendingToQuotes}
+                      onClick={() => void handleSendToQuotes()}
+                    >
+                      {sendingToQuotes ? <InlineBusy size="sm" /> : null}
+                      Sí, enviar
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

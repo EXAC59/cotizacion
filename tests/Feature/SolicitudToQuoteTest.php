@@ -56,7 +56,7 @@ class SolicitudToQuoteTest extends AuthenticatedFeatureTestCase
         ]);
         $quote = Quote::query()->findOrFail($quoteId);
         $this->assertNull($quote->sent_at);
-        $this->assertNotSame('enviada', $quote->status);
+        $this->assertSame('solicitud_cotizaciones', $quote->status);
 
         $again = $this->putJson("/api/solicitudes/{$requestId}/lineas", [
             'lineas' => [
@@ -71,9 +71,11 @@ class SolicitudToQuoteTest extends AuthenticatedFeatureTestCase
             ],
         ]);
 
-        // Ya hay cotización: no se editan líneas de la solicitud.
-        $again->assertStatus(403);
+        // Con cotización vinculada se pueden editar líneas; se sincronizan a la cotización.
+        $again->assertOk();
         $this->assertSame(1, Quote::query()->where('request_id', $requestId)->count());
+        $this->assertSame(1, Quote::query()->findOrFail($quoteId)->lines()->count());
+        $this->assertSame(3.0, (float) Quote::query()->findOrFail($quoteId)->lines()->first()->quantity);
     }
 
     #[Test]

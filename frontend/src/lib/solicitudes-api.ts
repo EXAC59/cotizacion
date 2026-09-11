@@ -50,6 +50,8 @@ export type SolicitudApi = {
   created_at: string
   updated_at?: string
   lectura_at?: string | null
+  quote_id?: string | null
+  quote_folio?: string | null
   lineas: Array<{
     id: string
     quantity: number
@@ -128,6 +130,8 @@ export function mapSolicitudApiToQuoteRequest(
     interpretacionVia: api.interpretacion_via ?? undefined,
     errorMessage: api.error_message ?? undefined,
     involucrado: api.involucrado ?? undefined,
+    quoteId: api.quote_id ?? undefined,
+    quoteFolio: api.quote_folio ?? undefined,
   }
 }
 
@@ -292,6 +296,9 @@ export type LecturaDoclingResponse = {
   lineas: LecturaLineaApi[]
   lineas_count?: number
   solicitud?: SolicitudApi
+  quote_id?: string
+  quote_folio?: string
+  quote_created?: boolean
 }
 
 export type LecturaN8nResponse = {

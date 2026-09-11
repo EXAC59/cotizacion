@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Exceptions\SolicitudFormatoException;
-use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Models\QuoteRequestLine;
 use Illuminate\Support\Facades\DB;
@@ -51,10 +50,6 @@ class SolicitudLecturaService
         return DB::transaction(function () use ($requestId, $lineas) {
             $request = QuoteRequest::query()->findOrFail($requestId);
 
-            if (Quote::query()->where('request_id', $request->id)->exists()) {
-                abort(403, 'Esta solicitud ya tiene cotización. Ábrela en Cotizaciones para continuar.');
-            }
-
             if (! in_array($request->status, ['procesada', 'precios_listos'], true)) {
                 abort(422, 'Solo se pueden editar líneas de solicitudes procesadas.');
             }
@@ -100,58 +95,27 @@ class SolicitudLecturaService
     }
 
     /**
-     * Marca la solicitud como revisada por el usuario actual.
-     * Idempotente: el primer revisor distinto al creador gana; quien la creó no cuenta.
-     * Ventas nunca cuenta como revisor externo (solo compras/admin).
+     * @deprecated La revisión externa de solicitudes se retiró del producto.
      */
     public function marcarRevisada(QuoteRequest $request): void
     {
-        if ($this->hasExternalReview($request)) {
-            return;
-        }
-
-        $user = auth()->user();
-        if ($user === null) {
-            return;
-        }
-        $user->loadMissing('role');
-        if ($user->role_slug === 'ventas') {
-            return;
-        }
-
-        if ($request->created_by !== null && (int) $request->created_by === (int) $user->id) {
-            return;
-        }
-
-        $request->update(['reviewed_by' => $user->id, 'reviewed_at' => now()]);
-    }
-
-    public function hasExternalReview(QuoteRequest $request): bool
-    {
-        if ($request->reviewed_by === null) {
-            return false;
-        }
-
-        if ($request->created_by === null) {
-            return true;
-        }
-
-        return (int) $request->reviewed_by !== (int) $request->created_by;
+        // No-op.
     }
 
     /**
-     * ¿Falta revisión de alguien distinto al creador, y el dueño actual es ventas?
-     * (Las hechas por compras no cuentan como “pendiente de revisión”.)
+     * @deprecated La revisión externa de solicitudes se retiró del producto.
+     */
+    public function hasExternalReview(QuoteRequest $request): bool
+    {
+        return false;
+    }
+
+    /**
+     * @deprecated La revisión externa de solicitudes se retiró del producto.
      */
     public function needsExternalReview(QuoteRequest $request): bool
     {
-        if ($this->hasExternalReview($request)) {
-            return false;
-        }
-
-        $request->loadMissing('creator.role');
-
-        return $request->creator?->role_slug === 'ventas';
+        return false;
     }
 
     /**
@@ -175,8 +139,11 @@ class SolicitudLecturaService
      */
     public function toApiArray(QuoteRequest $request): array
     {
-        $request->loadMissing(['lines', 'client', 'creator.role', 'reviewer']);
-        $reviewer = $this->hasExternalReview($request) ? $request->reviewer : null;
+        $request->loadMissing(['lines', 'client', 'creator.role']);
+
+        $latestQuote = $request->relationLoaded('quotes')
+            ? $request->quotes->sortByDesc(fn ($quote) => $quote->created_at?->getTimestamp() ?? 0)->first()
+            : $request->quotes()->orderByDesc('created_at')->first(['id', 'folio', 'request_id', 'created_at']);
 
         return [
             'id' => $request->id,
@@ -189,10 +156,10 @@ class SolicitudLecturaService
                 && $request->creator->role_slug === 'ventas',
             'assigned_to_compras' => $request->creator !== null
                 && $request->creator->role_slug === 'gerente_compras',
-            'needs_external_review' => $this->needsExternalReview($request),
-            'reviewed_by' => $reviewer !== null ? (string) $request->reviewed_by : null,
-            'reviewed_by_name' => $reviewer?->name,
-            'reviewed_at' => $reviewer !== null ? $request->reviewed_at?->toIso8601String() : null,
+            'needs_external_review' => false,
+            'reviewed_by' => null,
+            'reviewed_by_name' => null,
+            'reviewed_at' => null,
             'source' => $request->source,
             'status' => $request->status,
             'workflow_status' => $request->workflow_status ?? 'en_elaboracion',
@@ -205,6 +172,8 @@ class SolicitudLecturaService
             'created_at' => $request->created_at?->toIso8601String(),
             'updated_at' => $request->updated_at?->toIso8601String(),
             'lectura_at' => $this->resolveLecturaAt($request),
+            'quote_id' => $latestQuote?->id,
+            'quote_folio' => $latestQuote?->folio,
             'lineas' => $request->lines->map(fn (QuoteRequestLine $line) => [
                 'id' => $line->id,
                 'quantity' => (float) $line->quantity,

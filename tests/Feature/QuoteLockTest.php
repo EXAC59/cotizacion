@@ -94,7 +94,7 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_auto_transitions_solicitud_cotizaciones_to_en_elaboracion_on_lock(): void
+    public function it_keeps_solicitud_cotizaciones_on_lock(): void
     {
         $client = Client::query()->create([
             'company' => 'Auto Status SA',
@@ -116,10 +116,10 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
         $this->postJson("/api/cotizaciones/{$quote->id}/bloqueo")
             ->assertOk()
             ->assertJsonPath('locked', true)
-            ->assertJsonPath('status', 'en_elaboracion')
-            ->assertJsonPath('statusChanged', true);
+            ->assertJsonPath('status', 'solicitud_cotizaciones')
+            ->assertJsonPath('statusChanged', false);
 
-        $this->assertSame('en_elaboracion', $quote->fresh()->status);
+        $this->assertSame('solicitud_cotizaciones', $quote->fresh()->status);
     }
 
     #[Test]
@@ -153,7 +153,7 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_auto_transitions_lista_terminada_to_en_elaboracion_on_lock(): void
+    public function it_keeps_lista_terminada_on_lock(): void
     {
         $client = Client::query()->create([
             'company' => 'Lista Elab SA',
@@ -175,10 +175,10 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
         $this->postJson("/api/cotizaciones/{$quote->id}/bloqueo")
             ->assertOk()
             ->assertJsonPath('locked', true)
-            ->assertJsonPath('status', 'en_elaboracion')
-            ->assertJsonPath('statusChanged', true);
+            ->assertJsonPath('status', 'pendiente_envio')
+            ->assertJsonPath('statusChanged', false);
 
-        $this->assertSame('en_elaboracion', $quote->fresh()->status);
+        $this->assertSame('pendiente_envio', $quote->fresh()->status);
     }
 
     #[Test]

@@ -84,14 +84,19 @@ class QuoteEmailTest extends AuthenticatedFeatureTestCase
         $response->assertAccepted();
         $response->assertJson([
             'queued' => true,
-            'message' => 'Cotización encolada para envío por correo.',
-        ]);
+            'message' => 'Cotización marcada como enviada al cliente.',
+            'status' => 'enviada',
+        ])->assertJsonPath('sentAt', fn ($sentAt) => is_string($sentAt) && $sentAt !== '');
 
         Queue::assertPushed(SendQuoteEmailJob::class, function (SendQuoteEmailJob $job) use ($quoteId) {
             return $job->quoteId === $quoteId
                 && $job->toEmail === 'cliente@acme.test'
                 && $job->message === 'Adjuntamos su cotización.';
         });
+
+        $quote = Quote::query()->findOrFail($quoteId);
+        $this->assertSame('enviada', $quote->status);
+        $this->assertNotNull($quote->sent_at);
     }
 
     #[Test]

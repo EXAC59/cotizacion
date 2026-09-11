@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react'
-import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, FileUp, X } from 'lucide-react'
 import { ClientSearchSelect } from '@/components/clients/ClientSearchSelect'
 import { RequestTextLinesEditor } from '@/components/requests/RequestTextLinesEditor'
@@ -9,6 +9,7 @@ import { InlineBusy } from '@/components/ui/LoadingState'
 import { usePermission } from '@/hooks/usePermission'
 import { useToast } from '@/context/ToastProvider'
 import { ApiRequestError, ClientRequiredApiError } from '@/lib/api-response'
+import { getRouterBasename } from '@/lib/app-paths'
 import {
   createEmptyFreeTextLines,
   linesToMarkdownTable,
@@ -46,7 +47,6 @@ function detectedSourceLabel(file: File): string {
 }
 
 export function RequestNewPage() {
-  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const clientIdParam = searchParams.get('clientId')
   const { can } = usePermission()
@@ -86,30 +86,49 @@ export function RequestNewPage() {
     return false
   }
 
+  const goToSolicitudHard = (requestId: string, options?: { quoteFolio?: string | null }) => {
+    if (options?.quoteFolio) {
+      toast(`Solicitud guardada. Cotización ${options.quoteFolio} en Solicitud de cotizaciones.`, 'success')
+    } else {
+      toast('Solicitud guardada', 'success')
+    }
+    // Redirect duro: el blocker de “cambios sin guardar” puede cancelar navigate().
+    const base = getRouterBasename().replace(/\/$/, '')
+    window.location.assign(`${base}/solicitudes/${encodeURIComponent(requestId)}`)
+  }
+
   const navigateAfterAnalyze = async (
     requestId: string,
-    modo: string | undefined,
-    status: string | undefined,
-    signal: AbortSignal,
+    options: {
+      modo?: string
+      status?: string
+      quoteId?: string | null
+      quoteFolio?: string | null
+      signal: AbortSignal
+    },
   ) => {
     setAllowLeave(true)
+    const { modo, status, quoteFolio, signal } = options
 
+    // Tras guardar: siempre el detalle de la solicitud (la cotización queda en solicitud_cotizaciones).
     if (modo === 'n8n' && status === 'procesando') {
       try {
         const solicitud = await pollSolicitud(requestId, { signal })
+        if (signal.aborted) return
         if (solicitud.status === 'error') {
           toast('La solicitud tuvo un error al procesarse', 'warning')
-          navigate(`/solicitudes/${requestId}`)
-          return
         }
+        goToSolicitudHard(requestId, { quoteFolio: solicitud.quote_folio ?? quoteFolio })
+        return
       } catch {
-        navigate(`/solicitudes/${requestId}`)
+        if (signal.aborted) return
+        goToSolicitudHard(requestId, { quoteFolio })
         return
       }
     }
 
-    toast('Guardado en elaboración', 'success')
-    navigate(`/solicitudes/${requestId}`)
+    if (signal.aborted) return
+    goToSolicitudHard(requestId, { quoteFolio })
   }
 
   const applyExample = (key: RequestTextExampleKey) => {
@@ -135,6 +154,7 @@ export function RequestNewPage() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    setAllowLeave(true)
     setLecturaLoading(true)
     setLecturaError(null)
     setValidationErrors([])
@@ -146,13 +166,14 @@ export function RequestNewPage() {
       signal: controller.signal,
       resilient: true,
     })
-      .then((result) => {
-        void navigateAfterAnalyze(
-          result.request_id,
-          result.modo,
-          'status' in result ? result.status : undefined,
-          controller.signal,
-        )
+      .then(async (result) => {
+        await navigateAfterAnalyze(result.request_id, {
+          modo: result.modo,
+          status: 'status' in result ? result.status : undefined,
+          quoteId: 'quote_id' in result ? result.quote_id : undefined,
+          quoteFolio: 'quote_folio' in result ? result.quote_folio : undefined,
+          signal: controller.signal,
+        })
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
@@ -188,6 +209,7 @@ export function RequestNewPage() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    setAllowLeave(true)
     setLecturaLoading(true)
     setLecturaError(null)
     setValidationErrors([])
@@ -206,25 +228,13 @@ export function RequestNewPage() {
         unit: line.unit || 'pza',
       })),
     })
-      .then((result) => {
+      .then(async (result) => {
         if (controller.signal.aborted) return
-        if (result.quote_id) {
-          setAllowLeave(true)
-          toast(
-            result.quote_folio
-              ? `Cotización ${result.quote_folio} creada`
-              : 'Cotización creada',
-            'success',
-          )
-          navigate(`/cotizaciones/${result.quote_id}`)
-          return
-        }
-        void navigateAfterAnalyze(
-          result.request_id,
-          undefined,
-          result.status,
-          controller.signal,
-        )
+        await navigateAfterAnalyze(result.request_id, {
+          quoteId: result.quote_id,
+          quoteFolio: result.quote_folio,
+          signal: controller.signal,
+        })
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return

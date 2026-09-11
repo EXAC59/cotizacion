@@ -477,6 +477,42 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function stuck_processing_alerts_are_visible_only_to_admin(): void
+    {
+        Carbon::setTestNow('2026-06-15 10:00:00');
+
+        $stuck = QuoteRequest::query()->create([
+            'client_id' => $this->client->id,
+            'source' => 'pdf',
+            'status' => 'procesando',
+            'file_name' => 'pedido-admin.pdf',
+        ]);
+        QuoteRequest::query()->whereKey($stuck->id)->update([
+            'updated_at' => '2026-06-15 09:30:00',
+        ]);
+
+        $this->actingAsDemoUser('administrador');
+        $this->assertTrue(
+            collect($this->getJson('/api/dashboard')->assertOk()->json('alerts.stuckProcessingRequests'))
+                ->contains('id', $stuck->id)
+        );
+
+        $this->actingAsDemoUser('gerente_compras');
+        $this->assertSame(
+            [],
+            $this->getJson('/api/dashboard')->assertOk()->json('alerts.stuckProcessingRequests')
+        );
+
+        $this->actingAsDemoUser('ventas');
+        $this->assertSame(
+            [],
+            $this->getJson('/api/dashboard')->assertOk()->json('alerts.stuckProcessingRequests')
+        );
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
     public function dashboard_exposes_quotes_sent_and_unsent_counts(): void
     {
         $this->actingAsDemoUser('administrador');
@@ -507,6 +543,56 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
 
         $this->assertSame($unsentBefore + 2, (int) $response->json('quotesUnsent'));
         $this->assertSame($sentBefore + 1, (int) $response->json('quotesSent'));
+
+        $unsentIds = collect($response->json('unsentQuotes'))->pluck('id');
+        $sentIds = collect($response->json('sentQuotes'))->pluck('id');
+
+        $this->assertTrue($unsentIds->contains($unsent->id));
+        $this->assertTrue($unsentIds->contains($legacyStatusOnly->id));
+        $this->assertFalse($unsentIds->contains($sentByDate->id));
+
+        $this->assertTrue($sentIds->contains($sentByDate->id));
+        $this->assertFalse($sentIds->contains($unsent->id));
+        $this->assertFalse($sentIds->contains($legacyStatusOnly->id));
+
+        $sentRow = collect($response->json('sentQuotes'))->firstWhere('id', $sentByDate->id);
+        $this->assertNotEmpty($sentRow['sentAt'] ?? null);
+        $unsentRow = collect($response->json('unsentQuotes'))->firstWhere('id', $unsent->id);
+        $this->assertEmpty($unsentRow['sentAt'] ?? null);
+    }
+
+    #[Test]
+    public function ventas_only_sees_own_sent_and_unsent_quote_tables(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $otraVentas = User::factory()->create([
+            'role_id' => $ventas->role_id,
+            'name' => 'Otro Vendedor Tablas',
+            'email' => 'otro-ventas-tablas@test.local',
+        ]);
+
+        $miaUnsent = $this->createQuote('COT-MIA-UNSENT', 'en_elaboracion', [
+            ['product' => 'Mia', 'partNumber' => 'M1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 13],
+        ], $ventas);
+        $miaSent = $this->createQuote('COT-MIA-SENT', 'pendiente_envio', [
+            ['product' => 'Mia sent', 'partNumber' => 'M2', 'quantity' => 1, 'cost' => 10, 'salePrice' => 13],
+        ], $ventas);
+        $miaSent->update(['sent_at' => now()]);
+
+        $ajena = $this->createQuote('COT-AJENA-UNSENT', 'en_elaboracion', [
+            ['product' => 'Ajena', 'partNumber' => 'A1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 13],
+        ], $otraVentas);
+
+        $this->actingAs($ventas);
+        $response = $this->getJson('/api/dashboard')->assertOk();
+
+        $unsentIds = collect($response->json('unsentQuotes'))->pluck('id');
+        $sentIds = collect($response->json('sentQuotes'))->pluck('id');
+
+        $this->assertTrue($unsentIds->contains($miaUnsent->id));
+        $this->assertTrue($sentIds->contains($miaSent->id));
+        $this->assertFalse($unsentIds->contains($ajena->id));
+        $this->assertFalse($sentIds->contains($ajena->id));
     }
 
     #[Test]
@@ -686,8 +772,7 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
         $this->assertFalse($unsentIds->contains($comprasUnsent->id));
 
         $pendingIds = collect($ventasPayload->json('alerts.pendingReviewRequests'))->pluck('id');
-        $this->assertTrue($pendingIds->contains($miaPending->id));
-        $this->assertFalse($pendingIds->contains($ajenaPending->id));
+        $this->assertCount(0, $pendingIds);
 
         $this->actingAs($compras);
         $comprasUnsentIds = collect(

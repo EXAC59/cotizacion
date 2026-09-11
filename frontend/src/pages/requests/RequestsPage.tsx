@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Search } from 'lucide-react'
-import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody } from '@/components/ui/Card'
-import { Input, Label, Select } from '@/components/ui/Input'
+import { Input, Label } from '@/components/ui/Input'
 import { LoadingState, TableSkeleton } from '@/components/ui/LoadingState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { ViewerListScopeTabs } from '@/components/ui/ViewerListScopeTabs'
@@ -13,21 +12,7 @@ import { usePermission } from '@/hooks/usePermission'
 import { formatDateTime } from '@/lib/format'
 import { listSolicitudes, mapSolicitudApiToQuoteRequest } from '@/lib/solicitudes-api'
 import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
-import {
-  REQUEST_STATUS_LABELS,
-  type QuoteRequest,
-  type RequestStatus,
-} from '@/types'
-
-const statusVariant: Record<RequestStatus, 'warning' | 'brand' | 'success' | 'danger' | 'muted'> = {
-  pendiente: 'muted',
-  procesando: 'warning',
-  procesada: 'success',
-  precios_listos: 'brand',
-  error: 'danger',
-}
-
-const ALL_STATUSES = '' as const
+import type { QuoteRequest } from '@/types'
 
 export function RequestsPage() {
   const { user } = useAuth()
@@ -36,9 +21,6 @@ export function RequestsPage() {
   const [requests, setRequests] = useState<QuoteRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<RequestStatus | typeof ALL_STATUSES>(
-    ALL_STATUSES,
-  )
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
@@ -57,7 +39,6 @@ export function RequestsPage() {
     setLoading(true)
 
     listSolicitudes({
-      status: statusFilter || undefined,
       q: debouncedSearch || undefined,
       scope: listScope,
       from: dateFrom || undefined,
@@ -79,7 +60,7 @@ export function RequestsPage() {
     return () => {
       cancelled = true
     }
-  }, [statusFilter, debouncedSearch, listScope, dateFrom, dateTo])
+  }, [debouncedSearch, listScope, dateFrom, dateTo])
 
   return (
     <div>
@@ -98,24 +79,7 @@ export function RequestsPage() {
 
       <ViewerListScopeTabs value={listScope} onChange={setListScope} />
 
-      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5 lg:max-w-6xl">
-        <div>
-          <Label htmlFor="solicitud-status-filter">Estado</Label>
-          <Select
-            id="solicitud-status-filter"
-            value={statusFilter}
-            onChange={(e) =>
-              setStatusFilter(e.target.value as RequestStatus | typeof ALL_STATUSES)
-            }
-          >
-            <option value={ALL_STATUSES}>Todos</option>
-            {(Object.keys(REQUEST_STATUS_LABELS) as RequestStatus[]).map((status) => (
-              <option key={status} value={status}>
-                {REQUEST_STATUS_LABELS[status]}
-              </option>
-            ))}
-          </Select>
-        </div>
+      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:max-w-5xl">
         <div className="min-w-0 sm:col-span-2">
           <Label htmlFor="solicitud-search">Buscar</Label>
           <div className="flex items-center gap-2">
@@ -180,7 +144,7 @@ export function RequestsPage() {
           {loading ? (
             <div>
               <LoadingState label="Cargando solicitudes…" variant="inline" className="py-8" />
-              <TableSkeleton rows={5} cols={6} />
+              <TableSkeleton rows={5} cols={5} />
             </div>
           ) : requests.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-slate-500">
@@ -194,10 +158,7 @@ export function RequestsPage() {
                   <th className="px-5 py-3 font-medium">Cliente</th>
                   <th className="px-5 py-3 font-medium">Usuario</th>
                   <th className="px-5 py-3 font-medium">Involucrado</th>
-                  <th className="px-5 py-3 font-medium">Archivo / texto</th>
-                  <th className="px-5 py-3 font-medium">Estado</th>
-                  <th className="px-5 py-3 font-medium">Revisión</th>
-                  <th className="px-5 py-3 font-medium">Fecha lectura</th>
+                  <th className="px-5 py-3 font-medium">Fecha creada</th>
                 </tr>
               </thead>
               <tbody>
@@ -214,31 +175,8 @@ export function RequestsPage() {
                     <td className="px-5 py-3">{r.clientName ?? '—'}</td>
                     <td className="px-5 py-3 text-slate-600">{r.createdByName ?? '—'}</td>
                     <td className="px-5 py-3 text-slate-600">{r.involucrado ?? '—'}</td>
-                    <td className="max-w-xs truncate px-5 py-3 text-slate-600">
-                      {r.fileName ?? r.rawText?.slice(0, 50) ?? '—'}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Badge variant={statusVariant[r.status]}>
-                        {REQUEST_STATUS_LABELS[r.status]}
-                      </Badge>
-                    </td>
-                    <td className="px-5 py-3">
-                      {r.reviewedByName ? (
-                        <Badge variant="success">Revisada · {r.reviewedByName}</Badge>
-                      ) : r.needsExternalReview || r.assignedToSales ? (
-                        <Badge variant="warning">Pendiente</Badge>
-                      ) : (
-                        <span className="text-slate-400" title="Creada por compras; no requiere revisión externa">
-                          —
-                        </span>
-                      )}
-                    </td>
                     <td className="px-5 py-3 text-slate-500">
-                      {r.lecturaAt
-                        ? formatDateTime(r.lecturaAt)
-                        : r.status === 'procesando'
-                          ? 'En espera'
-                          : '—'}
+                      {formatDateTime(r.createdAt)}
                     </td>
                   </tr>
                 ))}
