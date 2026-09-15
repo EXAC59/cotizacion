@@ -10,12 +10,12 @@ export function ProductLineComparator({
   productLabel,
   context,
   enabled = true,
-  autoApplyBest: _autoApplyBest = false,
+  autoApplyBest = false,
   variant = 'cards',
   selectedWholesalerId,
   onSelectOffer,
   onClearSelection,
-  onBestApplied: _onBestApplied,
+  onBestApplied,
 }: {
   partNumber: string
   quantity?: number
@@ -30,6 +30,8 @@ export function ProductLineComparator({
   onClearSelection?: (offer: WholesalerOffer, allOffers?: WholesalerOffer[]) => void
   onBestApplied?: (offer: WholesalerOffer, allOffers?: WholesalerOffer[]) => void
 }) {
+  void autoApplyBest
+  void onBestApplied
   const { result, loading, error, refresh } = useProductComparator({
     partNumber,
     quantity,

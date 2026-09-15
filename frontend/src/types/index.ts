@@ -260,6 +260,8 @@ export interface Quote {
   total?: number
   createdByName?: string
   ownedByViewer?: boolean
+  /** Cotización hecha por el usuario (created_by / Hecha por). */
+  madeByViewer?: boolean
   assignedToSales?: boolean
   assignedToCompras?: boolean
   statusHistory?: QuoteStatusHistoryEntry[]

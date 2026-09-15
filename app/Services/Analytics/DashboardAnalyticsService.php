@@ -259,6 +259,26 @@ class DashboardAnalyticsService
     }
 
     /**
+     * Recordatorios del Dashboard: ventas ve solo los propios; compras y admin,
+     * únicamente los elaborados por ventas.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Quote>  $query
+     * @return \Illuminate\Database\Eloquent\Builder<Quote>
+     */
+    private function constrainDashboardReminderMaker($query, ?User $viewer)
+    {
+        if ($viewer?->role_slug === 'ventas') {
+            return $this->constrainQuoteMaker($query, $viewer);
+        }
+
+        if (in_array($viewer?->role_slug, ['administrador', 'gerente_compras'], true)) {
+            $query->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'));
+        }
+
+        return $query;
+    }
+
+    /**
      * Ventas solo ve solicitudes hechas por su cuenta (id o “Hecha por”).
      *
      * @param  \Illuminate\Database\Eloquent\Builder<QuoteRequest>  $query
@@ -404,8 +424,19 @@ class DashboardAnalyticsService
      */
     private function readyForSalesQuotes(?User $viewer = null): array
     {
-        return $this->constrainQuoteMaker(Quote::query()->with(['client', 'creator']), $viewer)
+        $query = Quote::query()
+            ->with(['client', 'creator.role'])
             ->where('status', 'pendiente_envio')
+            ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'));
+
+        if ($viewer?->role_slug === 'ventas') {
+            $query->where(function ($inner) use ($viewer) {
+                $inner->where('created_by', $viewer->id)
+                    ->orWhere(fn ($byName) => $byName->madeByDisplayName($viewer));
+            });
+        }
+
+        return $query
             ->orderByDesc('updated_at')
             ->limit(20)
             ->get()
@@ -589,7 +620,7 @@ class DashboardAnalyticsService
         $days = AppSetting::current()->resolvedUnansweredQuoteDays();
         $cutoff = Carbon::now()->subDays($days);
 
-        return $this->constrainQuoteMaker(Quote::query()->with(['client', 'creator']), $viewer)
+        return $this->constrainDashboardReminderMaker(Quote::query()->with(['client', 'creator']), $viewer)
             ->whereIn('status', ['en_elaboracion', 'pendiente_envio'])
             ->where('updated_at', '<', $cutoff)
             ->where(function ($query) use ($cutoff) {

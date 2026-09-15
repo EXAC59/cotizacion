@@ -520,6 +520,9 @@ function QuoteFormEditor({
     }
   }
 
+  // Ref deliberadamente actualizado con el callback del render actual: el guard
+  // se invoca después de la interacción del usuario y necesita el borrador vigente.
+  // eslint-disable-next-line react-hooks/refs
   saveBeforeLeaveRef.current = async () => {
     const id = await ensureQuoteSaved(false)
     return id != null

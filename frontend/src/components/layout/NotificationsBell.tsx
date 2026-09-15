@@ -22,6 +22,9 @@ import { fetchDashboard } from '@/lib/dashboard-api'
 import { formatDateTime } from '@/lib/format'
 import type { DashboardAlertQuote, SalesNotificationItem } from '@/types'
 
+export const OPEN_NOTIFICATIONS_EVENT = 'cotizacion:open-notifications'
+export const NOTIFICATIONS_BELL_ID = 'app-notifications-bell'
+
 function canUseInbox(role: string | undefined): boolean {
   return role === 'ventas' || role === 'gerente_compras' || role === 'administrador'
 }
@@ -54,6 +57,7 @@ export function NotificationsBell() {
   const [operational, setOperational] = useState<OperationalAlert[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [bannerPulse, setBannerPulse] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [panelStyle, setPanelStyle] = useState<{ top: number; left: number; width: number } | null>(
@@ -68,7 +72,10 @@ export function NotificationsBell() {
     if (!enabled) return
     setLoading(true)
     try {
-      const tasks: [Promise<{ data: SalesNotificationItem[]; unreadCount: number }>, Promise<OperationalAlert[]>] = [
+      const tasks: [
+        Promise<{ data: SalesNotificationItem[]; unreadCount: number }>,
+        Promise<OperationalAlert[]>,
+      ] = [
         listNotifications(),
         showOperational
           ? fetchDashboard()
@@ -92,6 +99,18 @@ export function NotificationsBell() {
     if (!enabled) return
     const timer = window.setInterval(() => void refresh(), 60_000)
     return () => window.clearInterval(timer)
+  }, [enabled, refresh])
+
+  useEffect(() => {
+    if (!enabled) return
+    const onOpenFromBanner = () => {
+      setBannerPulse(true)
+      setOpen(true)
+      void refresh()
+      window.setTimeout(() => setBannerPulse(false), 1600)
+    }
+    window.addEventListener(OPEN_NOTIFICATIONS_EVENT, onOpenFromBanner)
+    return () => window.removeEventListener(OPEN_NOTIFICATIONS_EVENT, onOpenFromBanner)
   }, [enabled, refresh])
 
   useEffect(() => {
@@ -192,11 +211,7 @@ export function NotificationsBell() {
         navigate,
         location,
         { pathname: '/recordatorios', search: `?quote=${item.quoteId}` },
-        recordatorioQuoteFocus(
-          item.quoteId,
-          item.folio ?? 'Cotización',
-          item.reasonLabel,
-        ),
+        recordatorioQuoteFocus(item.quoteId, item.folio ?? 'Cotización', item.reasonLabel),
       )
       return
     }
@@ -354,22 +369,27 @@ export function NotificationsBell() {
       : null
 
   return (
-    <div className="relative" ref={rootRef}>
+    <div className="relative" ref={rootRef} id={NOTIFICATIONS_BELL_ID}>
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="relative"
-        aria-label={badgeCount > 0 ? `Notificaciones (${badgeCount})` : 'Notificaciones y recordatorios'}
+        className={`relative h-12 w-12 shrink-0 rounded-xl p-0 ${
+          bannerPulse ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-100' : ''
+        } ${badgeCount > 0 ? 'text-indigo-700' : 'text-slate-700'}`}
+        aria-label={
+          badgeCount > 0 ? `Notificaciones (${badgeCount})` : 'Notificaciones y recordatorios'
+        }
         aria-expanded={open}
+        title="Notificaciones y recordatorios"
         onClick={() => {
           setOpen((v) => !v)
           if (!open) void refresh()
         }}
       >
-        <Bell className="h-4 w-4" />
+        <Bell className="h-7 w-7" strokeWidth={2.35} aria-hidden="true" />
         {badgeCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
+          <span className="absolute right-0 top-0 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
             {badgeCount > 9 ? '9+' : badgeCount}
           </span>
         )}

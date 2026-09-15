@@ -181,9 +181,9 @@ export function scrollToFocusTarget(
     return
   }
 
-  let gap = 0
+  let gap: number
   let atMaxScroll = false
-  let visible = false
+  let visible: boolean
   let scrollTopBefore: number | null = null
   let scrollTopAfter: number | null = null
 

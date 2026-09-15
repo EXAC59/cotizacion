@@ -44,6 +44,7 @@ class CotizacionController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'status' => ['nullable', 'string', Rule::in($this->quoteStatuses())],
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
+            'only_made_by' => ['nullable', 'boolean'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
@@ -56,8 +57,13 @@ class CotizacionController extends Controller
         $user = $request->user();
         $user?->loadMissing('role');
         if ($user) {
-            $scope = $validated['scope'] ?? ViewerListScope::defaultFor($user);
-            $query->forViewerList($user, $scope);
+            // Recordatorios ventas: estrictamente cotizaciones hechas por ese usuario (Ericka ≠ María).
+            if ($request->boolean('only_made_by')) {
+                $query->ownedByUser($user);
+            } else {
+                $scope = $validated['scope'] ?? ViewerListScope::defaultFor($user);
+                $query->forViewerList($user, $scope);
+            }
         }
 
         if (! empty($validated['search'])) {
@@ -366,6 +372,7 @@ class CotizacionController extends Controller
             'invoiceNumber' => $quote->invoice_number,
             'createdByName' => $quote->creator?->name,
             'ownedByViewer' => $this->viewerOwnsQuote($quote),
+            'madeByViewer' => $this->viewerMadeQuote($quote),
             'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
             'assignedToCompras' => $this->assignToSales->isAssignedToCompras($quote->creator),
             'involucrado' => $quote->involucrado,
@@ -410,6 +417,7 @@ class CotizacionController extends Controller
             'invoiceNumber' => $quote->invoice_number,
             'createdByName' => $quote->creator?->name,
             'ownedByViewer' => $this->viewerOwnsQuote($quote),
+            'madeByViewer' => $this->viewerMadeQuote($quote),
             'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
             'assignedToCompras' => $this->assignToSales->isAssignedToCompras($quote->creator),
             'involucrado' => $quote->involucrado,
@@ -463,6 +471,17 @@ class CotizacionController extends Controller
         }
 
         return $quote->isVisibleToSalesperson($user);
+    }
+
+    /** Cotización hecha por el visor (created_by / Hecha por), sin avisos asignados. */
+    private function viewerMadeQuote(Quote $quote): bool
+    {
+        $user = request()->user();
+        if ($user === null) {
+            return true;
+        }
+
+        return $quote->isOwnedByUser($user);
     }
 
     private function ensureVentasCanMutateQuote(Request $request, Quote $quote): void

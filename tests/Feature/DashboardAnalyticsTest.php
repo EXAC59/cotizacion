@@ -286,10 +286,11 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
     public function it_returns_dashboard_alerts(): void
     {
         Carbon::setTestNow('2026-06-15 10:00:00');
+        $ventas = $this->demoUser('ventas');
 
         $staleDraft = $this->createQuote('COT-STALE-DRAFT', 'en_elaboracion', [
             ['product' => 'Stale', 'partNumber' => 'STALE-1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 20],
-        ]);
+        ], $ventas);
         Quote::query()->whereKey($staleDraft->id)->update([
             'updated_at' => '2026-06-01 10:00:00',
         ]);
@@ -297,6 +298,8 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
         $expiring = $this->createQuote('COT-EXPIRE', 'en_elaboracion', [
             ['product' => 'Expire', 'partNumber' => 'EXP-1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 20],
         ], null, 2);
+
+        $this->actingAsDemoUser('administrador');
 
         ComparisonJob::query()->create([
             'part_number' => 'FAIL-SKU',
@@ -362,13 +365,14 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
     public function stale_quote_alert_uses_status_and_resets_when_the_quote_is_opened(): void
     {
         Carbon::setTestNow('2026-08-13 12:00:00');
+        $ventas = $this->demoUser('ventas');
 
         $draft = $this->createQuote('COT-STALE-001', 'en_elaboracion', [
             ['product' => 'Borrador detenido', 'partNumber' => 'STALE-1', 'quantity' => 1, 'cost' => 100, 'salePrice' => 130],
-        ]);
+        ], $ventas);
         $ready = $this->createQuote('COT-STALE-002', 'pendiente_envio', [
             ['product' => 'Lista detenida', 'partNumber' => 'STALE-2', 'quantity' => 1, 'cost' => 100, 'salePrice' => 130],
-        ]);
+        ], $ventas);
         $sent = $this->createQuote('COT-SENT-IGNORED', 'enviada', [
             ['product' => 'Ya enviada', 'partNumber' => 'SENT-1', 'quantity' => 1, 'cost' => 100, 'salePrice' => 130],
         ]);
@@ -376,6 +380,8 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
         Quote::query()->whereKey([$draft->id, $ready->id, $sent->id])->update([
             'updated_at' => '2026-08-01 12:00:00',
         ]);
+
+        $this->actingAsDemoUser('administrador');
 
         $initialAlerts = collect(
             $this->getJson('/api/dashboard')->assertOk()->json('alerts.unansweredQuotes')
@@ -405,15 +411,50 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function dashboard_reminders_for_admin_and_compras_exclude_quotes_made_by_non_sales_users(): void
+    {
+        Carbon::setTestNow('2026-08-13 12:00:00');
+
+        $ventas = $this->demoUser('ventas');
+        $admin = $this->demoUser('administrador');
+        $compras = $this->demoUser('gerente_compras');
+
+        $salesQuote = $this->createQuote('COT-ALERTA-VENTAS', 'en_elaboracion', [
+            ['product' => 'Venta detenida', 'partNumber' => 'ALERTA-V', 'quantity' => 1, 'cost' => 100, 'salePrice' => 130],
+        ], $ventas);
+        $adminQuote = $this->createQuote('COT-ALERTA-ADMIN', 'en_elaboracion', [
+            ['product' => 'Admin detenido', 'partNumber' => 'ALERTA-A', 'quantity' => 1, 'cost' => 100, 'salePrice' => 130],
+        ], $admin);
+
+        Quote::query()->whereKey([$salesQuote->id, $adminQuote->id])->update([
+            'updated_at' => '2026-08-01 12:00:00',
+        ]);
+
+        foreach ([$admin, $compras] as $viewer) {
+            $this->actingAs($viewer);
+            $folios = collect($this->getJson('/api/dashboard')->assertOk()->json('alerts.unansweredQuotes'))
+                ->pluck('folio');
+
+            $this->assertTrue($folios->contains($salesQuote->folio));
+            $this->assertFalse($folios->contains($adminQuote->folio));
+        }
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
     public function it_lists_lista_terminada_quotes_for_sales_alert(): void
     {
+        $ventas = $this->demoUser('ventas');
         $ready = $this->createQuote('COT-LISTA-001', 'pendiente_envio', [
             ['product' => 'Ready', 'partNumber' => 'RDY-1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 20],
-        ]);
+        ], $ventas);
 
         $this->createQuote('COT-ELAB-001', 'en_elaboracion', [
             ['product' => 'Draft', 'partNumber' => 'DFT-1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 20],
         ]);
+
+        $this->actingAsDemoUser('administrador');
 
         $response = $this->getJson('/api/dashboard');
 

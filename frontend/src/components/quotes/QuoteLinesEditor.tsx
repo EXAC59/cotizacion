@@ -22,7 +22,7 @@ export function QuoteLinesEditor({
   globalMargin,
   preferredWarehouse = 'CDMX',
   quoteId,
-  autoApplyBest: _autoApplyBest = false,
+  autoApplyBest = false,
   comparatorEnabled = true,
   showComparator = true,
   readOnly = false,
@@ -46,6 +46,7 @@ export function QuoteLinesEditor({
   showProfit?: boolean
   onChange: (lines: QuoteLine[]) => void
 }) {
+  void autoApplyBest
   void _readOnlyMargins
   /** Con comparador: costo/p.venta vienen de ofertas. Sin él (ventas): captura manual. */
   const pricingFieldsLocked = showComparator

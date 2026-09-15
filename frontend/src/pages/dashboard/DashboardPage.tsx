@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle,
+  Bell,
   FileCheck2,
-  FileText,
   FileX2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
@@ -13,6 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { QuoteSentFilterTabs, type QuoteSentFilter } from '@/components/ui/QuoteSentFilterTabs'
 import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
 import { StatCard } from '@/components/ui/StatCard'
+import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
 import { useNotificationFocus } from '@/lib/notification-focus'
@@ -64,14 +64,18 @@ function SectionTitle({ children }: { children: ReactNode }) {
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate()
+  const { user } = useAuth()
   const { canViewDashboardExecutive, canViewWholesalerIntegrationAlerts, isAdmin } = usePermission()
   const canViewExecutive = canViewDashboardExecutive()
   const canViewIntegrationAlerts = canViewWholesalerIntegrationAlerts()
   const canViewStuckReadings = isAdmin
+  const isVentas = user?.role === 'ventas'
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sentFilter, setSentFilter] = useState<QuoteSentFilter>('unsent')
+  const [resumenFocus, setResumenFocus] = useState<'unsent' | 'sent' | 'notifications' | null>(null)
 
   useNotificationFocus(!loading)
 
@@ -91,17 +95,46 @@ export function DashboardPage() {
   const recentQuotes = analytics?.recentQuotes ?? []
   const alerts = analytics?.alerts ?? EMPTY_ALERTS
 
-  const integrationAlertsCount = alerts.integrationIssues.length
   const quotesSent = analytics?.quotesSent ?? 0
   const quotesUnsent = analytics?.quotesUnsent ?? 0
   const sentQuotes = analytics?.sentQuotes ?? []
   const unsentQuotes = analytics?.unsentQuotes ?? []
   const filteredQuotes = sentFilter === 'sent' ? sentQuotes : unsentQuotes
 
+  const selectSentFilter = (next: QuoteSentFilter) => {
+    setSentFilter(next)
+    setResumenFocus(next)
+    window.requestAnimationFrame(() => {
+      document.getElementById('operativa')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
+  const selectNotifications = () => {
+    setResumenFocus('notifications')
+    if (isVentas) {
+      navigate('/recordatorios')
+      return
+    }
+    window.requestAnimationFrame(() => {
+      document.getElementById('alertas')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
   const notificationRows = useMemo(
     () => buildNotificationRows(alerts, canViewIntegrationAlerts, canViewStuckReadings),
     [alerts, canViewIntegrationAlerts, canViewStuckReadings],
   )
+
+  const remindersCount = alerts.readyForSalesQuotes?.length ?? 0
+  const thirdCardCount = isVentas ? remindersCount : notificationRows.length
+  const thirdCardLabel = isVentas ? 'Recordatorios' : 'Notificaciones y recordatorios'
+  const thirdCardHint = isVentas
+    ? remindersCount === 0
+      ? 'Sin cotizaciones pendientes de seguimiento'
+      : 'Lista / Terminada para negociar con el cliente'
+    : notificationRows.length === 0
+      ? 'Sin pendientes por revisar'
+      : 'Revisa alertas y recordatorios pendientes'
 
   return (
     <div>
@@ -134,29 +167,25 @@ export function DashboardPage() {
           value={String(quotesUnsent)}
           hint="Sin evidencia de envío al cliente"
           icon={FileX2}
+          selected={resumenFocus === 'unsent'}
+          onClick={() => selectSentFilter('unsent')}
         />
         <StatCard
           label="Cotizaciones enviadas"
           value={String(quotesSent)}
           hint="Enviadas al cliente"
           icon={FileCheck2}
+          selected={resumenFocus === 'sent'}
+          onClick={() => selectSentFilter('sent')}
         />
-        {canViewIntegrationAlerts && (
-          <StatCard
-            label="Alertas de integración"
-            value={String(integrationAlertsCount)}
-            hint="Mayoristas / comparador"
-            icon={AlertTriangle}
-          />
-        )}
-        {!canViewIntegrationAlerts && (
-          <StatCard
-            label="Cotizaciones recientes"
-            value={String(recentQuotes.length)}
-            hint="Últimas en tu alcance"
-            icon={FileText}
-          />
-        )}
+        <StatCard
+          label={thirdCardLabel}
+          value={String(thirdCardCount)}
+          hint={thirdCardHint}
+          icon={Bell}
+          selected={resumenFocus === 'notifications'}
+          onClick={selectNotifications}
+        />
       </div>
 
       <div className="mt-8 space-y-6">
@@ -204,7 +233,7 @@ export function DashboardPage() {
             </CardBody>
           </Card>
 
-        <Card>
+        <Card id="operativa" className="scroll-mt-28">
           <CardHeader
             title="Operativa"
             subtitle="Cotizaciones enviadas y no enviadas al cliente"
@@ -212,7 +241,7 @@ export function DashboardPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <QuoteSentFilterTabs
                   value={sentFilter}
-                  onChange={setSentFilter}
+                  onChange={selectSentFilter}
                   unsentCount={quotesUnsent}
                   sentCount={quotesSent}
                 />
@@ -435,7 +464,7 @@ function DashboardNotificationsTable({ rows }: { rows: NotificationRow[] }) {
               <td className="px-3 py-2.5">
                 <Badge variant={KIND_BADGE[row.kind]}>{row.typeLabel}</Badge>
               </td>
-              <td className="truncate px-3 py-2.5">
+              <td className="px-3 py-2.5">
                 {row.href ? (
                   <Link to={row.href} className="font-medium text-indigo-600 hover:underline" title={row.reference}>
                     {row.reference}
@@ -444,17 +473,17 @@ function DashboardNotificationsTable({ rows }: { rows: NotificationRow[] }) {
                   <span className="font-medium text-slate-800">{row.reference}</span>
                 )}
               </td>
-              <td className="truncate px-3 py-2.5 text-slate-600" title={row.clientName}>
+              <td className="px-3 py-2.5 text-slate-600 break-words" title={row.clientName}>
                 {row.clientName}
               </td>
               <td
-                className="truncate px-3 py-2.5 font-medium text-slate-800"
+                className="px-3 py-2.5 font-medium text-slate-800 break-words"
                 title={row.createdByName?.trim() || undefined}
               >
                 {row.createdByName?.trim() || (row.kind === 'integration' ? '—' : 'Sin asignar')}
               </td>
               <td
-                className={`truncate px-3 py-2.5 ${
+                className={`px-3 py-2.5 break-words ${
                   row.kind === 'integration' ? 'text-red-700' : 'text-amber-800'
                 }`}
                 title={row.detail}

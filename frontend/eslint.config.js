@@ -22,6 +22,9 @@ export default defineConfig([
       // Patrón habitual en carga de datos; evita bloquear lint en todo el proyecto.
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/purity': 'warn',
+      // Las utilidades y constantes compartidas viven junto a componentes UI;
+      // Vite conserva Fast Refresh y ESLint solo las señala como advertencia.
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
 ])

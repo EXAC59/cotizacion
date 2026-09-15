@@ -122,6 +122,8 @@ type QuoteApiResponse = {
 
   ownedByViewer?: boolean
 
+  madeByViewer?: boolean
+
   assignedToSales?: boolean
 
   assignedToCompras?: boolean
@@ -158,9 +160,13 @@ type QuoteSummaryApi = {
 
   createdAt?: string
 
+  sentAt?: string | null
+
   createdByName?: string | null
 
   ownedByViewer?: boolean
+
+  madeByViewer?: boolean
 
   assignedToSales?: boolean
 
@@ -233,6 +239,8 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     createdByName: data.createdByName ?? undefined,
 
     ownedByViewer: data.ownedByViewer,
+
+    madeByViewer: data.madeByViewer,
 
     assignedToSales: data.assignedToSales,
 
@@ -443,6 +451,8 @@ export async function listQuotes(params?: {
   search?: string
   status?: Quote['status']
   scope?: 'mine' | 'all'
+  /** Solo cotizaciones hechas por el usuario autenticado (created_by / Hecha por). */
+  onlyMadeBy?: boolean
   from?: string
   to?: string
 }): Promise<Quote[]> {
@@ -451,6 +461,7 @@ export async function listQuotes(params?: {
   if (params?.search?.trim()) qs.set('search', params.search.trim())
   if (params?.status) qs.set('status', params.status)
   if (params?.scope) qs.set('scope', params.scope)
+  if (params?.onlyMadeBy) qs.set('only_made_by', '1')
   if (params?.from) qs.set('from', params.from)
   if (params?.to) qs.set('to', params.to)
   const query = qs.toString()
@@ -491,6 +502,8 @@ export async function listQuotes(params?: {
 
     createdAt: row.createdAt ?? new Date().toISOString(),
 
+    sentAt: row.sentAt ?? undefined,
+
     lines: [],
 
     linesCount: row.linesCount,
@@ -501,6 +514,7 @@ export async function listQuotes(params?: {
 
     createdByName: row.createdByName ?? undefined,
     ownedByViewer: row.ownedByViewer,
+    madeByViewer: row.madeByViewer,
     assignedToSales: row.assignedToSales,
     assignedToCompras: row.assignedToCompras,
 

@@ -274,6 +274,9 @@ export function RequestNewPage() {
     }
   }
 
+  // Ref deliberadamente actualizado con el callback del render actual: el guard
+  // se invoca después de la interacción del usuario y necesita los datos vigentes.
+  // eslint-disable-next-line react-hooks/refs
   saveBeforeLeaveRef.current = async () => {
     if (!clientId || (!file && !hasTextInput)) {
       return false

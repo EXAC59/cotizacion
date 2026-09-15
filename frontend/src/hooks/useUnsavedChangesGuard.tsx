@@ -42,11 +42,17 @@ export function useUnsavedChangesGuard(
   const [intent, setIntent] = useState<LeaveIntent | null>(null)
   const [leaveError, setLeaveError] = useState<string | null>(null)
   const onSaveRef = useRef(options.onSave)
-  onSaveRef.current = options.onSave
   const phaseRef = useRef(phase)
-  phaseRef.current = phase
   const pendingPathRef = useRef<string | null>(null)
   const leaveConfirmedRef = useRef(false)
+
+  useEffect(() => {
+    onSaveRef.current = options.onSave
+  }, [options.onSave])
+
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
 
   const openStep1 = useCallback((next: LeaveIntent) => {
     setLeaveError(null)

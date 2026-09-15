@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Plus, FileDown, Search } from 'lucide-react'
+import { ArrowDownAZ, ArrowUpDown, FileDown, Plus, Search } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Input, Label, Select } from '@/components/ui/Input'
@@ -15,10 +15,12 @@ import { quoteTotals } from '@/lib/calculations'
 import { formatCurrency, formatDate } from '@/lib/format'
 import { matchesQuoteListFilters } from '@/lib/quote-list-filters'
 import { buildQuoteSearchParams } from '@/lib/quote-search-params'
-import { QUOTE_WORKFLOW_ORDER } from '@/lib/quote-status'
+import { QUOTE_WORKFLOW_ORDER, quoteWorkflowIndex } from '@/lib/quote-status'
 import { listQuotes, openQuotePdf, isPersistedQuoteId } from '@/lib/quotes-api'
 import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
 import { QUOTE_STATUS_LABELS, type Quote, type QuoteStatus } from '@/types'
+
+type QuoteListSort = 'date' | 'status'
 
 export function QuotesPage() {
   const { quotes: localQuotes, saveQuote } = useData()
@@ -37,6 +39,7 @@ export function QuotesPage() {
   const [apiQuotes, setApiQuotes] = useState<Quote[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [listSort, setListSort] = useState<QuoteListSort>('date')
 
   useEffect(() => {
     setSearchInput(urlSearch)
@@ -97,10 +100,19 @@ export function QuotesPage() {
         )
       : source
 
-    return [...filtered].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    )
-  }, [apiQuotes, localQuotes, error, urlSearch, statusFilter, dateFrom, dateTo])
+    const statusRank = (status: Quote['status']) => {
+      const index = quoteWorkflowIndex(status)
+      return index === -1 ? QUOTE_WORKFLOW_ORDER.length : index
+    }
+
+    return [...filtered].sort((a, b) => {
+      if (listSort === 'status') {
+        const byStatus = statusRank(a.status) - statusRank(b.status)
+        if (byStatus !== 0) return byStatus
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+  }, [apiQuotes, localQuotes, error, urlSearch, statusFilter, dateFrom, dateTo, listSort])
 
   const setListScope = (value: ViewerListScope) => {
     setSearchParams(
@@ -149,6 +161,7 @@ export function QuotesPage() {
   }
 
   const hasActiveFilters = Boolean(urlSearch.trim() || statusFilter || dateFrom || dateTo)
+  const sortingByStatus = listSort === 'status'
 
   return (
     <div>
@@ -259,7 +272,26 @@ export function QuotesPage() {
                     <th className="px-5 py-3 font-medium">Cliente</th>
                     <th className="px-5 py-3 font-medium">Hecha por</th>
                     <th className="px-5 py-3 font-medium">Involucrado</th>
-                    <th className="px-5 py-3 font-medium">Estado</th>
+                    <th className="px-5 py-3 font-medium">
+                      <button
+                        type="button"
+                        className={`inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 transition hover:bg-slate-200/70 hover:text-slate-800 ${
+                          sortingByStatus ? 'bg-indigo-50 text-indigo-700' : ''
+                        }`}
+                        title="Orden: Solicitud → Elaboración → Lista/Terminada → Enviada"
+                        aria-pressed={sortingByStatus}
+                        onClick={() =>
+                          setListSort((prev) => (prev === 'status' ? 'date' : 'status'))
+                        }
+                      >
+                        Estado
+                        {sortingByStatus ? (
+                          <ArrowDownAZ className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <ArrowUpDown className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                      </button>
+                    </th>
                     <th className="px-5 py-3 font-medium text-right">Total</th>
                     <th className="px-5 py-3 font-medium">Fecha</th>
                     <th className="px-5 py-3 font-medium text-right">PDF</th>

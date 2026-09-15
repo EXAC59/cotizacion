@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Models\SalesNotification;
+use App\Models\User;
 use Carbon\Carbon;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\AuthenticatedFeatureTestCase;
@@ -601,5 +602,46 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
         $foliosAfter = collect($this->getJson('/api/cotizaciones')->assertOk()->json('data'))->pluck('folio');
         $this->assertTrue($foliosAfter->contains($foreign->folio));
         $this->getJson("/api/cotizaciones/{$foreign->id}")->assertOk();
+    }
+
+    #[Test]
+    public function only_made_by_isolates_lista_terminada_per_ventas_user(): void
+    {
+        $maria = $this->demoUser('ventas');
+        $ericka = User::query()->create([
+            'name' => 'Ericka Demo',
+            'email' => 'ericka-recordatorios-'.uniqid().'@empresa.com',
+            'password' => bcrypt('demo'),
+            'role_id' => $maria->role_id,
+        ]);
+
+        $mariaQuote = $this->createQuote([
+            'status' => 'pendiente_envio',
+            'created_by' => $maria->id,
+            'folio' => 'COT-MARIA-'.uniqid(),
+        ]);
+        $erickaQuote = $this->createQuote([
+            'status' => 'pendiente_envio',
+            'created_by' => $ericka->id,
+            'folio' => 'COT-ERICKA-'.uniqid(),
+        ]);
+
+        $this->actingAs($maria);
+        $mariaFolios = collect(
+            $this->getJson('/api/cotizaciones?only_made_by=1&status=pendiente_envio')
+                ->assertOk()
+                ->json('data')
+        )->pluck('folio');
+        $this->assertTrue($mariaFolios->contains($mariaQuote->folio));
+        $this->assertFalse($mariaFolios->contains($erickaQuote->folio));
+
+        $this->actingAs($ericka);
+        $erickaFolios = collect(
+            $this->getJson('/api/cotizaciones?only_made_by=1&status=pendiente_envio')
+                ->assertOk()
+                ->json('data')
+        )->pluck('folio');
+        $this->assertTrue($erickaFolios->contains($erickaQuote->folio));
+        $this->assertFalse($erickaFolios->contains($mariaQuote->folio));
     }
 }

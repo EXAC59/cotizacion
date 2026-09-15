@@ -103,7 +103,11 @@ export function RbacProvider({ children }: { children: ReactNode }) {
       // File y flags temporales de subida no son serializables.
       const forStorage: RbacStore = {
         ...next,
-        users: next.users.map(({ signatureFile: _f, removeSignature: _r, ...user }) => user),
+        users: next.users.map(({ signatureFile, removeSignature, ...user }) => {
+          void signatureFile
+          void removeSignature
+          return user
+        }),
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(forStorage))
     } catch {

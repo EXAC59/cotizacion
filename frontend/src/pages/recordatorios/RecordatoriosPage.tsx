@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { Bell, FileDown, RefreshCw } from 'lucide-react'
 import { RecordatorioDetailPanel } from '@/components/recordatorios/RecordatorioDetailPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -24,6 +24,41 @@ function isComprasRole(role: string | undefined): boolean {
   return role === 'gerente_compras' || role === 'administrador'
 }
 
+/** A partir de 3 días (≥ 3). Espejo del default AppSetting unanswered_quote_days. */
+const ELABORACION_IDLE_DAYS = 3
+
+function isElaboracionIdleRecordatorio(quote: Quote): boolean {
+  if (quote.status !== 'en_elaboracion') return false
+  const daysIdle = Number(quote.eligibility?.daysIdle ?? 0)
+  if (daysIdle < ELABORACION_IDLE_DAYS) return false
+  return (
+    quote.eligibility?.reasonCode === 'sin_avance' ||
+    quote.eligibility?.eligible === true
+  )
+}
+
+/** Compras: Lista/Terminada no enviada de ventas, o elaboración a partir de 3 días. */
+function isComprasRecordatorioQuote(quote: Quote): boolean {
+  if (quote.assignedToSales !== true) return false
+
+  if (quote.status === 'pendiente_envio') {
+    return isUnsentForClientQuote(quote)
+  }
+
+  return isElaboracionIdleRecordatorio(quote)
+}
+
+/** Ventas: propias Lista/Terminada no enviadas, o propias en elaboración a partir de 3 días. */
+function isVentasRecordatorioQuote(quote: Quote): boolean {
+  if (quote.madeByViewer === false) return false
+
+  if (quote.status === 'pendiente_envio') {
+    return isUnsentForClientQuote(quote)
+  }
+
+  return isElaboracionIdleRecordatorio(quote)
+}
+
 function needsRemindAgain(quote: Quote): boolean {
   const fu = quote.followUp
   if (!fu || fu.status !== 'negociacion' || !fu.remindAt) return false
@@ -34,7 +69,8 @@ export function RecordatoriosPage() {
   const { user } = useAuth()
   const { can } = usePermission()
   const [searchParams, setSearchParams] = useSearchParams()
-  const isCompras = isComprasRole(user?.role)
+  const role = user?.role
+  const isCompras = isComprasRole(role)
   const canNotify = isCompras && can('cotizaciones', 'edit')
   const canEditFollowUp = can('cotizaciones', 'edit')
   const showVentasDashboard = !isCompras
@@ -56,14 +92,32 @@ export function RecordatoriosPage() {
     setLoading(true)
     setError(null)
     try {
-      const data = await listQuotes()
-      setQuotes(data)
+      const isVentasUser = role === 'ventas'
+      if (isVentasUser) {
+        // Propias: Lista/Terminada no enviadas + elaboración a partir de 3 días.
+        const [lista, elaboracion] = await Promise.all([
+          listQuotes({ onlyMadeBy: true, status: 'pendiente_envio' }),
+          listQuotes({ onlyMadeBy: true, status: 'en_elaboracion' }),
+        ])
+        setQuotes(
+          [...lista, ...elaboracion].filter((q) => isVentasRecordatorioQuote(q)),
+        )
+      } else {
+        // Compras/admin: Lista/Terminada no enviadas + elaboración idle ≥ umbral (p. ej. 3 días).
+        const [lista, elaboracion] = await Promise.all([
+          listQuotes({ scope: 'all', status: 'pendiente_envio' }),
+          listQuotes({ scope: 'all', status: 'en_elaboracion' }),
+        ])
+        setQuotes(
+          [...lista, ...elaboracion].filter((q) => isComprasRecordatorioQuote(q)),
+        )
+      }
     } catch {
       setError('No se pudieron cargar los recordatorios.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [role])
 
   useEffect(() => {
     void refresh()
@@ -71,10 +125,12 @@ export function RecordatoriosPage() {
 
   useNotificationFocus(!loading)
 
-  const reminderQuotes = useMemo(
-    () => quotes.filter((q) => isUnsentForClientQuote(q)),
-    [quotes],
-  )
+  const reminderQuotes = useMemo(() => {
+    if (!isCompras) {
+      return quotes.filter((q) => isVentasRecordatorioQuote(q))
+    }
+    return quotes.filter((q) => isComprasRecordatorioQuote(q))
+  }, [quotes, isCompras])
 
   const eligible = useMemo(
     () => reminderQuotes.filter((q) => q.eligibility?.eligible),
@@ -102,6 +158,11 @@ export function RecordatoriosPage() {
     () => reminderQuotes.find((q) => q.id === selectedId) ?? null,
     [reminderQuotes, selectedId],
   )
+
+  // Recordatorios: ventas y compras (admin ve vista compras).
+  if (user?.role !== 'ventas' && user?.role !== 'gerente_compras' && user?.role !== 'administrador') {
+    return <Navigate to="/dashboard" replace />
+  }
 
   const openDetail = (id: string, reagendar = false) => {
     setSelectedId(id)
@@ -138,8 +199,8 @@ export function RecordatoriosPage() {
         title={showVentasDashboard ? 'Dashboard — Recordatorios' : 'Recordatorios'}
         description={
           showVentasDashboard
-            ? 'Solo cotizaciones en Lista / Terminada para negociar con el cliente.'
-            : 'Cotizaciones en Lista / Terminada para seguimiento de ventas con el cliente.'
+            ? 'Tus Lista / Terminada aún no enviadas, y tus elaboraciones a partir de 3 días sin avance.'
+            : 'Lista / Terminada de ventas aún no enviadas, y en elaboración a partir de 3 días sin avance.'
         }
         actions={
           <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
@@ -219,7 +280,8 @@ function ComprasView({
       <section>
         <h2 className="text-base font-semibold text-slate-900">Cotizaciones sin avance</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Lista / Terminada. Abre el detalle y escribe el comentario para ventas.
+          Lista / Terminada aún no enviadas, o en elaboración a partir de 3 días sin avance. Abre el
+          detalle y escribe el comentario para ventas.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {eligible.length === 0 && (
@@ -240,8 +302,8 @@ function ComprasView({
       <section>
         <h2 className="text-base font-semibold text-slate-900">Cotizaciones en seguimiento</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Lista / Terminada dentro del plazo normal. Puedes abrirlas y dejar un comentario si hace
-          falta.
+          Lista / Terminada aún no enviadas, dentro del plazo normal. Puedes abrirlas y dejar un
+          comentario si hace falta.
         </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {others.length === 0 && (
@@ -303,7 +365,7 @@ function VentasDashboard({
       <div className="grid gap-3">
         {quotes.length === 0 && (
           <p className="text-sm text-slate-500">
-            No hay cotizaciones pendientes de envío al cliente.
+            No hay cotizaciones en Lista / Terminada pendientes ni elaboraciones a partir de 3 días.
           </p>
         )}
         {quotes.map((q) => (

@@ -1,4 +1,4 @@
-import type { User } from '@/types'
+import type { User, UserRole } from '@/types'
 import type { ModuleId } from '@/types/rbac'
 import { canAccessModule, canAccessDashboard } from '@/lib/permissions'
 import type { RolePermissionMap } from '@/types/rbac'
@@ -20,11 +20,20 @@ export const MODULE_ROUTES: {
   label: string
   icon: typeof LayoutDashboard
   end?: boolean
+  /** Si se define, el ítem solo aparece para estos roles. */
+  roles?: UserRole[]
 }[] = [
   { module: 'dashboard', path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { module: 'solicitudes', path: '/solicitudes', label: 'Solicitudes', icon: Upload },
   { module: 'cotizaciones', path: '/cotizaciones', label: 'Cotizaciones', icon: FileText },
-  { module: 'cotizaciones', path: '/recordatorios', label: 'Recordatorios', icon: Bell, end: true },
+  {
+    module: 'cotizaciones',
+    path: '/recordatorios',
+    label: 'Recordatorios',
+    icon: Bell,
+    end: true,
+    roles: ['ventas', 'gerente_compras', 'administrador'],
+  },
   { module: 'clientes', path: '/clientes', label: 'Clientes', icon: Building2 },
   { module: 'mayoristas', path: '/mayoristas', label: 'Mayoristas', icon: Package },
   { module: 'reportes', path: '/reportes', label: 'Reportes', icon: BarChart3 },
@@ -39,7 +48,8 @@ export function getDefaultRoute(
 ): string {
   if (!user) return '/login'
 
-  for (const { module, path } of MODULE_ROUTES) {
+  for (const { module, path, roles } of MODULE_ROUTES) {
+    if (roles && !roles.includes(user.role)) continue
     const allowed =
       module === 'dashboard'
         ? canAccessDashboard(rolePermissions, user)
