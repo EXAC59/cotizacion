@@ -149,7 +149,15 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('permission:cotizaciones,send');
     Route::post('/cotizaciones/{id}/notas-internas', [CotizacionController::class, 'agregarNotaInterna'])
         ->middleware('permission:cotizaciones,create|edit');
+    Route::post('/cotizaciones/{id}/compras/tomar', [CotizacionController::class, 'tomarSolicitudCompras'])
+        ->middleware('permission:cotizaciones,edit');
+    Route::delete('/cotizaciones/{id}/compras/responsable', [CotizacionController::class, 'liberarSolicitudCompras'])
+        ->middleware('permission:cotizaciones,edit');
     Route::patch('/cotizaciones/{id}/seguimiento', [NotificacionController::class, 'seguimiento'])
+        ->middleware('permission:cotizaciones,edit');
+    Route::post('/cotizaciones/{id}/seguimiento/tomar', [NotificacionController::class, 'claim'])
+        ->middleware('permission:cotizaciones,edit');
+    Route::delete('/cotizaciones/{id}/seguimiento/responsable', [NotificacionController::class, 'release'])
         ->middleware('permission:cotizaciones,edit');
     Route::get('/cotizaciones/{id}/elegibilidad-aviso', [NotificacionController::class, 'eligibility'])
         ->middleware('permission:cotizaciones,view');

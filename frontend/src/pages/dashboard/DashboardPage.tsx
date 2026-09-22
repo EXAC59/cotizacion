@@ -26,6 +26,7 @@ import {
 const EMPTY_ALERTS: DashboardAlerts = {
   lowStock: [],
   pendingQuotes: [],
+  purchaseRequestQuotes: [],
   unansweredQuotes: [],
   readyForSalesQuotes: [],
   integrationIssues: [],
@@ -35,7 +36,7 @@ const EMPTY_ALERTS: DashboardAlerts = {
   unsentRequests: [],
 }
 
-type NotificationKind = 'unanswered' | 'stuck' | 'integration'
+type NotificationKind = 'purchase-request' | 'unanswered' | 'stuck' | 'integration'
 
 type NotificationRow = {
   key: string
@@ -49,7 +50,8 @@ type NotificationRow = {
   elementId?: string
 }
 
-const KIND_BADGE: Record<NotificationKind, 'warning' | 'danger'> = {
+const KIND_BADGE: Record<NotificationKind, 'brand' | 'warning' | 'danger'> = {
+  'purchase-request': 'brand',
   unanswered: 'warning',
   stuck: 'warning',
   integration: 'danger',
@@ -125,13 +127,15 @@ export function DashboardPage() {
     [alerts, canViewIntegrationAlerts, canViewStuckReadings],
   )
 
-  const remindersCount = alerts.readyForSalesQuotes?.length ?? 0
+  const remindersCount = isVentas
+    ? (alerts.readyForSalesQuotes?.length ?? 0) + (alerts.unansweredQuotes?.length ?? 0)
+    : (alerts.readyForSalesQuotes?.length ?? 0)
   const thirdCardCount = isVentas ? remindersCount : notificationRows.length
   const thirdCardLabel = isVentas ? 'Recordatorios' : 'Notificaciones y recordatorios'
   const thirdCardHint = isVentas
     ? remindersCount === 0
       ? 'Sin cotizaciones pendientes de seguimiento'
-      : 'Lista / Terminada para negociar con el cliente'
+      : 'Cotizaciones propias o compartidas pendientes de seguimiento'
     : notificationRows.length === 0
       ? 'Sin pendientes por revisar'
       : 'Revisa alertas y recordatorios pendientes'
@@ -273,7 +277,7 @@ function notificationsSubtitle(
   canViewIntegrationAlerts: boolean,
   canViewStuckReadings: boolean,
 ): string {
-  const topics = ['Sin avance']
+  const topics = ['Solicitudes de cotización', 'sin avance']
   if (canViewStuckReadings) topics.push('lecturas atascadas')
   if (canViewIntegrationAlerts) topics.push('integración')
 
@@ -295,6 +299,24 @@ function buildNotificationRows(
   canViewStuckReadings: boolean,
 ): NotificationRow[] {
   const rows: NotificationRow[] = []
+
+  for (const quote of alerts.purchaseRequestQuotes ?? []) {
+    rows.push({
+      key: `purchase-request-${quote.id}`,
+      kind: 'purchase-request',
+      typeLabel: quote.purchaseAttentionStatus === 'en_atencion' ? 'En atención' : 'Solicitud de cotización',
+      href: `/cotizaciones/${quote.id}`,
+      reference: quote.folio,
+      clientName: quote.clientName || '—',
+      createdByName: quote.createdByName,
+      detail: quote.purchaseAttentionStatus === 'en_atencion'
+        ? `Atiende ${quote.purchaseAssigneeName ?? 'un comprador'}`
+        : quote.purchaseEscalatedAt
+          ? 'Urgente: lleva demasiado tiempo sin responsable'
+          : 'Pendiente de revisión por Compras',
+      elementId: `dashboard-quote-${quote.id}`,
+    })
+  }
 
   for (const quote of alerts.unansweredQuotes) {
     rows.push({
@@ -458,7 +480,11 @@ function DashboardNotificationsTable({ rows }: { rows: NotificationRow[] }) {
               id={row.elementId}
               key={row.key}
               className={`relative border-b border-slate-50 last:border-0 hover:bg-slate-50/80 ${
-                row.kind === 'integration' ? 'bg-red-50/30' : 'bg-amber-50/20'
+                row.kind === 'integration'
+                  ? 'bg-red-50/30'
+                  : row.kind === 'purchase-request'
+                    ? 'bg-indigo-50/20'
+                    : 'bg-amber-50/20'
               }`}
             >
               <td className="px-3 py-2.5">
@@ -484,7 +510,11 @@ function DashboardNotificationsTable({ rows }: { rows: NotificationRow[] }) {
               </td>
               <td
                 className={`px-3 py-2.5 break-words ${
-                  row.kind === 'integration' ? 'text-red-700' : 'text-amber-800'
+                  row.kind === 'integration'
+                    ? 'text-red-700'
+                    : row.kind === 'purchase-request'
+                      ? 'text-indigo-700'
+                      : 'text-amber-800'
                 }`}
                 title={row.detail}
               >

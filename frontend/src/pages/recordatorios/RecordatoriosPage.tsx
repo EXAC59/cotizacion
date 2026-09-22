@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
-import { Bell, FileDown, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { RecordatorioDetailPanel } from '@/components/recordatorios/RecordatorioDetailPanel'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -12,7 +12,12 @@ import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { useNotificationFocus } from '@/lib/notification-focus'
 import { formatCurrency, formatDate } from '@/lib/format'
-import { isPersistedQuoteId, listQuotes, openQuotePdf } from '@/lib/quotes-api'
+import {
+  claimQuoteFollowUp,
+  isPersistedQuoteId,
+  listQuotes,
+  openQuotePdf,
+} from '@/lib/quotes-api'
 import {
   FOLLOW_UP_STATUS_LABELS,
   type FollowUpStatus,
@@ -48,9 +53,10 @@ function isComprasRecordatorioQuote(quote: Quote): boolean {
   return isElaboracionIdleRecordatorio(quote)
 }
 
-/** Ventas: propias Lista/Terminada no enviadas, o propias en elaboración a partir de 3 días. */
+/** Ventas: bandeja compartida sin responsable, más las asignadas al visor. */
 function isVentasRecordatorioQuote(quote: Quote): boolean {
-  if (quote.madeByViewer === false) return false
+  if (quote.assignedToSales !== true) return false
+  if (quote.followUpAssigneeId && !quote.followUpAssignedToViewer) return false
 
   if (quote.status === 'pendiente_envio') {
     return isUnsentForClientQuote(quote)
@@ -83,6 +89,9 @@ export function RecordatoriosPage() {
   const [actionMsg, setActionMsg] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(quoteParam)
   const [forceNegociacion, setForceNegociacion] = useState(false)
+  const [claimingId, setClaimingId] = useState<string | null>(null)
+  const [claimDraftId, setClaimDraftId] = useState<string | null>(null)
+  const [claimDeclaration, setClaimDeclaration] = useState('')
 
   useEffect(() => {
     if (quoteParam) setSelectedId(quoteParam)
@@ -94,10 +103,10 @@ export function RecordatoriosPage() {
     try {
       const isVentasUser = role === 'ventas'
       if (isVentasUser) {
-        // Propias: Lista/Terminada no enviadas + elaboración a partir de 3 días.
+        // Compartidas: sin responsable o ya asignadas al vendedor autenticado.
         const [lista, elaboracion] = await Promise.all([
-          listQuotes({ onlyMadeBy: true, status: 'pendiente_envio' }),
-          listQuotes({ onlyMadeBy: true, status: 'en_elaboracion' }),
+          listQuotes({ remindersPool: true, status: 'pendiente_envio' }),
+          listQuotes({ remindersPool: true, status: 'en_elaboracion' }),
         ])
         setQuotes(
           [...lista, ...elaboracion].filter((q) => isVentasRecordatorioQuote(q)),
@@ -188,6 +197,28 @@ export function RecordatoriosPage() {
     setForceNegociacion(false)
   }
 
+  const handleClaim = async (quote: Quote, declaration: string) => {
+    setClaimingId(quote.id)
+    setError(null)
+    try {
+      const assignment = await claimQuoteFollowUp(quote.id, declaration)
+      await refresh()
+      setActionMsg(`Seguimiento asignado a ${assignment.assigneeName}.`)
+      setClaimDraftId(null)
+      setClaimDeclaration('')
+      openDetail(quote.id)
+    } catch (claimError) {
+      setError(
+        claimError instanceof Error
+          ? claimError.message
+          : 'No se pudo tomar el seguimiento.',
+      )
+      await refresh()
+    } finally {
+      setClaimingId(null)
+    }
+  }
+
   const layoutClass =
     selectedId && selectedQuote
       ? 'grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]'
@@ -199,7 +230,7 @@ export function RecordatoriosPage() {
         title={showVentasDashboard ? 'Dashboard — Recordatorios' : 'Recordatorios'}
         description={
           showVentasDashboard
-            ? 'Tus Lista / Terminada aún no enviadas, y tus elaboraciones a partir de 3 días sin avance.'
+            ? 'Cotizaciones de Ventas sin responsable, y seguimientos que tienes asignados.'
             : 'Lista / Terminada de ventas aún no enviadas, y en elaboración a partir de 3 días sin avance.'
         }
         actions={
@@ -232,12 +263,24 @@ export function RecordatoriosPage() {
                 stats={stats}
                 selectedId={selectedId}
                 onOpenDetail={openDetail}
+                claimingId={claimingId}
+                claimDraftId={claimDraftId}
+                claimDeclaration={claimDeclaration}
+                onStartClaim={(quote) => {
+                  setClaimDraftId(quote.id)
+                  setClaimDeclaration('')
+                }}
+                onDeclarationChange={setClaimDeclaration}
+                onCancelClaim={() => {
+                  setClaimDraftId(null)
+                  setClaimDeclaration('')
+                }}
+                onClaim={(quote, declaration) => void handleClaim(quote, declaration)}
               />
             ) : (
               <ComprasView
                 eligible={eligible}
                 others={others}
-                canNotify={canNotify}
                 selectedId={selectedId}
                 onSelect={(id) => openDetail(id)}
               />
@@ -265,13 +308,11 @@ export function RecordatoriosPage() {
 function ComprasView({
   eligible,
   others,
-  canNotify,
   selectedId,
   onSelect,
 }: {
   eligible: Quote[]
   others: Quote[]
-  canNotify: boolean
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
@@ -280,10 +321,10 @@ function ComprasView({
       <section>
         <h2 className="text-base font-semibold text-slate-900">Cotizaciones sin avance</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Lista / Terminada aún no enviadas, o en elaboración a partir de 3 días sin avance. Abre el
-          detalle y escribe el comentario para ventas.
+          Lista / Terminada aún no enviadas, o en elaboración a partir de 3 días sin avance. Haz
+          clic en una cotización para ver el detalle y comentar a ventas.
         </p>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="mt-4 grid items-start gap-3 md:grid-cols-2">
           {eligible.length === 0 && (
             <p className="text-sm text-slate-500">No hay cotizaciones sin avance ahora.</p>
           )}
@@ -292,7 +333,6 @@ function ComprasView({
               key={q.id}
               quote={q}
               selected={selectedId === q.id}
-              canNotify={canNotify}
               onSelect={() => onSelect(q.id)}
             />
           ))}
@@ -305,7 +345,7 @@ function ComprasView({
           Lista / Terminada aún no enviadas, dentro del plazo normal. Puedes abrirlas y dejar un
           comentario si hace falta.
         </p>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="mt-4 grid items-start gap-3 md:grid-cols-2">
           {others.length === 0 && (
             <p className="text-sm text-slate-500">No hay cotizaciones en seguimiento.</p>
           )}
@@ -314,7 +354,6 @@ function ComprasView({
               key={q.id}
               quote={q}
               selected={selectedId === q.id}
-              canNotify={false}
               onSelect={() => onSelect(q.id)}
             />
           ))}
@@ -329,11 +368,25 @@ function VentasDashboard({
   stats,
   selectedId,
   onOpenDetail,
+  claimingId,
+  claimDraftId,
+  claimDeclaration,
+  onStartClaim,
+  onDeclarationChange,
+  onCancelClaim,
+  onClaim,
 }: {
   quotes: Quote[]
   stats: Record<FollowUpStatus, number>
   selectedId: string | null
   onOpenDetail: (id: string, reagendar?: boolean) => void
+  claimingId: string | null
+  claimDraftId: string | null
+  claimDeclaration: string
+  onStartClaim: (quote: Quote) => void
+  onDeclarationChange: (value: string) => void
+  onCancelClaim: () => void
+  onClaim: (quote: Quote, declaration: string) => void
 }) {
   const statColors: Record<FollowUpStatus, string> = {
     negociacion: 'text-indigo-700',
@@ -374,6 +427,13 @@ function VentasDashboard({
             quote={q}
             selected={selectedId === q.id}
             onOpenDetail={onOpenDetail}
+            claiming={claimingId === q.id}
+            showClaimDeclaration={claimDraftId === q.id}
+            claimDeclaration={claimDraftId === q.id ? claimDeclaration : ''}
+            onStartClaim={() => onStartClaim(q)}
+            onDeclarationChange={onDeclarationChange}
+            onCancelClaim={onCancelClaim}
+            onClaim={() => onClaim(q, claimDeclaration)}
           />
         ))}
       </div>
@@ -385,10 +445,24 @@ function VentasReminderCard({
   quote,
   selected,
   onOpenDetail,
+  claiming,
+  showClaimDeclaration,
+  claimDeclaration,
+  onStartClaim,
+  onDeclarationChange,
+  onCancelClaim,
+  onClaim,
 }: {
   quote: Quote
   selected: boolean
   onOpenDetail: (id: string, reagendar?: boolean) => void
+  claiming: boolean
+  showClaimDeclaration: boolean
+  claimDeclaration: string
+  onStartClaim: () => void
+  onDeclarationChange: (value: string) => void
+  onCancelClaim: () => void
+  onClaim: () => void
 }) {
   const fu = quote.followUp
   const due = needsRemindAgain(quote)
@@ -420,6 +494,10 @@ function VentasReminderCard({
           {fu?.byUser && (
             <p className="mt-1 text-sm text-slate-600">Seguimiento: {fu.byUser}</p>
           )}
+          <p className="mt-1 text-xs text-slate-500">
+            Creada por: {quote.createdByName || 'Ventas'} · Responsable:{' '}
+            {quote.followUpAssigneeName || 'Sin asignar'}
+          </p>
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
           {fu?.status ? (
@@ -441,10 +519,18 @@ function VentasReminderCard({
         >
           Ver PDF
         </Button>
-        <Button type="button" size="sm" onClick={() => onOpenDetail(quote.id)}>
-          Actualizar seguimiento
-        </Button>
-        {due && (
+        {quote.followUpAssignedToViewer ? (
+          <Button type="button" size="sm" onClick={() => onOpenDetail(quote.id)}>
+            Actualizar seguimiento
+          </Button>
+        ) : (
+          !showClaimDeclaration && (
+            <Button type="button" size="sm" disabled={claiming} onClick={onStartClaim}>
+              Tomar seguimiento
+            </Button>
+          )
+        )}
+        {due && quote.followUpAssignedToViewer && (
           <Button
             type="button"
             variant="secondary"
@@ -455,6 +541,37 @@ function VentasReminderCard({
           </Button>
         )}
       </div>
+      {showClaimDeclaration && !quote.followUpAssignedToViewer && (
+        <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+          <label className="text-sm font-medium text-slate-800" htmlFor={`claim-${quote.id}`}>
+            Declaración antes de tomar el seguimiento
+          </label>
+          <p className="mt-1 text-xs text-slate-600">
+            Explica qué acción realizarás. Esto se guardará en la bitácora; no cambia el estatus.
+          </p>
+          <textarea
+            id={`claim-${quote.id}`}
+            className="mt-2 min-h-24 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+            maxLength={1000}
+            value={claimDeclaration}
+            onChange={(event) => onDeclarationChange(event.target.value)}
+            placeholder="Ej. Me comunicaré con el cliente para confirmar disponibilidad y continuar la cotización."
+          />
+          <div className="mt-2 flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="secondary" size="sm" disabled={claiming} onClick={onCancelClaim}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={claiming || claimDeclaration.trim().length < 10}
+              onClick={onClaim}
+            >
+              {claiming ? 'Asignando…' : 'Guardar declaración y tomar'}
+            </Button>
+          </div>
+        </div>
+      )}
     </article>
   )
 }
@@ -462,28 +579,34 @@ function VentasReminderCard({
 function ComprasReminderCard({
   quote,
   selected,
-  canNotify,
   onSelect,
 }: {
   quote: Quote
   selected: boolean
-  canNotify: boolean
   onSelect: () => void
 }) {
   return (
     <article
       id={`recordatorio-quote-${quote.id}`}
-      className={`relative rounded-xl border bg-white p-4 shadow-sm ${
+      role="button"
+      tabIndex={0}
+      aria-label={`Abrir recordatorio de ${quote.folio}`}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      className={`relative cursor-pointer rounded-xl border bg-white p-3 shadow-sm transition hover:border-indigo-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
         selected ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="font-semibold text-slate-900">{quote.folio}</h3>
-          <p className="text-sm text-slate-600">
-            {quote.clientName || 'Sin cliente'} · {formatCurrency(quote.total ?? 0)}
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-0.5 text-sm text-slate-600">
+            {quote.clientName || 'Sin cliente'} · {formatCurrency(quote.total ?? 0)} ·{' '}
             {quote.eligibility?.daysIdle ?? 0} días sin avance
           </p>
         </div>
@@ -496,41 +619,23 @@ function ComprasReminderCard({
       </div>
 
       {(quote.eligibility?.notifyRecipientName || quote.createdByName) && (
-        <p className="mt-2 text-xs text-slate-600">
+        <p className="mt-1 text-xs text-slate-600">
           Ventas:{' '}
           <span className="font-medium text-slate-800">
             {quote.eligibility?.notifyRecipientName || quote.createdByName}
           </span>
+          {quote.eligibility?.pendingUnread ? (
+            <span className="text-amber-700"> · Aviso pendiente sin leer</span>
+          ) : null}
         </p>
       )}
 
-      {quote.eligibility?.pendingUnread && (
-        <p className="mt-2 text-xs text-amber-700">
+      {quote.eligibility?.pendingUnread &&
+      !(quote.eligibility?.notifyRecipientName || quote.createdByName) ? (
+        <p className="mt-1 text-xs text-amber-700">
           Hay un comentario/aviso pendiente (sin leer).
         </p>
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" size="sm" onClick={onSelect}>
-          Ver detalle
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={!isPersistedQuoteId(quote.id)}
-          onClick={() => void openQuotePdf(quote.id)}
-        >
-          <FileDown className="h-4 w-4" />
-          PDF
-        </Button>
-        {canNotify && (
-          <Button type="button" size="sm" onClick={onSelect}>
-            <Bell className="h-4 w-4" />
-            Escribir comentario
-          </Button>
-        )}
-      </div>
+      ) : null}
     </article>
   )
 }

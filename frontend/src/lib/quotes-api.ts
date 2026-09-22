@@ -124,9 +124,31 @@ type QuoteApiResponse = {
 
   madeByViewer?: boolean
 
+  followUpAssigneeId?: number | null
+
+  followUpAssigneeName?: string | null
+
+  followUpAssignedAt?: string | null
+
+  followUpAssignedToViewer?: boolean
+
   assignedToSales?: boolean
 
   assignedToCompras?: boolean
+
+  purchaseAttentionStatus?: Quote['purchaseAttentionStatus']
+
+  purchaseAssigneeId?: number | null
+
+  purchaseAssigneeName?: string | null
+
+  purchaseAssignedAt?: string | null
+
+  purchaseCompletedAt?: string | null
+
+  purchaseEscalatedAt?: string | null
+
+  purchaseAssignedToViewer?: boolean
 
   lockedBy?: { id: string; name: string; email: string }
 
@@ -168,9 +190,31 @@ type QuoteSummaryApi = {
 
   madeByViewer?: boolean
 
+  followUpAssigneeId?: number | null
+
+  followUpAssigneeName?: string | null
+
+  followUpAssignedAt?: string | null
+
+  followUpAssignedToViewer?: boolean
+
   assignedToSales?: boolean
 
   assignedToCompras?: boolean
+
+  purchaseAttentionStatus?: Quote['purchaseAttentionStatus']
+
+  purchaseAssigneeId?: number | null
+
+  purchaseAssigneeName?: string | null
+
+  purchaseAssignedAt?: string | null
+
+  purchaseCompletedAt?: string | null
+
+  purchaseEscalatedAt?: string | null
+
+  purchaseAssignedToViewer?: boolean
 
   invoiceNumber?: string | null
 
@@ -181,6 +225,8 @@ type QuoteSummaryApi = {
   eligibility?: QuoteNotifyEligibility
 
   involucrado?: string | null
+  lastActivityAt?: string | null
+  lastActivityById?: number | null
 
 }
 
@@ -242,9 +288,31 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
 
     madeByViewer: data.madeByViewer,
 
+    followUpAssigneeId: data.followUpAssigneeId ?? null,
+
+    followUpAssigneeName: data.followUpAssigneeName ?? null,
+
+    followUpAssignedAt: data.followUpAssignedAt ?? null,
+
+    followUpAssignedToViewer: data.followUpAssignedToViewer ?? false,
+
     assignedToSales: data.assignedToSales,
 
     assignedToCompras: data.assignedToCompras,
+
+    purchaseAttentionStatus: data.purchaseAttentionStatus,
+
+    purchaseAssigneeId: data.purchaseAssigneeId ?? null,
+
+    purchaseAssigneeName: data.purchaseAssigneeName ?? null,
+
+    purchaseAssignedAt: data.purchaseAssignedAt ?? null,
+
+    purchaseCompletedAt: data.purchaseCompletedAt ?? null,
+
+    purchaseEscalatedAt: data.purchaseEscalatedAt ?? null,
+
+    purchaseAssignedToViewer: data.purchaseAssignedToViewer ?? false,
 
     lines: (data.lines ?? []).map((line): QuoteLine => ({
 
@@ -453,6 +521,8 @@ export async function listQuotes(params?: {
   scope?: 'mine' | 'all'
   /** Solo cotizaciones hechas por el usuario autenticado (created_by / Hecha por). */
   onlyMadeBy?: boolean
+  /** Bandeja compartida: sin responsable o asignadas al vendedor autenticado. */
+  remindersPool?: boolean
   from?: string
   to?: string
 }): Promise<Quote[]> {
@@ -462,6 +532,7 @@ export async function listQuotes(params?: {
   if (params?.status) qs.set('status', params.status)
   if (params?.scope) qs.set('scope', params.scope)
   if (params?.onlyMadeBy) qs.set('only_made_by', '1')
+  if (params?.remindersPool) qs.set('recordatorios_pool', '1')
   if (params?.from) qs.set('from', params.from)
   if (params?.to) qs.set('to', params.to)
   const query = qs.toString()
@@ -515,10 +586,24 @@ export async function listQuotes(params?: {
     createdByName: row.createdByName ?? undefined,
     ownedByViewer: row.ownedByViewer,
     madeByViewer: row.madeByViewer,
+    followUpAssigneeId: row.followUpAssigneeId ?? null,
+    followUpAssigneeName: row.followUpAssigneeName ?? null,
+    followUpAssignedAt: row.followUpAssignedAt ?? null,
+    followUpAssignedToViewer: row.followUpAssignedToViewer ?? false,
     assignedToSales: row.assignedToSales,
     assignedToCompras: row.assignedToCompras,
 
+    purchaseAttentionStatus: row.purchaseAttentionStatus,
+    purchaseAssigneeId: row.purchaseAssigneeId ?? null,
+    purchaseAssigneeName: row.purchaseAssigneeName ?? null,
+    purchaseAssignedAt: row.purchaseAssignedAt ?? null,
+    purchaseCompletedAt: row.purchaseCompletedAt ?? null,
+    purchaseEscalatedAt: row.purchaseEscalatedAt ?? null,
+    purchaseAssignedToViewer: row.purchaseAssignedToViewer ?? false,
+
     involucrado: row.involucrado ?? undefined,
+    lastActivityAt: row.lastActivityAt ?? undefined,
+    lastActivityById: row.lastActivityById ?? undefined,
 
     followUp: row.followUp ?? null,
 
@@ -528,6 +613,78 @@ export async function listQuotes(params?: {
 
   }))
 
+}
+
+export type PurchaseAttentionPayload = {
+  purchaseAttentionStatus: 'disponible' | 'en_atencion' | 'atendida'
+  purchaseAssigneeId: number | null
+  purchaseAssigneeName: string | null
+  purchaseAssignedAt: string | null
+  purchaseCompletedAt: string | null
+  purchaseEscalatedAt: string | null
+  purchaseAssignedToViewer: boolean
+}
+
+async function updatePurchaseAttention(id: string, method: 'POST' | 'DELETE'): Promise<PurchaseAttentionPayload> {
+  const response = await apiFetch(
+    `${getApiBase()}/cotizaciones/${encodeURIComponent(id)}/compras/${method === 'POST' ? 'tomar' : 'responsable'}`,
+    { method, headers: { Accept: 'application/json' } },
+  )
+  const data = (await response.json()) as PurchaseAttentionPayload & {
+    message?: string
+    errors?: Record<string, string[]>
+  }
+  if (!response.ok) {
+    const firstError = data.errors ? Object.values(data.errors).flat()[0] : undefined
+    throw new Error(firstError || data.message || `No se pudo actualizar la atención (${response.status})`)
+  }
+  return data
+}
+
+export function claimPurchaseRequest(id: string): Promise<PurchaseAttentionPayload> {
+  return updatePurchaseAttention(id, 'POST')
+}
+
+export function releasePurchaseRequest(id: string): Promise<PurchaseAttentionPayload> {
+  return updatePurchaseAttention(id, 'DELETE')
+}
+
+export async function claimQuoteFollowUp(id: string, declaration: string): Promise<{
+  quoteId: string
+  assigneeId: number
+  assigneeName: string
+  assignedAt: string
+  assignedToViewer: true
+}> {
+  const response = await apiFetch(
+    `${getApiBase()}/cotizaciones/${encodeURIComponent(id)}/seguimiento/tomar`,
+    {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ declaration }),
+    },
+  )
+  const data = (await response.json()) as {
+    quoteId?: string
+    assigneeId?: number
+    assigneeName?: string
+    assignedAt?: string
+    assignedToViewer?: true
+    message?: string
+    errors?: Record<string, string[]>
+  }
+  if (!response.ok) {
+    const firstError = data.errors ? Object.values(data.errors).flat()[0] : undefined
+    throw new Error(firstError || data.message || `No se pudo tomar el seguimiento (${response.status})`)
+  }
+
+  return data as {
+    quoteId: string
+    assigneeId: number
+    assigneeName: string
+    assignedAt: string
+    assignedToViewer: true
+  }
 }
 
 

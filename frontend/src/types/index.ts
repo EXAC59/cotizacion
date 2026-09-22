@@ -262,6 +262,10 @@ export interface Quote {
   ownedByViewer?: boolean
   /** Cotización hecha por el usuario (created_by / Hecha por). */
   madeByViewer?: boolean
+  followUpAssigneeId?: number | null
+  followUpAssigneeName?: string | null
+  followUpAssignedAt?: string | null
+  followUpAssignedToViewer?: boolean
   assignedToSales?: boolean
   assignedToCompras?: boolean
   statusHistory?: QuoteStatusHistoryEntry[]
@@ -270,6 +274,15 @@ export interface Quote {
   eligibility?: QuoteNotifyEligibility
   /** Usuarios involucrados en la cotización (1., 2., …) */
   involucrado?: string
+  lastActivityAt?: string
+  lastActivityById?: number
+  purchaseAttentionStatus?: 'disponible' | 'en_atencion' | 'atendida'
+  purchaseAssigneeId?: number | null
+  purchaseAssigneeName?: string | null
+  purchaseAssignedAt?: string | null
+  purchaseCompletedAt?: string | null
+  purchaseEscalatedAt?: string | null
+  purchaseAssignedToViewer?: boolean
 }
 
 export interface QuoteInternalNote {
@@ -390,6 +403,11 @@ export interface DashboardAlertQuote {
   daysRemaining?: number
   updatedAt?: string
   lastActivityAt?: string
+  purchaseAttentionStatus?: 'disponible' | 'en_atencion' | 'atendida'
+  purchaseAssigneeId?: number | null
+  purchaseAssigneeName?: string | null
+  purchaseAssignedAt?: string | null
+  purchaseEscalatedAt?: string | null
 }
 
 export interface DashboardIntegrationIssue {
@@ -421,6 +439,7 @@ export interface DashboardUnsentRequest extends DashboardPendingReviewRequest {
 export interface DashboardAlerts {
   lowStock: LowStockAlert[]
   pendingQuotes: DashboardAlertQuote[]
+  purchaseRequestQuotes: DashboardAlertQuote[]
   unansweredQuotes: DashboardAlertQuote[]
   readyForSalesQuotes: DashboardAlertQuote[]
   integrationIssues: DashboardIntegrationIssue[]

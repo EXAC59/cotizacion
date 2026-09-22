@@ -67,7 +67,7 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function no_permite_editar_lineas_si_ya_hay_cotizacion(): void
+    public function permite_editar_lineas_y_sincroniza_la_cotizacion_vinculada(): void
     {
         $client = Client::query()->create([
             'company' => 'Cliente Bloqueo Quote',
@@ -91,7 +91,7 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
             'created_by' => $this->demoUser('gerente_compras')->id,
         ]);
 
-        $this->actingAs($this->demoUser('ventas'))
+        $response = $this->actingAs($this->demoUser('ventas'))
             ->putJson("/api/solicitudes/{$request->id}/lineas", [
                 'lineas' => [
                     [
@@ -104,7 +104,14 @@ class SolicitudRevisionTest extends AuthenticatedFeatureTestCase
                     ],
                 ],
             ])
-            ->assertStatus(403);
+            ->assertOk();
+
+        $this->assertNotEmpty($response->json('quote_id'));
+        $this->assertSame(1, Quote::query()
+            ->where('request_id', $request->id)
+            ->firstOrFail()
+            ->lines()
+            ->count());
     }
 
     #[Test]

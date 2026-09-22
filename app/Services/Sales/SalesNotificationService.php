@@ -23,6 +23,10 @@ class SalesNotificationService
 
     public const REASON_SEGUIMIENTO = 'seguimiento_actualizado';
 
+    public const REASON_SOLICITUD_COMPRAS = 'solicitud_recibida';
+
+    public const REASON_SOLICITUD_COMPRAS_URGENTE = 'solicitud_compras_urgente';
+
     /** Comentario libre de compras hacia ventas sobre el recordatorio */
     public const REASON_COMENTARIO = 'comentario_compras';
 
@@ -103,9 +107,7 @@ class SalesNotificationService
 
     public function daysIdle(Quote $quote): int
     {
-        $lastActivity = $quote->last_opened_at && $quote->last_opened_at->gt($quote->updated_at)
-            ? $quote->last_opened_at
-            : $quote->updated_at;
+        $lastActivity = $quote->last_activity_at ?? $quote->updated_at;
 
         if (! $lastActivity) {
             return 0;
@@ -140,9 +142,157 @@ class SalesNotificationService
             self::REASON_EN_ELABORACION => 'En elaboración',
             self::REASON_SIN_AVANCE => 'Sin avance en elaboración',
             self::REASON_SEGUIMIENTO => 'Recordatorio actualizado',
+            self::REASON_SOLICITUD_COMPRAS => 'Nueva solicitud de cotización',
+            self::REASON_SOLICITUD_COMPRAS_URGENTE => 'Solicitud urgente sin atender',
             self::REASON_COMENTARIO => 'Comentario de compras',
             default => 'Aviso',
         };
+    }
+
+    /**
+     * Genera un aviso independiente para cada usuario activo de Compras.
+     * La búsqueda previa evita duplicados si el flujo se reintenta.
+     */
+    public function notifyComprasNewRequest(Quote $quote, ?User $sender = null): int
+    {
+        $recipients = User::query()
+            ->where('active', true)
+            ->whereHas('role', fn ($role) => $role->where('slug', 'gerente_compras'))
+            ->get();
+
+        $created = 0;
+        foreach ($recipients as $recipient) {
+            $notification = SalesNotification::query()->firstOrCreate(
+                [
+                    'quote_id' => $quote->id,
+                    'recipient_id' => $recipient->id,
+                    'audience' => self::AUDIENCE_COMPRAS,
+                    'reason_code' => self::REASON_SOLICITUD_COMPRAS,
+                ],
+                [
+                    'sender_id' => $sender?->id,
+                    'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
+                    'read_at' => null,
+                ],
+            );
+
+            if ($notification->wasRecentlyCreated) {
+                $created++;
+            }
+        }
+
+        return $created;
+    }
+
+    /**
+     * Recupera avisos faltantes para cotizaciones que siguen esperando a Compras.
+     * Es idempotente: notifyComprasNewRequest evita duplicar un aviso por destinatario.
+     *
+     * @return array{created: int, reviewed: int}
+     */
+    public function syncComprasRequestNotifications(int $limit = 500): array
+    {
+        $recipients = User::query()
+            ->where('active', true)
+            ->whereHas('role', fn ($role) => $role->where('slug', 'gerente_compras'))
+            ->get();
+
+        $created = 0;
+        $reviewed = 0;
+        $perRecipientLimit = max(1, min($limit, 2000));
+
+        foreach ($recipients as $recipient) {
+            $quotes = Quote::query()
+                ->with('creator')
+                ->where('status', 'solicitud_cotizaciones')
+                ->whereDoesntHave('salesNotifications', function ($notification) use ($recipient) {
+                    $notification->where('recipient_id', $recipient->id)
+                        ->where('audience', self::AUDIENCE_COMPRAS)
+                        ->where('reason_code', self::REASON_SOLICITUD_COMPRAS);
+                })
+                ->orderBy('created_at')
+                ->limit($perRecipientLimit)
+                ->get();
+
+            foreach ($quotes as $quote) {
+                $notification = SalesNotification::query()->firstOrCreate(
+                    [
+                        'quote_id' => $quote->id,
+                        'recipient_id' => $recipient->id,
+                        'audience' => self::AUDIENCE_COMPRAS,
+                        'reason_code' => self::REASON_SOLICITUD_COMPRAS,
+                    ],
+                    [
+                        'sender_id' => $quote->creator?->id,
+                        'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
+                        'read_at' => null,
+                    ],
+                );
+                $reviewed++;
+                if ($notification->wasRecentlyCreated) {
+                    $created++;
+                }
+            }
+        }
+
+        return [
+            'created' => $created,
+            'reviewed' => $reviewed,
+        ];
+    }
+
+    /**
+     * Escala a Administración solicitudes que nadie de Compras ha tomado.
+     *
+     * @return array{created: int, escalated: int}
+     */
+    public function escalateUnclaimedPurchaseRequests(int $limit = 200): array
+    {
+        $threshold = AppSetting::current()->resolvedUnansweredQuoteDays();
+        $cutoff = now()->subDays($threshold);
+        $admins = User::query()
+            ->where('active', true)
+            ->whereHas('role', fn ($role) => $role->where('slug', 'administrador'))
+            ->get();
+
+        if ($admins->isEmpty()) {
+            return ['created' => 0, 'escalated' => 0];
+        }
+
+        $quotes = Quote::query()
+            ->where('status', 'solicitud_cotizaciones')
+            ->whereNull('purchase_assigned_to')
+            ->whereNull('purchase_escalated_at')
+            ->where('created_at', '<=', $cutoff)
+            ->orderBy('created_at')
+            ->limit(max(1, min($limit, 1000)))
+            ->get();
+
+        $created = 0;
+        foreach ($quotes as $quote) {
+            foreach ($admins as $admin) {
+                $notification = SalesNotification::query()->firstOrCreate(
+                    [
+                        'quote_id' => $quote->id,
+                        'recipient_id' => $admin->id,
+                        'audience' => self::AUDIENCE_COMPRAS,
+                        'reason_code' => self::REASON_SOLICITUD_COMPRAS_URGENTE,
+                    ],
+                    [
+                        'sender_id' => null,
+                        'message' => "Urgente: {$quote->folio} lleva {$threshold} días sin que Compras la tome.",
+                        'read_at' => null,
+                    ],
+                );
+                if ($notification->wasRecentlyCreated) {
+                    $created++;
+                }
+            }
+
+            $quote->forceFill(['purchase_escalated_at' => now()])->saveQuietly();
+        }
+
+        return ['created' => $created, 'escalated' => $quotes->count()];
     }
 
     /**
@@ -164,10 +314,11 @@ class SalesNotificationService
                 $q->whereNull('follow_up_status')
                     ->orWhereNotIn('follow_up_status', ['ganada', 'perdida']);
             })
-            ->where('updated_at', '<', $cutoff)
             ->where(function ($q) use ($cutoff) {
-                $q->whereNull('last_opened_at')
-                    ->orWhere('last_opened_at', '<', $cutoff);
+                $q->where('last_activity_at', '<', $cutoff)
+                    ->orWhere(function ($legacy) use ($cutoff) {
+                        $legacy->whereNull('last_activity_at')->where('updated_at', '<', $cutoff);
+                    });
             })
             ->orderBy('updated_at')
             ->limit(max(1, min($limit, 500)))
@@ -185,31 +336,59 @@ class SalesNotificationService
                 continue;
             }
 
-            if ($eligibility['pendingUnread'] ?? false) {
+            $reminder = SalesNotification::query()
+                ->where('quote_id', $quote->id)
+                ->where('audience', self::AUDIENCE_VENTAS)
+                ->whereNotNull('sender_id')
+                ->where('updated_at', '<=', $cutoff)
+                ->orderByDesc('updated_at')
+                ->first();
+
+            $lastActivity = $quote->last_activity_at ?? $quote->updated_at;
+            if ($reminder === null || ($lastActivity && $lastActivity->gt($reminder->updated_at))) {
                 $skipped++;
 
                 continue;
             }
 
-            $recipient = $this->resolveVentasRecipient($quote);
-            if ($recipient === null) {
+            $recipients = $quote->follow_up_assigned_to !== null
+                ? User::query()->whereKey($quote->follow_up_assigned_to)->where('active', true)->get()
+                : User::query()
+                    ->where('active', true)
+                    ->whereHas('role', fn ($role) => $role->where('slug', 'ventas'))
+                    ->get();
+
+            if ($recipients->isEmpty()) {
                 $skipped++;
 
                 continue;
             }
 
-            SalesNotification::query()->create([
-                'quote_id' => $quote->id,
-                'sender_id' => null,
-                'recipient_id' => $recipient->id,
-                'audience' => self::AUDIENCE_VENTAS,
-                'reason_code' => self::REASON_SIN_AVANCE,
-                'message' => $this->defaultMessage($quote, self::REASON_SIN_AVANCE),
-                'read_at' => null,
-            ]);
+            foreach ($recipients as $recipient) {
+                $exists = SalesNotification::query()
+                    ->where('quote_id', $quote->id)
+                    ->where('recipient_id', $recipient->id)
+                    ->where('reason_code', self::REASON_SIN_AVANCE)
+                    ->whereNull('read_at')
+                    ->exists();
 
-            $created++;
-            $notifiedQuoteIds[] = $quote->id;
+                if ($exists) {
+                    continue;
+                }
+
+                SalesNotification::query()->create([
+                    'quote_id' => $quote->id,
+                    'sender_id' => null,
+                    'recipient_id' => $recipient->id,
+                    'audience' => self::AUDIENCE_VENTAS,
+                    'reason_code' => self::REASON_SIN_AVANCE,
+                    'message' => "Disponible para tomar: {$quote->folio} lleva {$threshold} días sin avance después del recordatorio de Compras.",
+                    'read_at' => null,
+                ]);
+
+                $created++;
+                $notifiedQuoteIds[] = $quote->id;
+            }
         }
 
         return [
@@ -285,6 +464,7 @@ class SalesNotificationService
         $existing = SalesNotification::query()
             ->where('quote_id', $quote->id)
             ->where('audience', self::AUDIENCE_VENTAS)
+            ->where('recipient_id', $recipient->id)
             ->whereNull('read_at')
             ->orderByDesc('created_at')
             ->first();
@@ -366,13 +546,17 @@ class SalesNotificationService
                 ->where('recipient_id', $user->id)
                 ->whereHas('quote', function ($quoteQuery) use ($user) {
                     $quoteQuery->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
-                        ->where(function ($maker) use ($user) {
-                            $maker->where('created_by', $user->id)
-                                ->orWhere(fn ($byName) => $byName->madeByDisplayName($user));
+                        ->where(function ($responsible) use ($user) {
+                            $responsible->whereNull('follow_up_assigned_to')
+                                ->orWhere('follow_up_assigned_to', $user->id);
                         });
                 });
         } elseif (in_array($role, ['gerente_compras', 'administrador'], true)) {
-            $query->where('audience', self::AUDIENCE_COMPRAS);
+            $query->where('audience', self::AUDIENCE_COMPRAS)
+                ->where(function ($recipient) use ($user) {
+                    $recipient->whereNull('recipient_id')
+                        ->orWhere('recipient_id', $user->id);
+                });
         } else {
             return ['data' => [], 'unreadCount' => 0];
         }
@@ -397,8 +581,8 @@ class SalesNotificationService
     }
 
     /**
-     * Alertas de dashboard convertidas en avisos: cotizaciones del vendedor
-     * en elaboración o Lista / Terminada.
+     * Bandeja compartida: cotizaciones de ventas sin responsable, o asignadas
+     * al vendedor actual, que requieren seguimiento.
      *
      * @param  list<string>  $excludeQuoteIds
      * @return list<array<string, mixed>>
@@ -409,14 +593,34 @@ class SalesNotificationService
             return [];
         }
 
+        $threshold = AppSetting::current()->resolvedUnansweredQuoteDays();
+        $cutoff = now()->subDays($threshold);
+
         $quotes = Quote::query()
-            ->with('client')
+            ->with(['client', 'followUpAssignee'])
             ->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
-            ->where(function ($query) use ($user) {
-                $query->where('created_by', $user->id)
-                    ->orWhere(fn ($byName) => $byName->madeByDisplayName($user));
+            ->where(function ($assignment) use ($user) {
+                $assignment->whereNull('follow_up_assigned_to')
+                    ->orWhere('follow_up_assigned_to', $user->id);
             })
-            ->whereIn('status', ['en_elaboracion', 'pendiente_envio'])
+            ->where(function ($status) use ($cutoff) {
+                $status->where(function ($ready) {
+                    $ready->where('status', 'pendiente_envio')->whereNull('sent_at');
+                })->orWhere(function ($idle) use ($cutoff) {
+                    $idle->where('status', 'en_elaboracion')
+                        ->whereHas('salesNotifications', function ($reminder) use ($cutoff) {
+                            $reminder->where('audience', self::AUDIENCE_VENTAS)
+                                ->whereNotNull('sender_id')
+                                ->where('updated_at', '<=', $cutoff);
+                        })
+                        ->where(function ($activity) use ($cutoff) {
+                            $activity->where('last_activity_at', '<=', $cutoff)
+                                ->orWhere(function ($legacy) use ($cutoff) {
+                                    $legacy->whereNull('last_activity_at')->where('updated_at', '<=', $cutoff);
+                                });
+                        });
+                });
+            })
             ->where(function ($q) {
                 $q->whereNull('follow_up_status')
                     ->orWhereNotIn('follow_up_status', ['ganada', 'perdida']);
@@ -444,6 +648,7 @@ class SalesNotificationService
                 'senderName' => 'Sistema',
                 'recipientId' => $user->id,
                 'recipientName' => $user->name,
+                'assigneeName' => $quote->followUpAssignee?->name,
                 'createdAt' => ($quote->updated_at ?? $quote->created_at)?->toIso8601String(),
                 'readAt' => null,
                 'read' => false,
@@ -516,7 +721,9 @@ class SalesNotificationService
         }
 
         if ($notification->audience === self::AUDIENCE_COMPRAS) {
-            $allowed = in_array($role, ['gerente_compras', 'administrador'], true);
+            $allowed = in_array($role, ['gerente_compras', 'administrador'], true)
+                && ($notification->recipient_id === null
+                    || (int) $notification->recipient_id === (int) $user->id);
         }
 
         if (! $allowed) {
@@ -571,11 +778,15 @@ class SalesNotificationService
     }
 
     /**
-     * Destinatario ventas: solo el usuario con rol ventas que creó la cotización.
+     * Destinatario ventas: responsable actual; si aún no existe, quien creó la cotización.
      */
     public function resolveVentasRecipient(Quote $quote): ?User
     {
-        $quote->loadMissing('creator.role');
+        $quote->loadMissing(['creator.role', 'followUpAssignee.role']);
+
+        if ($this->isActiveVentas($quote->followUpAssignee)) {
+            return $quote->followUpAssignee;
+        }
 
         if ($this->isActiveVentas($quote->creator)) {
             return $quote->creator;

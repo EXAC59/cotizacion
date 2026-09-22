@@ -9,10 +9,12 @@ use App\Models\Quote;
 use App\Models\QuoteInternalNote;
 use App\Models\User;
 use App\Services\Quotes\QuoteFolioGenerator;
+use App\Services\Quotes\QuoteActivityService;
 use App\Services\Quotes\QuoteLockService;
 use App\Services\Quotes\QuotePdfService;
 use App\Services\Quotes\QuotePersistenceService;
 use App\Services\Quotes\QuoteProfitCalculator;
+use App\Services\Quotes\PurchaseRequestWorkflowService;
 use App\Services\Quotes\QuoteSearchScope;
 use App\Services\Quotes\QuoteStatusHistoryService;
 use App\Services\Sales\AssignToSalesService;
@@ -36,6 +38,8 @@ class CotizacionController extends Controller
         private readonly QuoteFollowUpService $followUps,
         private readonly SalesNotificationService $salesNotifications,
         private readonly AssignToSalesService $assignToSales,
+        private readonly QuoteActivityService $activity,
+        private readonly PurchaseRequestWorkflowService $purchaseWorkflow,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -45,20 +49,26 @@ class CotizacionController extends Controller
             'status' => ['nullable', 'string', Rule::in($this->quoteStatuses())],
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
             'only_made_by' => ['nullable', 'boolean'],
+            'recordatorios_pool' => ['nullable', 'boolean'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
 
         $query = Quote::query()
-            ->with(['client', 'creator', 'lockedByUser'])
+            ->with(['client', 'creator', 'lockedByUser', 'followUpAssignee', 'purchaseAssignee'])
             ->withCount('lines')
             ->orderByDesc('created_at');
 
         $user = $request->user();
         $user?->loadMissing('role');
         if ($user) {
-            // Recordatorios ventas: estrictamente cotizaciones hechas por ese usuario (Ericka ≠ María).
-            if ($request->boolean('only_made_by')) {
+            if ($request->boolean('recordatorios_pool') && $user->role_slug === 'ventas') {
+                $query->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
+                    ->where(function ($assignment) use ($user) {
+                        $assignment->whereNull('follow_up_assigned_to')
+                            ->orWhere('follow_up_assigned_to', $user->id);
+                    });
+            } elseif ($request->boolean('only_made_by')) {
                 $query->ownedByUser($user);
             } else {
                 $scope = $validated['scope'] ?? ViewerListScope::defaultFor($user);
@@ -98,7 +108,12 @@ class CotizacionController extends Controller
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $quote = Quote::query()->with(['lines.offers.wholesaler', 'client', 'internalNotes.user'])->findOrFail($id);
+        $quote = Quote::query()->with([
+            'lines.offers.wholesaler',
+            'client',
+            'internalNotes.user',
+            'purchaseAssignee',
+        ])->findOrFail($id);
 
         return response()->json($this->toApiArray($quote));
     }
@@ -157,10 +172,13 @@ class CotizacionController extends Controller
             'lines.*.offers.*.isSelected' => ['nullable', 'boolean'],
         ]);
 
+        $previousQuote = null;
         if (! empty($validated['id']) && Str::isUuid($validated['id'])) {
             $existing = Quote::query()->find($validated['id']);
             if ($existing) {
                 $this->ensureVentasCanMutateQuote($request, $existing);
+                $this->purchaseWorkflow->assertCanEdit($existing, $request->user());
+                $previousQuote = $existing->replicate();
             }
         }
 
@@ -185,7 +203,47 @@ class CotizacionController extends Controller
             throw $e;
         }
 
+        if ($previousQuote !== null) {
+            $changes = [];
+            if ($previousQuote->status !== $quote->status) {
+                $changes[] = "estado: {$previousQuote->status} → {$quote->status}";
+            }
+            if (abs((float) $previousQuote->total - (float) $quote->total) >= 0.01) {
+                $changes[] = 'total actualizado a $'.number_format((float) $quote->total, 2);
+            }
+            $changes[] = $quote->lines()->count().' partida(s) guardada(s)';
+
+            QuoteInternalNote::query()->create([
+                'quote_id' => $quote->id,
+                'user_id' => $request->user()?->id,
+                'body' => 'Tarea realizada al guardar la cotización: '.implode('; ', $changes).'.',
+                'created_at' => now(),
+            ]);
+            $quote->unsetRelation('internalNotes');
+            $quote = $this->purchaseWorkflow->completeWhenAdvanced(
+                $quote,
+                $request->user(),
+                $previousQuote->status,
+            );
+        }
+
         return response()->json($this->toApiArray($quote), 201);
+    }
+
+    public function tomarSolicitudCompras(Request $request, string $id): JsonResponse
+    {
+        $quote = Quote::query()->findOrFail($id);
+        $claimed = $this->purchaseWorkflow->claim($quote, $request->user());
+
+        return response()->json($this->purchaseAttentionPayload($claimed));
+    }
+
+    public function liberarSolicitudCompras(Request $request, string $id): JsonResponse
+    {
+        $quote = Quote::query()->findOrFail($id);
+        $released = $this->purchaseWorkflow->release($quote, $request->user());
+
+        return response()->json($this->purchaseAttentionPayload($released));
     }
 
     public function pdf(string $id, QuotePdfService $pdfService, Request $request)
@@ -274,6 +332,8 @@ class CotizacionController extends Controller
             $quote->update(['sent_at' => now()]);
         }
 
+        $quote = $this->activity->record($quote, $request->user());
+
         $quote = $quote->fresh();
 
         return response()->json([
@@ -303,6 +363,8 @@ class CotizacionController extends Controller
             'created_at' => now(),
         ])->load('user');
 
+        $this->activity->record($quote, $request->user());
+
         return response()->json([
             'id' => $note->id,
             'body' => $note->body,
@@ -318,12 +380,29 @@ class CotizacionController extends Controller
         }
 
         $quote = Quote::query()->findOrFail($id);
-        $this->ensureVentasCanMutateQuote(request(), $quote);
 
-        try {
-            $this->quoteLockService->acquire($quote);
-        } catch (QuoteLockedException $e) {
-            return response()->json($e->payload(), 423);
+        // Si ya está bloqueada, devolver el conflicto primero para que el usuario
+        // vea quién la está atendiendo, incluso si no es el creador original.
+        $lockTakenOver = false;
+        if ($quote->locked_by !== null && (int) $quote->locked_by !== (int) request()->user()?->id) {
+            try {
+                $this->quoteLockService->acquire($quote);
+                $lockTakenOver = true;
+            } catch (QuoteLockedException $e) {
+                return response()->json($e->payload(), 423);
+            }
+        }
+
+        if (! $lockTakenOver) {
+            $this->ensureVentasCanMutateQuote(request(), $quote);
+        }
+
+        if (! $lockTakenOver) {
+            try {
+                $this->quoteLockService->acquire($quote);
+            } catch (QuoteLockedException $e) {
+                return response()->json($e->payload(), 423);
+            }
         }
 
         $quote = $quote->fresh(['lockedByUser']);
@@ -355,7 +434,7 @@ class CotizacionController extends Controller
      */
     private function toSummaryArray(Quote $quote): array
     {
-        $quote->loadMissing(['client', 'creator']);
+        $quote->loadMissing(['client', 'creator', 'followUpAssignee', 'purchaseAssignee']);
 
         return [
             'id' => $quote->id,
@@ -371,6 +450,13 @@ class CotizacionController extends Controller
             'responseReceivedAt' => $quote->response_received_at?->toIso8601String(),
             'invoiceNumber' => $quote->invoice_number,
             'createdByName' => $quote->creator?->name,
+            'lastActivityAt' => $quote->last_activity_at?->toIso8601String(),
+            'lastActivityById' => $quote->last_activity_by,
+            ...$this->purchaseAttentionPayload($quote),
+            'followUpAssigneeId' => $quote->follow_up_assigned_to,
+            'followUpAssigneeName' => $quote->followUpAssignee?->name,
+            'followUpAssignedAt' => $quote->follow_up_assigned_at?->toIso8601String(),
+            'followUpAssignedToViewer' => $this->followUpAssignedToViewer($quote),
             'ownedByViewer' => $this->viewerOwnsQuote($quote),
             'madeByViewer' => $this->viewerMadeQuote($quote),
             'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
@@ -387,7 +473,14 @@ class CotizacionController extends Controller
      */
     private function toApiArray(Quote $quote): array
     {
-        $quote->loadMissing(['lines.offers.wholesaler', 'client', 'creator', 'internalNotes.user']);
+        $quote->loadMissing([
+            'lines.offers.wholesaler',
+            'client',
+            'creator',
+            'internalNotes.user',
+            'followUpAssignee',
+            'purchaseAssignee',
+        ]);
         $mask = $this->wholesalerAliases->shouldMask(request()->user());
 
         return [
@@ -416,6 +509,13 @@ class CotizacionController extends Controller
             'responseReceivedAt' => $quote->response_received_at?->toIso8601String(),
             'invoiceNumber' => $quote->invoice_number,
             'createdByName' => $quote->creator?->name,
+            'lastActivityAt' => $quote->last_activity_at?->toIso8601String(),
+            'lastActivityById' => $quote->last_activity_by,
+            ...$this->purchaseAttentionPayload($quote),
+            'followUpAssigneeId' => $quote->follow_up_assigned_to,
+            'followUpAssigneeName' => $quote->followUpAssignee?->name,
+            'followUpAssignedAt' => $quote->follow_up_assigned_at?->toIso8601String(),
+            'followUpAssignedToViewer' => $this->followUpAssignedToViewer($quote),
             'ownedByViewer' => $this->viewerOwnsQuote($quote),
             'madeByViewer' => $this->viewerMadeQuote($quote),
             'assignedToSales' => $this->assignToSales->isAssignedToSales($quote->creator),
@@ -459,6 +559,29 @@ class CotizacionController extends Controller
         ];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function purchaseAttentionPayload(Quote $quote): array
+    {
+        $quote->loadMissing('purchaseAssignee');
+        $viewer = request()->user();
+        $isPending = $quote->status === 'solicitud_cotizaciones';
+
+        return [
+            'purchaseAttentionStatus' => ! $isPending
+                ? 'atendida'
+                : ($quote->purchase_assigned_to ? 'en_atencion' : 'disponible'),
+            'purchaseAssigneeId' => $quote->purchase_assigned_to,
+            'purchaseAssigneeName' => $quote->purchaseAssignee?->name,
+            'purchaseAssignedAt' => $quote->purchase_assigned_at?->toIso8601String(),
+            'purchaseCompletedAt' => $quote->purchase_completed_at?->toIso8601String(),
+            'purchaseEscalatedAt' => $quote->purchase_escalated_at?->toIso8601String(),
+            'purchaseAssignedToViewer' => $viewer !== null
+                && (int) $quote->purchase_assigned_to === (int) $viewer->id,
+        ];
+    }
+
     private function viewerOwnsQuote(Quote $quote): bool
     {
         $user = request()->user();
@@ -471,6 +594,15 @@ class CotizacionController extends Controller
         }
 
         return $quote->isVisibleToSalesperson($user);
+    }
+
+    private function followUpAssignedToViewer(Quote $quote): bool
+    {
+        $user = request()->user();
+
+        return $user !== null
+            && $quote->follow_up_assigned_to !== null
+            && (int) $quote->follow_up_assigned_to === (int) $user->id;
     }
 
     /** Cotización hecha por el visor (created_by / Hecha por), sin avisos asignados. */
@@ -490,6 +622,13 @@ class CotizacionController extends Controller
         $user?->loadMissing('role');
         if ($user?->role_slug !== 'ventas') {
             return;
+        }
+
+        if (
+            $quote->follow_up_assigned_to !== null
+            && (int) $quote->follow_up_assigned_to !== (int) $user->id
+        ) {
+            abort(403, 'Esta cotización está asignada a otro vendedor para su seguimiento.');
         }
 
         if (! $quote->isVisibleToSalesperson($user)) {

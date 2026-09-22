@@ -75,6 +75,15 @@ return Application::configure(basePath: dirname(__DIR__))
             ->hourly()
             ->withoutOverlapping()
             ->runInBackground();
+        // Recuperación idempotente: ninguna solicitud pendiente debe quedar sin campana de Compras.
+        $schedule->command('sales:sync-compras-request-notifications')
+            ->everyFiveMinutes()
+            ->withoutOverlapping()
+            ->runInBackground();
+        $schedule->command('sales:escalate-purchase-requests')
+            ->hourly()
+            ->withoutOverlapping()
+            ->runInBackground();
         // FTP CT incompleto: refrescar UPC→clave de productos solo-API.
         $schedule->command('wholesalers:ct-catalog-gaps --sync-upc --upc-limit=300')
             ->dailyAt('03:30')

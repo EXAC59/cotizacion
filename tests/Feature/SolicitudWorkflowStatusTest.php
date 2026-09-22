@@ -81,7 +81,10 @@ class SolicitudWorkflowStatusTest extends AuthenticatedFeatureTestCase
                     'brand' => 'Genérico',
                 ],
             ],
-        ])->assertStatus(403);
+        ])->assertOk();
+
+        $this->assertSame(1, $quote->fresh()->lines()->count());
+        $this->assertSame(3.0, (float) $quote->fresh()->lines()->first()->quantity);
     }
 
     #[Test]

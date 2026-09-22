@@ -8,6 +8,7 @@ use App\Models\QuoteLine;
 use App\Models\QuoteRequest;
 use App\Models\User;
 use App\Services\Rbac\RbacService;
+use App\Services\Sales\SalesNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -20,6 +21,7 @@ class SolicitudToQuoteService
         private readonly QuotePersistenceService $persistence,
         private readonly QuoteProfitCalculator $calculator,
         private readonly RbacService $rbac,
+        private readonly SalesNotificationService $notifications,
     ) {}
 
     /**
@@ -35,6 +37,8 @@ class SolicitudToQuoteService
             ->first();
 
         if ($existing !== null) {
+            $this->notifications->notifyComprasNewRequest($existing, $actor);
+
             return [
                 'quote' => $existing->loadMissing(['client', 'lines']),
                 'created' => false,
@@ -84,6 +88,8 @@ class SolicitudToQuoteService
             'notes' => '',
             'lines' => $lines,
         ]);
+
+        $this->notifications->notifyComprasNewRequest($quote, $actor);
 
         return [
             'quote' => $quote,

@@ -5,11 +5,125 @@ namespace Tests\Feature;
 use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteRequest;
+use App\Models\Role;
+use App\Models\SalesNotification;
+use App\Models\User;
+use App\Services\Sales\SalesNotificationService;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\AuthenticatedFeatureTestCase;
 
 class SolicitudToQuoteTest extends AuthenticatedFeatureTestCase
 {
+    #[Test]
+    public function creating_quote_from_request_notifies_each_active_compras_user_independently(): void
+    {
+        $this->actingAsDemoUser('gerente_compras');
+        $primaryCompras = $this->demoUser('gerente_compras');
+        $comprasRole = Role::query()->where('slug', 'gerente_compras')->firstOrFail();
+        $secondCompras = User::factory()->create([
+            'role_id' => $comprasRole->id,
+            'active' => true,
+        ]);
+        $inactiveCompras = User::factory()->create([
+            'role_id' => $comprasRole->id,
+            'active' => false,
+        ]);
+        $client = Client::query()->create([
+            'company' => 'Cliente Avisos Compras',
+            'rfc' => 'CAC010101AAA',
+        ]);
+
+        $response = $this->postJson('/api/solicitudes', [
+            'client_id' => $client->id,
+            'raw_text' => '1 Equipo',
+            'lineas' => [[
+                'quantity' => 1,
+                'product' => 'Equipo',
+                'partNumber' => 'EQ-1',
+                'brand' => 'Marca',
+                'description' => 'Equipo',
+                'unit' => 'pza',
+            ]],
+        ])->assertCreated();
+
+        $quoteId = $response->json('quote_id');
+        $notifications = SalesNotification::query()
+            ->where('quote_id', $quoteId)
+            ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+            ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
+            ->get();
+
+        $this->assertCount(2, $notifications);
+        $this->assertEqualsCanonicalizing(
+            [$primaryCompras->id, $secondCompras->id],
+            $notifications->pluck('recipient_id')->all(),
+        );
+        $this->assertNotContains($inactiveCompras->id, $notifications->pluck('recipient_id')->all());
+
+        $this->actingAs($primaryCompras);
+        $primaryInbox = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+        $this->assertSame([$primaryCompras->id], $primaryInbox->pluck('recipientId')->all());
+
+        $this->actingAs($secondCompras);
+        $secondInbox = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+        $this->assertSame([$secondCompras->id], $secondInbox->pluck('recipientId')->all());
+    }
+
+    #[Test]
+    public function sync_command_backfills_missing_request_notifications_without_duplicates(): void
+    {
+        $primaryCompras = $this->demoUser('gerente_compras');
+        $comprasRole = Role::query()->where('slug', 'gerente_compras')->firstOrFail();
+        $secondCompras = User::factory()->create([
+            'role_id' => $comprasRole->id,
+            'active' => true,
+        ]);
+        $inactiveCompras = User::factory()->create([
+            'role_id' => $comprasRole->id,
+            'active' => false,
+        ]);
+        $client = Client::query()->create([
+            'company' => 'Cliente Backfill Compras',
+            'rfc' => 'CBC010101AAA',
+        ]);
+        $quoteDefaults = [
+            'client_id' => $client->id,
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'total' => 0,
+        ];
+        $pending = Quote::query()->create([...$quoteDefaults,
+            'folio' => 'COT-BACKFILL-PENDIENTE',
+            'status' => 'solicitud_cotizaciones',
+        ]);
+        $notPending = Quote::query()->create([...$quoteDefaults,
+            'folio' => 'COT-BACKFILL-ELABORACION',
+            'status' => 'en_elaboracion',
+        ]);
+
+        $this->artisan('sales:sync-compras-request-notifications')->assertSuccessful();
+        $this->artisan('sales:sync-compras-request-notifications')->assertSuccessful();
+
+        $notifications = SalesNotification::query()
+            ->where('quote_id', $pending->id)
+            ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
+            ->get();
+
+        $this->assertCount(2, $notifications);
+        $this->assertEqualsCanonicalizing(
+            [$primaryCompras->id, $secondCompras->id],
+            $notifications->pluck('recipient_id')->all(),
+        );
+        $this->assertNotContains($inactiveCompras->id, $notifications->pluck('recipient_id')->all());
+        $this->assertDatabaseMissing('sales_notifications', [
+            'quote_id' => $notPending->id,
+            'reason_code' => SalesNotificationService::REASON_SOLICITUD_COMPRAS,
+        ]);
+    }
+
     #[Test]
     public function storing_solicitud_with_lines_creates_quote_for_compras(): void
     {

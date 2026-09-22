@@ -300,8 +300,9 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
         $this->assertFalse(
             collect($list->json('data'))->contains(
                 fn ($n) => ($n['quoteId'] ?? '') === $quote->id
+                    && ($n['kind'] ?? '') === 'inbox'
             ),
-            'Otro vendedor no debe ver cotizaciones que no creó.'
+            'Otro vendedor no debe recibir el comentario directo en su bandeja personal.'
         );
 
         $this->actingAs($creator);
@@ -315,9 +316,10 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function ventas_sees_pipeline_alerts_only_for_own_quotes(): void
+    public function ventas_sees_unassigned_pipeline_alerts_from_the_shared_pool(): void
     {
         $creator = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
         $otherVentas = \App\Models\User::query()->create([
             'name' => 'Otra Venta',
             'email' => 'otra.venta.'.uniqid().'@test.local',
@@ -332,6 +334,10 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
             'created_by' => $creator->id,
             'folio' => 'COT-MIA-ELAB-'.uniqid(),
         ]);
+        $ownElab->forceFill([
+            'updated_at' => now()->subDays(5),
+            'last_activity_at' => now()->subDays(5),
+        ])->saveQuietly();
         $ownLista = $this->createQuote([
             'status' => 'pendiente_envio',
             'created_by' => $creator->id,
@@ -342,32 +348,103 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
             'created_by' => $otherVentas->id,
             'folio' => 'COT-AJENA-ELAB-'.uniqid(),
         ]);
+        $foreignElab->forceFill([
+            'updated_at' => now()->subDays(5),
+            'last_activity_at' => now()->subDays(5),
+        ])->saveQuietly();
         $foreignLista = $this->createQuote([
             'status' => 'pendiente_envio',
             'created_by' => $otherVentas->id,
             'folio' => 'COT-AJENA-LISTA-'.uniqid(),
         ]);
 
+        foreach ([[$ownElab, $creator], [$foreignElab, $otherVentas]] as [$idleQuote, $recipient]) {
+            $reminder = SalesNotification::query()->create([
+                'quote_id' => $idleQuote->id,
+                'sender_id' => $compras->id,
+                'recipient_id' => $recipient->id,
+                'audience' => 'ventas',
+                'reason_code' => 'sin_avance',
+                'message' => 'Da seguimiento a esta cotización.',
+            ]);
+            $reminder->forceFill([
+                'created_at' => now()->subDays(4),
+                'updated_at' => now()->subDays(4),
+            ])->saveQuietly();
+        }
+
         $this->actingAs($creator);
         $list = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
 
         $this->assertTrue($list->contains(
             fn ($n) => ($n['quoteId'] ?? '') === $ownElab->id
-                && ($n['reasonCode'] ?? '') === 'en_elaboracion'
-                && ($n['kind'] ?? '') === 'pipeline'
+                && ($n['reasonCode'] ?? '') === 'sin_avance'
         ));
         $this->assertTrue($list->contains(
             fn ($n) => ($n['quoteId'] ?? '') === $ownLista->id
                 && ($n['reasonCode'] ?? '') === 'lista_terminada'
                 && ($n['kind'] ?? '') === 'pipeline'
         ));
-        $this->assertFalse($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $foreignElab->id));
-        $this->assertFalse($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $foreignLista->id));
+        $this->assertTrue($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $foreignElab->id));
+        $this->assertTrue($list->contains(fn ($n) => ($n['quoteId'] ?? '') === $foreignLista->id));
 
         $this->actingAs($otherVentas);
         $otherList = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
-        $this->assertFalse($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownElab->id));
-        $this->assertFalse($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownLista->id));
+        $this->assertTrue($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownElab->id));
+        $this->assertTrue($otherList->contains(fn ($n) => ($n['quoteId'] ?? '') === $ownLista->id));
+    }
+
+    #[Test]
+    public function first_salesperson_claims_follow_up_and_second_salesperson_cannot_take_it(): void
+    {
+        $first = $this->demoUser('ventas');
+        $second = User::query()->create([
+            'name' => 'Ventas Suplente',
+            'email' => 'ventas.suplente.'.uniqid().'@test.local',
+            'username' => 'ventas_suplente_'.uniqid(),
+            'password' => bcrypt('demo'),
+            'role_id' => $first->role_id,
+            'active' => true,
+        ]);
+
+        $quote = $this->createQuote(['status' => 'pendiente_envio']);
+
+        $this->actingAs($first);
+        $this->postJson("/api/cotizaciones/{$quote->id}/seguimiento/tomar", [
+            'declaration' => '',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['declaration']);
+        $this->assertNull($quote->fresh()->follow_up_assigned_to);
+
+        $this->postJson("/api/cotizaciones/{$quote->id}/seguimiento/tomar", [
+            'declaration' => 'Me comunicaré con el cliente para continuar la cotización.',
+        ])
+            ->assertOk()
+            ->assertJsonPath('assigneeName', $first->name)
+            ->assertJsonPath('assignedToViewer', true);
+
+        $this->assertDatabaseHas('quotes', [
+            'id' => $quote->id,
+            'follow_up_assigned_to' => $first->id,
+        ]);
+        $this->assertDatabaseHas('quote_internal_notes', [
+            'quote_id' => $quote->id,
+            'user_id' => $first->id,
+            'body' => "Seguimiento tomado por {$first->name}. Declaración: Me comunicaré con el cliente para continuar la cotización.",
+        ]);
+
+        $this->actingAs($second);
+        $this->postJson("/api/cotizaciones/{$quote->id}/seguimiento/tomar", [
+            'declaration' => 'Daré seguimiento con el cliente durante el día.',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['quoteId']);
+
+        $pool = collect($this->getJson('/api/cotizaciones?recordatorios_pool=1&status=pendiente_envio')
+            ->assertOk()
+            ->json('data'));
+        $this->assertFalse($pool->contains(fn ($item) => ($item['id'] ?? null) === $quote->id));
     }
 
     #[Test]
@@ -499,9 +576,45 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function merely_opening_an_idle_quote_does_not_count_as_real_activity(): void
+    {
+        $ventas = $this->demoUser('ventas');
+        $this->actingAs($ventas);
+        $quote = $this->createQuote([
+            'status' => 'en_elaboracion',
+            'created_by' => $ventas->id,
+        ]);
+        $idleAt = now()->subDays(5);
+        $quote->forceFill([
+            'updated_at' => $idleAt,
+            'last_activity_at' => $idleAt,
+            'last_opened_at' => null,
+        ])->saveQuietly();
+
+        $this->postJson("/api/cotizaciones/{$quote->id}/bloqueo")->assertOk();
+
+        $quote->refresh();
+        $this->assertTrue($quote->last_opened_at->isToday());
+        $this->assertSame($idleAt->toDateTimeString(), $quote->last_activity_at->toDateTimeString());
+        $this->getJson("/api/cotizaciones/{$quote->id}/elegibilidad-aviso")
+            ->assertOk()
+            ->assertJsonPath('eligible', true)
+            ->assertJsonPath('reasonCode', 'sin_avance');
+    }
+
+    #[Test]
     public function auto_notify_creates_bell_for_idle_en_elaboracion(): void
     {
         $ventas = $this->demoUser('ventas');
+        $compras = $this->demoUser('gerente_compras');
+        $otherVentas = User::query()->create([
+            'name' => 'Venta disponible',
+            'email' => 'venta.disponible.'.uniqid().'@test.local',
+            'username' => 'venta_disponible_'.uniqid(),
+            'password' => bcrypt('demo'),
+            'role_id' => $ventas->role_id,
+            'active' => true,
+        ]);
         $quote = $this->createQuote([
             'status' => 'en_elaboracion',
             'created_by' => $ventas->id,
@@ -510,6 +623,20 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
         $quote->forceFill([
             'updated_at' => $idleAt,
             'last_opened_at' => $idleAt,
+            'last_activity_at' => $idleAt,
+        ])->saveQuietly();
+
+        $reminder = SalesNotification::query()->create([
+            'quote_id' => $quote->id,
+            'sender_id' => $compras->id,
+            'recipient_id' => $ventas->id,
+            'audience' => 'ventas',
+            'reason_code' => 'sin_avance',
+            'message' => 'Recordatorio inicial de Compras.',
+        ]);
+        $reminder->forceFill([
+            'created_at' => now()->subDays(4),
+            'updated_at' => now()->subDays(4),
         ])->saveQuietly();
 
         $this->artisan('sales:notify-idle-quotes')
@@ -519,13 +646,19 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
             'quote_id' => $quote->id,
             'audience' => 'ventas',
             'reason_code' => 'sin_avance',
-            'recipient_id' => $ventas->id,
+            'recipient_id' => $otherVentas->id,
         ]);
 
         // Dedupe: segundo run no duplica unread
         $this->artisan('sales:notify-idle-quotes')->assertSuccessful();
+        $beforeSecondRun = SalesNotification::query()
+            ->where('quote_id', $quote->id)
+            ->where('reason_code', 'sin_avance')
+            ->whereNull('read_at')
+            ->count();
+        $this->assertGreaterThanOrEqual(2, $beforeSecondRun);
         $this->assertSame(
-            1,
+            $beforeSecondRun,
             SalesNotification::query()
                 ->where('quote_id', $quote->id)
                 ->where('reason_code', 'sin_avance')
@@ -533,7 +666,7 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
                 ->count()
         );
 
-        $this->actingAs($ventas);
+        $this->actingAs($otherVentas);
         $list = $this->getJson('/api/notificaciones')->assertOk();
         $this->assertTrue(collect($list->json('data'))->contains(
             fn ($n) => ($n['quoteId'] ?? '') === $quote->id
@@ -579,14 +712,14 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
 
         $this->actingAs($ventas);
         $folios = collect($this->getJson('/api/cotizaciones')->assertOk()->json('data'))->pluck('folio');
-        $this->assertTrue($folios->contains($own->folio));
+        $this->assertTrue($folios->contains($own->folio), 'La lista propia debe incluir la cotización creada por ventas.');
         $this->assertFalse($folios->contains($foreign->folio));
         $this->getJson("/api/cotizaciones/{$foreign->id}")
             ->assertOk()
             ->assertJsonPath('ownedByViewer', false);
 
         $teamFolios = collect($this->getJson('/api/cotizaciones?scope=team')->assertOk()->json('data'))->pluck('folio');
-        $this->assertTrue($teamFolios->contains($foreign->folio));
+        $this->assertTrue($teamFolios->contains($foreign->folio), 'La vista de equipo debe incluir la cotización ajena.');
         $this->assertFalse($teamFolios->contains($own->folio));
 
         $this->postJson("/api/cotizaciones/{$foreign->id}/bloqueo")->assertForbidden();
@@ -600,7 +733,7 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
 
         $this->actingAs($ventas);
         $foliosAfter = collect($this->getJson('/api/cotizaciones')->assertOk()->json('data'))->pluck('folio');
-        $this->assertTrue($foliosAfter->contains($foreign->folio));
+        $this->assertTrue($foliosAfter->contains($foreign->folio), 'El aviso directo de compras debe dar visibilidad a ventas.');
         $this->getJson("/api/cotizaciones/{$foreign->id}")->assertOk();
     }
 

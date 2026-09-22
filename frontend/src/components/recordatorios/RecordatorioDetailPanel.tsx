@@ -109,7 +109,7 @@ export function RecordatorioDetailPanel({
   }
 
   return (
-    <aside className="sticky top-20 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
+    <aside className="fixed inset-x-3 top-3 z-40 mx-auto flex max-h-[calc(100dvh-1.5rem)] w-auto max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg xl:sticky xl:top-20 xl:mx-0 xl:max-h-[calc(100vh-6rem)] xl:max-w-none">
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <h2 className="truncate font-semibold text-slate-900">{data.folio}</h2>
         <Button type="button" variant="ghost" size="sm" onClick={onClose}>
@@ -200,16 +200,6 @@ export function RecordatorioDetailPanel({
               </p>
             ) : null}
 
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!isPersistedQuoteId(quoteId)}
-              onClick={() => void openQuotePdf(quoteId)}
-            >
-              Ver PDF de la cotización
-            </Button>
-
             {comprasView && (
               <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
                 <div>
@@ -264,6 +254,16 @@ export function RecordatorioDetailPanel({
                 </Button>
               </div>
             )}
+
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!isPersistedQuoteId(quoteId)}
+              onClick={() => void openQuotePdf(quoteId)}
+            >
+              Ver PDF de la cotización
+            </Button>
 
             {!comprasView && canEdit && isPersistedQuoteId(quoteId) && (
               <QuoteFollowUpPanel

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Quote;
 use App\Models\SalesNotification;
 use App\Services\Sales\QuoteFollowUpService;
+use App\Services\Sales\QuoteFollowUpAssignmentService;
 use App\Services\Sales\SalesNotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,6 +16,7 @@ class NotificacionController extends Controller
     public function __construct(
         private readonly SalesNotificationService $notifications,
         private readonly QuoteFollowUpService $followUps,
+        private readonly QuoteFollowUpAssignmentService $assignments,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -82,5 +84,36 @@ class NotificacionController extends Controller
         $quote = Quote::query()->findOrFail($id);
 
         return response()->json($this->notifications->eligibility($quote));
+    }
+
+    public function claim(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'declaration' => ['required', 'string', 'min:10', 'max:1000'],
+        ]);
+        $quote = Quote::query()->findOrFail($id);
+        $claimed = $this->assignments->claim($quote, $request->user(), trim($data['declaration']));
+
+        return response()->json([
+            'quoteId' => $claimed->id,
+            'assigneeId' => $claimed->follow_up_assigned_to,
+            'assigneeName' => $claimed->followUpAssignee?->name,
+            'assignedAt' => $claimed->follow_up_assigned_at?->toIso8601String(),
+            'assignedToViewer' => true,
+        ]);
+    }
+
+    public function release(Request $request, string $id): JsonResponse
+    {
+        $quote = Quote::query()->findOrFail($id);
+        $released = $this->assignments->release($quote, $request->user());
+
+        return response()->json([
+            'quoteId' => $released->id,
+            'assigneeId' => null,
+            'assigneeName' => null,
+            'assignedAt' => null,
+            'assignedToViewer' => false,
+        ]);
     }
 }

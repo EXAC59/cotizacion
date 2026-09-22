@@ -35,6 +35,13 @@ class Quote extends Model
         'sent_at',
         'response_received_at',
         'last_opened_at',
+        'last_activity_at',
+        'last_activity_by',
+        'purchase_assigned_to',
+        'purchase_assigned_by',
+        'purchase_assigned_at',
+        'purchase_completed_at',
+        'purchase_escalated_at',
         'invoice_number',
         'follow_up_status',
         'follow_up_invoice',
@@ -42,6 +49,9 @@ class Quote extends Model
         'follow_up_remind_at',
         'follow_up_at',
         'follow_up_by',
+        'follow_up_assigned_to',
+        'follow_up_assigned_by',
+        'follow_up_assigned_at',
         'locked_by',
         'locked_at',
         'involucrado',
@@ -59,8 +69,13 @@ class Quote extends Model
             'sent_at' => 'datetime',
             'response_received_at' => 'datetime',
             'last_opened_at' => 'datetime',
+            'last_activity_at' => 'datetime',
+            'purchase_assigned_at' => 'datetime',
+            'purchase_completed_at' => 'datetime',
+            'purchase_escalated_at' => 'datetime',
             'follow_up_remind_at' => 'datetime',
             'follow_up_at' => 'datetime',
+            'follow_up_assigned_at' => 'datetime',
             'locked_at' => 'datetime',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
@@ -75,6 +90,21 @@ class Quote extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function lastActivityByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'last_activity_by');
+    }
+
+    public function purchaseAssignee(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'purchase_assigned_to');
+    }
+
+    public function purchaseAssignedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'purchase_assigned_by');
     }
 
     public static function normalizeDisplayName(?string $name): string
@@ -109,6 +139,16 @@ class Quote extends Model
         return $this->belongsTo(User::class, 'follow_up_by');
     }
 
+    public function followUpAssignee(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'follow_up_assigned_to');
+    }
+
+    public function followUpAssignedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'follow_up_assigned_by');
+    }
+
     public function followUpEvents(): HasMany
     {
         return $this->hasMany(QuoteFollowUpEvent::class, 'quote_id')->orderByDesc('created_at');
@@ -130,6 +170,10 @@ class Quote extends Model
         return $query->where(function ($outer) use ($user) {
             $outer->where('created_by', $user->id)
                 ->orWhere(fn ($byName) => $byName->madeByDisplayName($user))
+                ->orWhere(function ($assigned) use ($user) {
+                    $assigned->whereNotNull('follow_up_assigned_to')
+                        ->where('follow_up_assigned_to', $user->id);
+                })
                 ->orWhereHas('salesNotifications', function ($notification) use ($user) {
                     $notification->where('audience', 'ventas')
                         ->where('recipient_id', $user->id)

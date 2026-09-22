@@ -7,6 +7,7 @@ use App\Models\ComparisonJob;
 use App\Models\Quote;
 use App\Models\QuoteLineOffer;
 use App\Models\QuoteRequest;
+use App\Services\Sales\SalesNotificationService;
 use App\Models\User;
 use App\Models\Wholesaler;
 use App\Services\Wholesalers\CvaCatalogIndex;
@@ -229,6 +230,7 @@ class DashboardAnalyticsService
         return [
             'lowStock' => $this->lowStockAlerts(),
             'pendingQuotes' => $this->pendingQuotes($viewer),
+            'purchaseRequestQuotes' => $this->purchaseRequestQuotes($viewer),
             'unansweredQuotes' => $this->unansweredQuotes($viewer),
             'readyForSalesQuotes' => $this->readyForSalesQuotes($viewer),
             'integrationIssues' => $this->integrationIssues(),
@@ -259,8 +261,8 @@ class DashboardAnalyticsService
     }
 
     /**
-     * Recordatorios del Dashboard: ventas ve solo los propios; compras y admin,
-     * únicamente los elaborados por ventas.
+     * Recordatorios del Dashboard: ventas ve los propios y los avisos compartidos
+     * que recibió por abandono; compras y admin, los elaborados por ventas.
      *
      * @param  \Illuminate\Database\Eloquent\Builder<Quote>  $query
      * @return \Illuminate\Database\Eloquent\Builder<Quote>
@@ -268,7 +270,22 @@ class DashboardAnalyticsService
     private function constrainDashboardReminderMaker($query, ?User $viewer)
     {
         if ($viewer?->role_slug === 'ventas') {
-            return $this->constrainQuoteMaker($query, $viewer);
+            $query->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
+                ->where(function ($assignment) use ($viewer) {
+                    $assignment->whereNull('follow_up_assigned_to')
+                        ->orWhere('follow_up_assigned_to', $viewer->id);
+                })
+                ->where(function ($visible) use ($viewer) {
+                    $visible->where('created_by', $viewer->id)
+                        ->orWhere(fn ($byName) => $byName->madeByDisplayName($viewer))
+                        ->orWhereHas('salesNotifications', function ($notification) use ($viewer) {
+                            $notification->where('recipient_id', $viewer->id)
+                                ->where('reason_code', SalesNotificationService::REASON_SIN_AVANCE)
+                                ->whereNull('read_at');
+                        });
+                });
+
+            return $query;
         }
 
         if (in_array($viewer?->role_slug, ['administrador', 'gerente_compras'], true)) {
@@ -622,18 +639,17 @@ class DashboardAnalyticsService
 
         return $this->constrainDashboardReminderMaker(Quote::query()->with(['client', 'creator']), $viewer)
             ->whereIn('status', ['en_elaboracion', 'pendiente_envio'])
-            ->where('updated_at', '<', $cutoff)
             ->where(function ($query) use ($cutoff) {
-                $query->whereNull('last_opened_at')
-                    ->orWhere('last_opened_at', '<', $cutoff);
+                $query->where('last_activity_at', '<', $cutoff)
+                    ->orWhere(function ($legacy) use ($cutoff) {
+                        $legacy->whereNull('last_activity_at')->where('updated_at', '<', $cutoff);
+                    });
             })
             ->orderBy('updated_at')
             ->limit(10)
             ->get()
             ->map(function (Quote $quote) {
-                $lastActivity = $quote->last_opened_at?->gt($quote->updated_at)
-                    ? $quote->last_opened_at
-                    : $quote->updated_at;
+                $lastActivity = $quote->last_activity_at ?? $quote->updated_at;
 
                 return [
                     'id' => $quote->id,
@@ -644,6 +660,44 @@ class DashboardAnalyticsService
                     'lastActivityAt' => $lastActivity?->toIso8601String(),
                 ];
             })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Cotizaciones recién solicitadas que todavía esperan revisión de Compras.
+     * Ventas conserva su vista propia y no recibe el listado general del equipo.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function purchaseRequestQuotes(?User $viewer = null): array
+    {
+        if (! in_array($viewer?->role_slug, ['gerente_compras', 'administrador'], true)) {
+            return [];
+        }
+
+        return Quote::query()
+            ->with(['client', 'creator', 'purchaseAssignee'])
+            ->where('status', 'solicitud_cotizaciones')
+            ->orderByRaw('CASE WHEN purchase_escalated_at IS NOT NULL THEN 0 ELSE 1 END')
+            ->orderByDesc('created_at')
+            ->limit(20)
+            ->get()
+            ->map(fn (Quote $quote) => [
+                'id' => $quote->id,
+                'folio' => $quote->folio,
+                'clientName' => $quote->client?->company ?? '',
+                'createdByName' => $quote->creator?->name,
+                'purchaseAttentionStatus' => $quote->purchase_assigned_to ? 'en_atencion' : 'disponible',
+                'purchaseAssigneeId' => $quote->purchase_assigned_to,
+                'purchaseAssigneeName' => $quote->purchaseAssignee?->name,
+                'purchaseAssignedAt' => $quote->purchase_assigned_at?->toIso8601String(),
+                'purchaseEscalatedAt' => $quote->purchase_escalated_at?->toIso8601String(),
+                'daysWaiting' => $quote->created_at
+                    ? (int) $quote->created_at->diffInDays(now())
+                    : 0,
+                'updatedAt' => $quote->updated_at?->toIso8601String(),
+            ])
             ->values()
             ->all();
     }

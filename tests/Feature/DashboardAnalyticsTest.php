@@ -11,6 +11,7 @@ use App\Models\QuoteLineOffer;
 use App\Models\QuoteRequest;
 use App\Models\QuoteRequestLine;
 use App\Models\QuoteStatusEvent;
+use App\Models\SalesNotification;
 use App\Models\User;
 use App\Models\Wholesaler;
 use App\Services\Quotes\QuoteLockService;
@@ -293,11 +294,15 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
         ], $ventas);
         Quote::query()->whereKey($staleDraft->id)->update([
             'updated_at' => '2026-06-01 10:00:00',
+            'last_activity_at' => '2026-06-01 10:00:00',
         ]);
 
         $expiring = $this->createQuote('COT-EXPIRE', 'en_elaboracion', [
             ['product' => 'Expire', 'partNumber' => 'EXP-1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 20],
         ], null, 2);
+        $purchaseRequest = $this->createQuote('COT-SOLICITUD-COMPRAS', 'solicitud_cotizaciones', [
+            ['product' => 'Solicitud', 'partNumber' => 'SOL-1', 'quantity' => 1, 'cost' => 10, 'salePrice' => 20],
+        ]);
 
         $this->actingAsDemoUser('administrador');
 
@@ -329,6 +334,7 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
                 'alerts' => [
                     'lowStock',
                     'pendingQuotes',
+                    'purchaseRequestQuotes',
                     'unansweredQuotes',
                     'readyForSalesQuotes',
                     'integrationIssues',
@@ -349,6 +355,9 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
         $this->assertTrue(
             collect($response->json('alerts.unansweredQuotes'))->contains('folio', $staleDraft->folio)
         );
+        $this->assertTrue(
+            collect($response->json('alerts.purchaseRequestQuotes'))->contains('folio', $purchaseRequest->folio)
+        );
         $this->assertNotEmpty($response->json('alerts.integrationIssues'));
         $this->assertTrue(
             collect($response->json('alerts.expiringQuotes'))->contains('folio', $expiring->folio)
@@ -362,7 +371,7 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function stale_quote_alert_uses_status_and_resets_when_the_quote_is_opened(): void
+    public function stale_quote_alert_uses_real_activity_and_does_not_reset_when_opened(): void
     {
         Carbon::setTestNow('2026-08-13 12:00:00');
         $ventas = $this->demoUser('ventas');
@@ -379,6 +388,7 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
 
         Quote::query()->whereKey([$draft->id, $ready->id, $sent->id])->update([
             'updated_at' => '2026-08-01 12:00:00',
+            'last_activity_at' => '2026-08-01 12:00:00',
         ]);
 
         $this->actingAsDemoUser('administrador');
@@ -402,7 +412,7 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
             $this->getJson('/api/dashboard')->assertOk()->json('alerts.unansweredQuotes')
         );
 
-        $this->assertFalse(
+        $this->assertTrue(
             $afterOpening->contains('folio', $draft->folio),
         );
         $this->assertTrue($afterOpening->contains('folio', $ready->folio));
@@ -428,6 +438,7 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
 
         Quote::query()->whereKey([$salesQuote->id, $adminQuote->id])->update([
             'updated_at' => '2026-08-01 12:00:00',
+            'last_activity_at' => '2026-08-01 12:00:00',
         ]);
 
         foreach ([$admin, $compras] as $viewer) {
@@ -438,6 +449,46 @@ class DashboardAnalyticsTest extends AuthenticatedFeatureTestCase
             $this->assertTrue($folios->contains($salesQuote->folio));
             $this->assertFalse($folios->contains($adminQuote->folio));
         }
+
+        Carbon::setTestNow();
+    }
+
+    #[Test]
+    public function ventas_dashboard_includes_shared_abandoned_quote_but_not_other_regular_quotes(): void
+    {
+        Carbon::setTestNow('2026-09-21 12:00:00');
+        $viewer = $this->demoUser('ventas');
+        $otherVentas = User::query()->create([
+            'name' => 'Ventas de respaldo',
+            'email' => 'ventas.respaldo.dashboard@test.local',
+            'username' => 'ventas_respaldo_dashboard',
+            'password' => bcrypt('demo'),
+            'role_id' => $viewer->role_id,
+            'active' => true,
+        ]);
+
+        $shared = $this->createQuote('COT-SHARED-ABANDONED', 'en_elaboracion', [
+            ['product' => 'Compartida', 'partNumber' => 'SHARED-1', 'quantity' => 1, 'cost' => 100, 'salePrice' => 130],
+        ], $otherVentas);
+        $shared->forceFill([
+            'updated_at' => now()->subDays(5),
+            'last_activity_at' => now()->subDays(5),
+        ])->saveQuietly();
+
+        SalesNotification::query()->create([
+            'quote_id' => $shared->id,
+            'sender_id' => null,
+            'recipient_id' => $viewer->id,
+            'audience' => 'ventas',
+            'reason_code' => 'sin_avance',
+            'message' => 'Disponible para tomar.',
+        ]);
+
+        $this->actingAs($viewer);
+        $response = $this->getJson('/api/dashboard')->assertOk();
+
+        $this->assertTrue(collect($response->json('alerts.unansweredQuotes'))->contains('folio', $shared->folio));
+        $this->assertFalse(collect($response->json('recentQuotes'))->contains('folio', $shared->folio));
 
         Carbon::setTestNow();
     }

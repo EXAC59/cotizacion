@@ -4,7 +4,9 @@ namespace App\Services\Sales;
 
 use App\Models\Quote;
 use App\Models\QuoteFollowUpEvent;
+use App\Models\QuoteInternalNote;
 use App\Models\User;
+use App\Services\Quotes\QuoteActivityService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -27,6 +29,7 @@ class QuoteFollowUpService
 
     public function __construct(
         private readonly SalesNotificationService $notifications,
+        private readonly QuoteActivityService $activity,
     ) {}
 
     /**
@@ -49,10 +52,20 @@ class QuoteFollowUpService
             ]);
         }
 
-        if ($actor->role_slug === 'ventas' && ! $quote->isVisibleToSalesperson($actor)) {
-            throw ValidationException::withMessages([
-                'status' => 'Solo puedes dar seguimiento a cotizaciones que creaste o que compras te envió.',
-            ]);
+        if ($actor->role_slug === 'ventas') {
+            if (
+                $quote->follow_up_assigned_to !== null
+                && (int) $quote->follow_up_assigned_to !== (int) $actor->id
+            ) {
+                throw ValidationException::withMessages([
+                    'status' => 'Esta cotización está asignada a otro vendedor para su seguimiento.',
+                ]);
+            }
+            if (! $quote->isVisibleToSalesperson($actor)) {
+                throw ValidationException::withMessages([
+                    'status' => 'Solo puedes dar seguimiento a cotizaciones que creaste o que compras te envió.',
+                ]);
+            }
         }
 
         $status = $payload['status'] ?? '';
@@ -121,6 +134,21 @@ class QuoteFollowUpService
                 'comments' => $status === 'perdida' ? $comments : null,
                 'created_at' => $now,
             ]);
+
+            $detail = match ($status) {
+                'negociacion' => 'Próximo seguimiento: '.$remindAt?->toDateString().'.',
+                'ganada' => "Factura/ticket: {$invoice}.",
+                'perdida' => "Motivo: {$comments}",
+                default => '',
+            };
+            QuoteInternalNote::query()->create([
+                'quote_id' => $quote->id,
+                'user_id' => $actor->id,
+                'body' => "Seguimiento actualizado a {$labels[$status]}. {$detail}",
+                'created_at' => $now,
+            ]);
+
+            $quote = $this->activity->record($quote, $actor);
 
             $this->notifications->notifyComprasFollowUp($quote, $actor, $labels[$status]);
 

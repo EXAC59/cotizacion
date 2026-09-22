@@ -12,7 +12,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { useData } from '@/hooks/useData'
 import { quoteTotals } from '@/lib/calculations'
-import { formatCurrency, formatDate } from '@/lib/format'
+import { formatCurrency, formatDateTime } from '@/lib/format'
 import { matchesQuoteListFilters } from '@/lib/quote-list-filters'
 import { buildQuoteSearchParams } from '@/lib/quote-search-params'
 import { QUOTE_WORKFLOW_ORDER, quoteWorkflowIndex } from '@/lib/quote-status'
@@ -326,7 +326,9 @@ export function QuotesPage() {
                           q.total ?? quoteTotals(q.lines, q.taxPercent).total,
                         )}
                       </td>
-                      <td className="px-5 py-3 text-slate-500">{formatDate(q.createdAt)}</td>
+                      <td className="whitespace-nowrap px-5 py-3 text-slate-500">
+                        {formatDateTime(q.createdAt)}
+                      </td>
                       <td className="px-5 py-3 text-right">
                         <Button
                           variant="secondary"

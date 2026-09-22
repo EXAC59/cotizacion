@@ -7,6 +7,7 @@ import {
   Mail,
   MessageCircle,
   Save,
+  UserCheck,
   X,
 } from 'lucide-react'
 import { ClientSearchSelect } from '@/components/clients/ClientSearchSelect'
@@ -44,10 +45,12 @@ import { formatDateTime } from '@/lib/format'
 import {
   fetchNextQuoteFolio,
   addQuoteInternalNote,
+  claimPurchaseRequest,
   getQuoteById,
   isPersistedQuoteId,
   openQuotePdf,
   persistQuote,
+  releasePurchaseRequest,
   sendQuoteByEmail,
 } from '@/lib/quotes-api'
 import {
@@ -112,11 +115,6 @@ function QuoteFormEditor({
     () => localExisting?.createdByName ?? '',
   )
   const viewingOthers = ownedByViewer === false
-  const needsEditLock =
-    !isNew &&
-    isPersistedQuoteId(quoteId ?? '') &&
-    (canEdit || canCreate) &&
-    ownedByViewer === true
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [loadedRequest, setLoadedRequest] = useState<QuoteRequest | null>(null)
   const [loadingQuote, setLoadingQuote] = useState(!isNew)
@@ -139,6 +137,26 @@ function QuoteFormEditor({
   const [savedStatus, setSavedStatus] = useState<QuoteStatus>(
     () => localExisting?.status ?? (requestId ? 'solicitud_cotizaciones' : 'en_elaboracion'),
   )
+  const [purchaseAttention, setPurchaseAttention] = useState(() => ({
+    status: localExisting?.purchaseAttentionStatus ?? 'disponible',
+    assigneeId: localExisting?.purchaseAssigneeId ?? null,
+    assigneeName: localExisting?.purchaseAssigneeName ?? null,
+    assignedAt: localExisting?.purchaseAssignedAt ?? null,
+    completedAt: localExisting?.purchaseCompletedAt ?? null,
+    escalatedAt: localExisting?.purchaseEscalatedAt ?? null,
+    assignedToViewer: localExisting?.purchaseAssignedToViewer ?? false,
+  }))
+  const [purchaseActionLoading, setPurchaseActionLoading] = useState(false)
+  const [purchaseActionError, setPurchaseActionError] = useState<string | null>(null)
+  const isPurchasingUser = user?.role === 'gerente_compras' || user?.role === 'administrador'
+  const purchaseClaimRequired = !isNew && status === 'solicitud_cotizaciones' && isPurchasingUser
+  const canEditPurchaseRequest = !purchaseClaimRequired || purchaseAttention.assignedToViewer
+  const needsEditLock =
+    !isNew &&
+    isPersistedQuoteId(quoteId ?? '') &&
+    (canEdit || canCreate) &&
+    ownedByViewer === true &&
+    canEditPurchaseRequest
   const [globalMargin, setGlobalMargin] = useState(
     () => localExisting?.globalMarginPercent ?? DEFAULT_MARGIN,
   )
@@ -341,6 +359,15 @@ function QuoteFormEditor({
         setStatusHistory(quote.statusHistory ?? [])
         setOwnedByViewer(quote.ownedByViewer ?? true)
         setViewerCreatedByName(quote.createdByName ?? '')
+        setPurchaseAttention({
+          status: quote.purchaseAttentionStatus ?? 'disponible',
+          assigneeId: quote.purchaseAssigneeId ?? null,
+          assigneeName: quote.purchaseAssigneeName ?? null,
+          assignedAt: quote.purchaseAssignedAt ?? null,
+          completedAt: quote.purchaseCompletedAt ?? null,
+          escalatedAt: quote.purchaseEscalatedAt ?? null,
+          assignedToViewer: quote.purchaseAssignedToViewer ?? false,
+        })
         saveQuote(quote)
       })
       .catch(() => {
@@ -365,9 +392,9 @@ function QuoteFormEditor({
   const client = selectedClient
   const request = loadedRequest ?? undefined
 
-  const quoteFieldsReadOnly = viewingOthers || (!canEdit && !canCreate)
+  const quoteFieldsReadOnly = viewingOthers || (!canEdit && !canCreate) || !canEditPurchaseRequest
   const canSaveQuote =
-    !viewingOthers && ((isNew && canCreate) || (!isNew && (canEdit || canApprove)))
+    !viewingOthers && canEditPurchaseRequest && ((isNew && canCreate) || (!isNew && (canEdit || canApprove)))
 
   const newQuoteDirty =
     isNew &&
@@ -468,6 +495,15 @@ function QuoteFormEditor({
       setStatusHistory(saved.statusHistory ?? [])
       setCustomerObservations(saved.customerObservations ?? '')
       setInternalNotes(saved.internalNotes ?? internalNotes)
+      setPurchaseAttention({
+        status: saved.purchaseAttentionStatus ?? purchaseAttention.status,
+        assigneeId: saved.purchaseAssigneeId ?? null,
+        assigneeName: saved.purchaseAssigneeName ?? null,
+        assignedAt: saved.purchaseAssignedAt ?? null,
+        completedAt: saved.purchaseCompletedAt ?? null,
+        escalatedAt: saved.purchaseEscalatedAt ?? null,
+        assignedToViewer: saved.purchaseAssignedToViewer ?? false,
+      })
       await waitMinBusyMs(busyStarted)
       if (navigateAfter) {
         navigate(`/cotizaciones/${saved.id}`)
@@ -517,6 +553,58 @@ function QuoteFormEditor({
       setInternalNoteError(err instanceof Error ? err.message : 'No se pudo agregar la nota interna.')
     } finally {
       setAddingInternalNote(false)
+    }
+  }
+
+  const handleClaimPurchaseRequest = async () => {
+    const id = serverQuoteId ?? quoteId
+    if (!id) return
+    setPurchaseActionLoading(true)
+    setPurchaseActionError(null)
+    try {
+      const result = await claimPurchaseRequest(id)
+      setPurchaseAttention({
+        status: result.purchaseAttentionStatus,
+        assigneeId: result.purchaseAssigneeId,
+        assigneeName: result.purchaseAssigneeName,
+        assignedAt: result.purchaseAssignedAt,
+        completedAt: result.purchaseCompletedAt,
+        escalatedAt: result.purchaseEscalatedAt,
+        assignedToViewer: result.purchaseAssignedToViewer,
+      })
+      const refreshed = await getQuoteById(id)
+      setInternalNotes(refreshed.internalNotes ?? [])
+      saveQuote(refreshed)
+    } catch (err) {
+      setPurchaseActionError(err instanceof Error ? err.message : 'No se pudo tomar la solicitud.')
+    } finally {
+      setPurchaseActionLoading(false)
+    }
+  }
+
+  const handleReleasePurchaseRequest = async () => {
+    const id = serverQuoteId ?? quoteId
+    if (!id) return
+    setPurchaseActionLoading(true)
+    setPurchaseActionError(null)
+    try {
+      const result = await releasePurchaseRequest(id)
+      setPurchaseAttention({
+        status: result.purchaseAttentionStatus,
+        assigneeId: result.purchaseAssigneeId,
+        assigneeName: result.purchaseAssigneeName,
+        assignedAt: result.purchaseAssignedAt,
+        completedAt: result.purchaseCompletedAt,
+        escalatedAt: result.purchaseEscalatedAt,
+        assignedToViewer: result.purchaseAssignedToViewer,
+      })
+      const refreshed = await getQuoteById(id)
+      setInternalNotes(refreshed.internalNotes ?? [])
+      saveQuote(refreshed)
+    } catch (err) {
+      setPurchaseActionError(err instanceof Error ? err.message : 'No se pudo liberar la solicitud.')
+    } finally {
+      setPurchaseActionLoading(false)
     }
   }
 
@@ -802,6 +890,55 @@ function QuoteFormEditor({
           </>
         }
       />
+
+      {isPurchasingUser && !isNew && status === 'solicitud_cotizaciones' && (
+        <div className={`mb-4 rounded-xl border px-4 py-3 ${
+          purchaseAttention.status === 'en_atencion'
+            ? 'border-emerald-200 bg-emerald-50'
+            : 'border-indigo-200 bg-indigo-50'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Atención de Compras</p>
+              <p className="mt-1 text-sm text-slate-700">
+                {purchaseAttention.status === 'en_atencion'
+                  ? `La está atendiendo ${purchaseAttention.assigneeName ?? 'un comprador'}.`
+                  : 'Esta solicitud está disponible para que un comprador la tome.'}
+              </p>
+              {purchaseAttention.escalatedAt && (
+                <p className="mt-1 text-xs font-medium text-amber-700">
+                  Solicitud escalada por tiempo sin atención.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {purchaseAttention.assignedToViewer ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={purchaseActionLoading}
+                  onClick={() => void handleReleasePurchaseRequest()}
+                >
+                  {purchaseActionLoading ? <InlineBusy size="sm" /> : null}
+                  Liberar solicitud
+                </Button>
+              ) : purchaseAttention.status === 'disponible' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={purchaseActionLoading}
+                  onClick={() => void handleClaimPurchaseRequest()}
+                >
+                  {purchaseActionLoading ? <InlineBusy size="sm" /> : <UserCheck className="h-4 w-4" />}
+                  Tomar solicitud
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          {purchaseActionError && <p className="mt-2 text-sm text-red-700">{purchaseActionError}</p>}
+        </div>
+      )}
 
       {isListaTerminada && !viewingOthers && (
         <p className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-950">

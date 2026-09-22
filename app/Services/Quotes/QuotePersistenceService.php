@@ -20,6 +20,8 @@ class QuotePersistenceService
         private readonly QuoteLockService $quoteLockService,
         private readonly QuoteFolioGenerator $folioGenerator,
         private readonly QuoteStatusHistoryService $statusHistory,
+        private readonly QuoteActivityService $activity,
+        private readonly PurchaseRequestWorkflowService $purchaseWorkflow,
     ) {}
 
     /**
@@ -71,6 +73,7 @@ class QuotePersistenceService
             $this->statusGuard->assertForwardOnly($existingQuote, $requestedStatus);
 
             if ($existingQuote !== null) {
+                $this->purchaseWorkflow->assertCanEdit($existingQuote, Auth::user());
                 $this->quoteLockService->assertHeldByCurrentUser($existingQuote);
             }
 
@@ -156,7 +159,8 @@ class QuotePersistenceService
                 $this->statusHistory->record($quote, $previousStatus, $requestedStatus);
             }
 
-            return $quote->fresh(['lines.offers.wholesaler', 'client']);
+            return $this->activity->record($quote, Auth::user())
+                ->load(['lines.offers.wholesaler', 'client']);
         });
     }
 

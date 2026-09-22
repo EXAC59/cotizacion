@@ -150,6 +150,32 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
             ->assertOk()
             ->assertJsonPath('customerObservations', 'Entrega estimada de 3 a 5 días.')
             ->assertJsonPath('internalNotes.0.body', 'Compras debe confirmar disponibilidad antes de enviar.');
+
+        $this->postJson("/api/cotizaciones/{$quoteId}/bloqueo")->assertOk();
+        $this->postJson('/api/cotizaciones', [
+            'id' => $quoteId,
+            'clientId' => $client->id,
+            'status' => 'en_elaboracion',
+            'customerObservations' => 'Entrega estimada de 3 a 5 días.',
+            'lines' => [[
+                'quantity' => 1,
+                'product' => 'Producto actualizado',
+                'partNumber' => 'SKU-OBS',
+                'cost' => 100,
+                'marginPercent' => 30,
+            ]],
+        ])->assertCreated()
+            ->assertJsonPath(
+                'internalNotes.0.body',
+                'Tarea realizada al guardar la cotización: 1 partida(s) guardada(s).'
+            )
+            ->assertJsonPath('lastActivityById', auth()->id());
+
+        $saved = Quote::query()->findOrFail($quoteId);
+        $this->assertNotNull($saved->last_activity_at);
+        if (auth()->user()?->role_slug === 'ventas') {
+            $this->assertStringContainsString((string) auth()->user()?->name, (string) $saved->involucrado);
+        }
     }
 
     #[Test]
@@ -350,7 +376,7 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_allows_regressing_quote_status(): void
+    public function it_marks_an_edited_sent_quote_as_modificacion(): void
     {
         $client = Client::query()->create([
             'company' => 'Lock Test SA',
@@ -394,7 +420,7 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
             'status' => 'en_elaboracion',
             'lines' => [$line],
         ])->assertCreated()
-            ->assertJsonPath('status', 'en_elaboracion');
+            ->assertJsonPath('status', 'modificacion');
     }
 
     #[Test]
