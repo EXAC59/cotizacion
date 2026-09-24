@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Mail;
 use RuntimeException;
+use Carbon\Carbon;
 
 class SendQuoteEmailJob implements ShouldQueue
 {
@@ -27,6 +28,7 @@ class SendQuoteEmailJob implements ShouldQueue
         public ?string $subject = null,
         public ?string $message = null,
         public ?int $sentByUserId = null,
+        public ?string $sentAt = null,
     ) {}
 
     public function handle(QuotePdfService $pdfService): void
@@ -62,11 +64,15 @@ class SendQuoteEmailJob implements ShouldQueue
         if (in_array($quote->status, $sentFrom, true)) {
             $quote->update([
                 'status' => 'enviada',
-                'sent_at' => now(),
+                'sent_at' => $this->sentAt !== null
+                    ? Carbon::parse($this->sentAt)
+                    : ($quote->sent_at ?? now()),
                 'response_received_at' => null,
             ]);
         } elseif ($quote->status === 'enviada' && $quote->sent_at === null) {
-            $quote->update(['sent_at' => now()]);
+            $quote->update([
+                'sent_at' => $this->sentAt !== null ? Carbon::parse($this->sentAt) : now(),
+            ]);
         }
     }
 }

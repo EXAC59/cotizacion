@@ -876,9 +876,32 @@ class CtCatalogIndex
                 ],
             ]);
 
-            $body = @file_get_contents($url, false, $context);
+            $attempts = max(1, (int) env(self::PREFIX.'_FTP_RETRIES', 2) + 1);
+            $body = false;
+            $lastError = null;
+            $startedAt = microtime(true);
+
+            for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+                $body = @file_get_contents($url, false, $context);
+                if ($body !== false && $body !== '') {
+                    break;
+                }
+
+                $lastError = error_get_last()['message'] ?? null;
+                if ($attempt < $attempts) {
+                    usleep(250000 * $attempt);
+                }
+            }
+
             if ($body === false || $body === '') {
-                Log::warning('CT catalog FTP download failed', ['host' => $host, 'path' => $path]);
+                Log::warning('CT catalog FTP download failed', [
+                    'host' => $host,
+                    'path' => $path,
+                    'attempts' => $attempts,
+                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'error' => $lastError,
+                    'fallback' => $this->localCatalogPaths() !== [] ? 'local_catalog' : 'none',
+                ]);
 
                 return [];
             }

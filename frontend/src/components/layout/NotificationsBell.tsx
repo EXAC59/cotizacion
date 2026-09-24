@@ -47,6 +47,18 @@ function mapOperationalAlerts(unanswered: DashboardAlertQuote[]): OperationalAle
   }))
 }
 
+function mapPurchaseRequestAlerts(quotes: DashboardAlertQuote[]): OperationalAlert[] {
+  return quotes.map((quote) => ({
+    id: `purchase-request-${quote.id}`,
+    quoteId: quote.id,
+    folio: quote.folio,
+    label: 'Solicitud de cotización',
+    detail: quote.purchaseAttentionStatus === 'en_atencion'
+      ? `En atención por ${quote.purchaseAssigneeName ?? 'Compras'}`
+      : 'Pendiente de revisión por Compras',
+  }))
+}
+
 export function NotificationsBell() {
   const { user } = useAuth()
   const { can } = usePermission()
@@ -55,6 +67,7 @@ export function NotificationsBell() {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<SalesNotificationItem[]>([])
   const [operational, setOperational] = useState<OperationalAlert[]>([])
+  const [purchaseRequests, setPurchaseRequests] = useState<OperationalAlert[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [bannerPulse, setBannerPulse] = useState(false)
@@ -74,19 +87,23 @@ export function NotificationsBell() {
     try {
       const tasks: [
         Promise<{ data: SalesNotificationItem[]; unreadCount: number }>,
-        Promise<OperationalAlert[]>,
+        Promise<{ operational: OperationalAlert[]; purchaseRequests: OperationalAlert[] }>,
       ] = [
         listNotifications(),
         showOperational
           ? fetchDashboard()
-              .then((data) => mapOperationalAlerts(data.alerts.unansweredQuotes))
-              .catch(() => [] as OperationalAlert[])
-          : Promise.resolve([] as OperationalAlert[]),
+              .then((data) => ({
+                operational: mapOperationalAlerts(data.alerts.unansweredQuotes),
+                purchaseRequests: mapPurchaseRequestAlerts(data.alerts.purchaseRequestQuotes ?? []),
+              }))
+              .catch(() => ({ operational: [], purchaseRequests: [] }))
+          : Promise.resolve({ operational: [], purchaseRequests: [] }),
       ]
-      const [inbox, operationalAlerts] = await Promise.all(tasks)
+      const [inbox, dashboardAlerts] = await Promise.all(tasks)
       setItems(inbox.data)
       setUnreadCount(inbox.unreadCount)
-      setOperational(operationalAlerts)
+      setOperational(dashboardAlerts.operational)
+      setPurchaseRequests(dashboardAlerts.purchaseRequests)
     } catch {
       // Silencioso: la campana no debe romper el layout
     } finally {
@@ -224,6 +241,8 @@ export function NotificationsBell() {
   const inboxItems = items.filter(
     (item) => item.kind !== 'pipeline' && item.kind !== 'pipeline_request',
   )
+  const inboxQuoteIds = new Set(inboxItems.map((item) => item.quoteId).filter(Boolean))
+  const purchaseRequestFallback = purchaseRequests.filter((alert) => !inboxQuoteIds.has(alert.quoteId))
   const pipelineTotal = pipelineQuoteItems.length + pipelineRequestItems.length
 
   const panel =
@@ -242,20 +261,20 @@ export function NotificationsBell() {
                   ? 'Actualizando…'
                   : user?.role === 'ventas'
                     ? `${pipelineTotal} pendientes · ${inboxItems.filter((i) => !i.read).length} avisos`
-                    : `${unreadCount} en bandeja · ${operational.length} operativas`}
+                    : `${unreadCount} en bandeja · ${purchaseRequestFallback.length} solicitudes · ${operational.length} operativas`}
               </p>
             </div>
             <ul className="max-h-80 overflow-y-auto">
-              {operational.length > 0 && (
+              {purchaseRequestFallback.length > 0 && (
                 <>
                   <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    Operativas
+                    Solicitudes nuevas
                   </li>
-                  {operational.map((alert) => (
+                  {purchaseRequestFallback.map((alert) => (
                     <li key={alert.id}>
                       <button
                         type="button"
-                        className="w-full px-3 py-2.5 text-left text-sm hover:bg-amber-50/60"
+                        className="w-full bg-indigo-50/40 px-3 py-2.5 text-left text-sm hover:bg-amber-50/60"
                         onClick={() => openOperationalAlert(alert)}
                       >
                         <span className="block font-medium text-slate-900">
@@ -340,7 +359,28 @@ export function NotificationsBell() {
                   </button>
                 </li>
               ))}
-              {items.length === 0 && operational.length === 0 && (
+              {operational.length > 0 && (
+                <>
+                  <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Operativas
+                  </li>
+                  {operational.map((alert) => (
+                    <li key={alert.id}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2.5 text-left text-sm hover:bg-amber-50/60"
+                        onClick={() => openOperationalAlert(alert)}
+                      >
+                        <span className="block font-medium text-slate-900">
+                          {alert.folio} · {alert.label}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-slate-600">{alert.detail}</span>
+                      </button>
+                    </li>
+                  ))}
+                </>
+              )}
+              {items.length === 0 && purchaseRequestFallback.length === 0 && operational.length === 0 && (
                 <li className="px-3 py-4 text-center text-sm text-slate-500">
                   Sin notificaciones ni recordatorios.
                   {user?.role === 'ventas' ? (

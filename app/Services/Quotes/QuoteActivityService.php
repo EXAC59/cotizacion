@@ -23,6 +23,30 @@ class QuoteActivityService
         return $quote->fresh();
     }
 
+    public function recordSentQuoteModification(Quote $quote, ?User $actor): Quote
+    {
+        $name = trim((string) ($actor?->name ?? 'Usuario'));
+        $notice = "Aviso: {$name} modificó una cotización enviada; pasó a Modificación.";
+        $lines = collect(preg_split('/\r?\n/', trim((string) $quote->involucrado)) ?: [])
+            ->map(fn (string $line) => trim($line))
+            ->filter()
+            ->values();
+
+        if (! $lines->contains($notice)) {
+            $lines->push($notice);
+        }
+
+        $quote->forceFill([
+            'involucrado' => $lines
+                ->map(fn (string $line, int $index) => ($index + 1).'. '.$line)
+                ->implode("\n"),
+            'last_activity_at' => now(),
+            'last_activity_by' => $actor?->id,
+        ])->saveQuietly();
+
+        return $quote->fresh();
+    }
+
     private function appendParticipant(?string $current, string $name): string
     {
         $names = collect(preg_split('/\r?\n/', trim((string) $current)) ?: [])

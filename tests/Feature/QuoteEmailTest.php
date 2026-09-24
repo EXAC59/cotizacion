@@ -100,6 +100,22 @@ class QuoteEmailTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function it_allows_editing_the_send_date_before_queueing_email(): void
+    {
+        Queue::fake();
+
+        ['quoteId' => $quoteId] = $this->createQuoteWithClientEmail();
+
+        $response = $this->postJson("/api/cotizaciones/{$quoteId}/enviar", [
+            'sentAt' => '2026-09-20',
+        ]);
+
+        $response->assertAccepted()->assertJsonPath('sentAt', fn (string $sentAt) => str_starts_with($sentAt, '2026-09-20'));
+        $this->assertSame('2026-09-20', Quote::query()->findOrFail($quoteId)->sent_at->toDateString());
+        Queue::assertPushed(SendQuoteEmailJob::class, fn (SendQuoteEmailJob $job) => $job->sentAt !== null && str_starts_with($job->sentAt, '2026-09-20'));
+    }
+
+    #[Test]
     public function job_sends_mail_with_pdf_and_marks_quote_as_sent(): void
     {
         Mail::fake();

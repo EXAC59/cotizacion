@@ -7,6 +7,7 @@ use App\Models\Quote;
 use App\Models\QuoteRequest;
 use App\Models\SalesNotification;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
 
 class SalesNotificationService
@@ -376,15 +377,24 @@ class SalesNotificationService
                     continue;
                 }
 
-                SalesNotification::query()->create([
-                    'quote_id' => $quote->id,
-                    'sender_id' => null,
-                    'recipient_id' => $recipient->id,
-                    'audience' => self::AUDIENCE_VENTAS,
-                    'reason_code' => self::REASON_SIN_AVANCE,
-                    'message' => "Disponible para tomar: {$quote->folio} lleva {$threshold} días sin avance después del recordatorio de Compras.",
-                    'read_at' => null,
-                ]);
+                try {
+                    SalesNotification::query()->create([
+                        'quote_id' => $quote->id,
+                        'sender_id' => null,
+                        'recipient_id' => $recipient->id,
+                        'audience' => self::AUDIENCE_VENTAS,
+                        'reason_code' => self::REASON_SIN_AVANCE,
+                        'message' => "Disponible para tomar: {$quote->folio} lleva {$threshold} días sin avance después del recordatorio de Compras.",
+                        'read_at' => null,
+                    ]);
+                } catch (QueryException $e) {
+                    // Otra ejecución pudo ganar la carrera entre exists() y create().
+                    if ($e->getCode() !== '23505') {
+                        throw $e;
+                    }
+
+                    continue;
+                }
 
                 $created++;
                 $notifiedQuoteIds[] = $quote->id;
@@ -535,6 +545,12 @@ class SalesNotificationService
      */
     public function listForUser(User $user, int $limit = 40): array
     {
+        // Recupera avisos que pudieron faltar por solicitudes creadas antes de
+        // habilitar las notificaciones, sin alterar los ya leídos.
+        if (in_array($user->role_slug, ['gerente_compras', 'administrador'], true)) {
+            $this->syncComprasRequestNotifications();
+        }
+
         $query = SalesNotification::query()
             ->with(['quote.client', 'sender', 'recipient'])
             ->orderByDesc('created_at')

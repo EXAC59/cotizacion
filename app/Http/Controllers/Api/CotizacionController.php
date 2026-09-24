@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use Carbon\Carbon;
 use App\Exceptions\QuoteLockedException;
 use App\Http\Controllers\Controller;
 use App\Jobs\SendQuoteEmailJob;
@@ -299,6 +300,7 @@ class CotizacionController extends Controller
             'to' => ['nullable', 'email', 'max:255'],
             'subject' => ['nullable', 'string', 'max:200'],
             'message' => ['nullable', 'string', 'max:2000'],
+            'sentAt' => ['nullable', 'date_format:Y-m-d'],
         ]);
 
         $this->ensureVentasCanMutateQuote($request, $quote);
@@ -317,6 +319,9 @@ class CotizacionController extends Controller
             $validated['subject'] ?? null,
             $validated['message'] ?? null,
             $request->user()?->id,
+            isset($validated['sentAt'])
+                ? Carbon::createFromFormat('Y-m-d', $validated['sentAt'])->startOfDay()->toIso8601String()
+                : null,
         );
 
         $previousStatus = $quote->status;
@@ -324,12 +329,18 @@ class CotizacionController extends Controller
         if (in_array($previousStatus, $sentFrom, true)) {
             $quote->update([
                 'status' => 'enviada',
-                'sent_at' => $quote->sent_at ?? now(),
+                'sent_at' => isset($validated['sentAt'])
+                    ? Carbon::createFromFormat('Y-m-d', $validated['sentAt'])->startOfDay()
+                    : ($quote->sent_at ?? now()),
                 'response_received_at' => null,
             ]);
             $this->statusHistory->record($quote, $previousStatus, 'enviada');
         } elseif ($previousStatus === 'enviada' && $quote->sent_at === null) {
-            $quote->update(['sent_at' => now()]);
+            $quote->update([
+                'sent_at' => isset($validated['sentAt'])
+                    ? Carbon::createFromFormat('Y-m-d', $validated['sentAt'])->startOfDay()
+                    : now(),
+            ]);
         }
 
         $quote = $this->activity->record($quote, $request->user());

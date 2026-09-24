@@ -8,6 +8,7 @@ use App\Services\Wholesalers\CvaWarehouseDirectory;
 use App\Services\Wholesalers\SkuLookupPolicy;
 use App\Services\Wholesalers\SkuNormalizer;
 use App\Services\Wholesalers\WholesalerOffer;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -121,7 +122,9 @@ class CvaConnector extends AbstractWholesalerConnector
         string $token,
     ): ?WholesalerOffer {
         try {
+            $startedAt = microtime(true);
             $response = $this->httpClient()
+                ->retry(2, 250, static fn ($exception): bool => $exception instanceof ConnectionException)
                 ->withToken($token)
                 ->get($this->baseUrl().'/catalogo_clientes/lista_precios', [
                     'desc' => $query,
@@ -303,7 +306,9 @@ class CvaConnector extends AbstractWholesalerConnector
         $url = "{$baseUrl}/catalogo_clientes/precios_stock_ofertas";
 
         try {
+            $startedAt = microtime(true);
             $response = $this->httpClient()
+                ->retry(2, 250, static fn ($exception): bool => $exception instanceof ConnectionException)
                 ->withToken($token)
                 ->get($url, [
                     $param => $value,
@@ -324,6 +329,9 @@ class CvaConnector extends AbstractWholesalerConnector
                 Log::warning('CVA lookup failed', [
                     'param' => $param,
                     'status' => $response->status(),
+                    'value' => $value,
+                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'response' => mb_substr(trim($response->body()), 0, 300),
                 ]);
 
                 return $this->errorOffer($wholesaler, $partNumber, "CVA: HTTP {$response->status()}");

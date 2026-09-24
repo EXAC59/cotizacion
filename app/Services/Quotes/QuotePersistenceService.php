@@ -7,6 +7,7 @@ use App\Models\Quote;
 use App\Models\QuoteLine;
 use App\Models\QuoteLineOffer;
 use App\Models\Wholesaler;
+use App\Services\Sales\SalesNotificationService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -22,6 +23,7 @@ class QuotePersistenceService
         private readonly QuoteStatusHistoryService $statusHistory,
         private readonly QuoteActivityService $activity,
         private readonly PurchaseRequestWorkflowService $purchaseWorkflow,
+        private readonly SalesNotificationService $notifications,
     ) {}
 
     /**
@@ -159,8 +161,22 @@ class QuotePersistenceService
                 $this->statusHistory->record($quote, $previousStatus, $requestedStatus);
             }
 
-            return $this->activity->record($quote, Auth::user())
+            $savedQuote = $this->activity->record($quote, Auth::user())
                 ->load(['lines.offers.wholesaler', 'client']);
+
+            if ($previousStatus === 'enviada' && $requestedStatus === 'modificacion') {
+                $savedQuote = $this->activity->recordSentQuoteModification($savedQuote, Auth::user())
+                    ->load(['lines.offers.wholesaler', 'client']);
+            }
+
+            if (
+                $requestedStatus === 'solicitud_cotizaciones'
+                && ($existingQuote === null || $previousStatus !== 'solicitud_cotizaciones')
+            ) {
+                $this->notifications->notifyComprasNewRequest($savedQuote, Auth::user());
+            }
+
+            return $savedQuote;
         });
     }
 

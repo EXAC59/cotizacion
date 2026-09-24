@@ -6,7 +6,9 @@ use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteLine;
 use App\Models\QuoteRequest;
+use App\Models\SalesNotification;
 use App\Models\Wholesaler;
+use App\Services\Sales\SalesNotificationService;
 use App\Services\Quotes\QuoteLockService;
 use App\Services\Quotes\QuotePersistenceService;
 use App\Services\Quotes\QuoteProfitCalculator;
@@ -420,7 +422,8 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
             'status' => 'en_elaboracion',
             'lines' => [$line],
         ])->assertCreated()
-            ->assertJsonPath('status', 'modificacion');
+            ->assertJsonPath('status', 'modificacion')
+            ->assertJsonPath('involucrado', fn (?string $involucrado) => str_contains((string) $involucrado, 'Aviso:'));
     }
 
     #[Test]
@@ -455,6 +458,12 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
 
         $response->assertCreated()
             ->assertJsonPath('status', 'solicitud_cotizaciones');
+
+        $this->assertGreaterThan(0, SalesNotification::query()
+            ->where('quote_id', $response->json('id'))
+            ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+            ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
+            ->count());
     }
 
     #[Test]

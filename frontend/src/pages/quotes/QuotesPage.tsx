@@ -312,7 +312,14 @@ export function QuotesPage() {
                       <td className="px-5 py-3 font-medium text-slate-800">
                         {q.createdByName?.trim() || 'Sin asignar'}
                       </td>
-                      <td className="px-5 py-3 text-slate-600">{q.involucrado ?? '—'}</td>
+                      <td className="whitespace-pre-line px-5 py-3 text-slate-600">
+                        {q.involucrado ?? '—'}
+                        {q.status === 'modificacion' && !q.involucrado?.includes('Aviso:') && (
+                          <span className="mt-1 block text-xs font-medium text-red-700">
+                            Aviso: cotización enviada en modificación.
+                          </span>
+                        )}
+                      </td>
                       <td className="px-5 py-3">
                         <QuoteStatusBadge status={q.status} />
                         {q.editLock && !q.editLock.isOwn && (

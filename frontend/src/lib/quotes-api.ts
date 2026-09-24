@@ -826,6 +826,7 @@ export type SendQuoteEmailOptions = {
   to?: string
   subject?: string
   message?: string
+  sentAt?: string
 }
 
 export type SendQuoteEmailResult = {
@@ -850,6 +851,7 @@ export async function sendQuoteByEmail(
       to: options.to?.trim() || undefined,
       subject: options.subject?.trim() || undefined,
       message: options.message?.trim() || undefined,
+      sentAt: options.sentAt || undefined,
     }),
   })
 

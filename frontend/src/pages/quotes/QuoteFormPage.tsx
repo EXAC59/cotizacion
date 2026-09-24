@@ -85,6 +85,10 @@ import {
 } from '@/hooks/useUnsavedChangesGuard'
 import { useNotificationFocus } from '@/lib/notification-focus'
 
+function todayInputValue(): string {
+  return new Intl.DateTimeFormat('en-CA').format(new Date())
+}
+
 function QuoteFormEditor({
   quoteId,
   requestId,
@@ -192,6 +196,9 @@ function QuoteFormEditor({
   const [emailTo, setEmailTo] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailMessage, setEmailMessage] = useState('')
+  const [sendDate, setSendDate] = useState(
+    () => localExisting?.sentAt?.slice(0, 10) ?? todayInputValue(),
+  )
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailFeedback, setEmailFeedback] = useState<string | null>(null)
   const [sentAt, setSentAt] = useState<string | undefined>(localExisting?.sentAt)
@@ -355,6 +362,7 @@ function QuoteFormEditor({
         setInternalNotes(quote.internalNotes ?? [])
         setLines(quote.lines)
         setSentAt(quote.sentAt)
+        setSendDate(quote.sentAt?.slice(0, 10) ?? todayInputValue())
         setInvoiceNumber(quote.invoiceNumber ?? '')
         setStatusHistory(quote.statusHistory ?? [])
         setOwnedByViewer(quote.ownedByViewer ?? true)
@@ -677,6 +685,7 @@ function QuoteFormEditor({
     setEmailTo(client?.email?.trim() ?? '')
     setEmailSubject('')
     setEmailMessage('')
+    setSendDate((current) => current || sentAt?.slice(0, 10) || todayInputValue())
     setEmailFeedback(null)
     setEmailModalOpen(true)
   }
@@ -719,6 +728,7 @@ function QuoteFormEditor({
         to,
         subject: emailSubject.trim() || undefined,
         message: emailMessage.trim() || undefined,
+        sentAt: sendDate || undefined,
       })
       const nextStatus = result.status ?? 'enviada'
       const nextSentAt = result.sentAt ?? new Date().toISOString()
@@ -1308,6 +1318,20 @@ function QuoteFormEditor({
                   Ver PDF no cambia el estatus.
                 </p>
               </div>
+              {(status === 'pendiente_envio' || status === 'enviada' || status === 'modificacion') && (
+                <div>
+                  <Label>Fecha de envío</Label>
+                  <Input
+                    type="date"
+                    value={sendDate}
+                    disabled={viewingOthers || status !== 'pendiente_envio' || isBusy}
+                    onChange={(e) => setSendDate(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Capturada con la fecha de hoy. Puedes modificarla antes de enviar la cotización.
+                  </p>
+                </div>
+              )}
               {!isNew && statusHistory.length > 0 && (
                 <div>
                   <Label>Historial de estatus</Label>

@@ -125,6 +125,42 @@ class SolicitudToQuoteTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function compras_inbox_backfills_missing_pending_request_notifications_when_listed(): void
+    {
+        $compras = $this->demoUser('gerente_compras');
+        $client = Client::query()->create([
+            'company' => 'Cliente Bandeja Compras',
+            'rfc' => 'CBC020202AAA',
+        ]);
+        $quote = Quote::query()->create([
+            'folio' => 'COT-BANDEJA-COMPRAS',
+            'client_id' => $client->id,
+            'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 0,
+            'tax_amount' => 0,
+            'total' => 0,
+        ]);
+
+        $this->actingAs($compras);
+        $inbox = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
+
+        $this->assertTrue($inbox->contains(
+            fn (array $notification) => ($notification['quoteId'] ?? null) === $quote->id
+                && ($notification['reasonCode'] ?? null) === SalesNotificationService::REASON_SOLICITUD_COMPRAS
+                && ($notification['recipientId'] ?? null) === $compras->id,
+        ));
+        $this->assertDatabaseHas('sales_notifications', [
+            'quote_id' => $quote->id,
+            'recipient_id' => $compras->id,
+            'audience' => SalesNotificationService::AUDIENCE_COMPRAS,
+            'reason_code' => SalesNotificationService::REASON_SOLICITUD_COMPRAS,
+        ]);
+    }
+
+    #[Test]
     public function storing_solicitud_with_lines_creates_quote_for_compras(): void
     {
         $this->actingAsDemoUser('gerente_compras');
