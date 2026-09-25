@@ -11,7 +11,7 @@ import {
  * Autocomplete opcional de catálogo CT/CVA.
  * - Escribir SKU/descripción es libre.
  * - Clic en sugerencia aplica el producto por SKU (numParte), no por clave CT.
- * - Enter solo elige si hubo navegación con flechas.
+ * - Enter elige la coincidencia resaltada; si no hubo navegación, elige la primera.
  * - Al salir del campo (blur): si CT/CVA tienen exactamente 1 producto,
  *   completa su descripción sin modificar el SKU escrito.
  */
@@ -50,7 +50,7 @@ export function CtSkuAutocompleteInput({
   const [items, setItems] = useState<CtAutocompleteItem[]>([])
   const [loading, setLoading] = useState(false)
   const [highlight, setHighlight] = useState(0)
-  /** Solo true si el usuario movió el resaltado con flechas (Enter entonces sí elige). */
+  /** Indica si el usuario movió el resaltado con flechas. */
   const [arrowPicked, setArrowPicked] = useState(false)
 
   useEffect(() => {
@@ -260,8 +260,8 @@ export function CtSkuAutocompleteInput({
             setHighlight((h) => (h - 1 + items.length) % items.length)
             return
           }
-          // Enter solo elige si el usuario navegó con flechas; si no, deja escribir normal.
-          if (e.key === 'Enter' && open && arrowPicked && items.length > 0) {
+          // Enter confirma la coincidencia visible. Si no hubo navegación, toma la primera.
+          if (e.key === 'Enter' && open && items.length > 0) {
             e.preventDefault()
             pick(items[highlight] ?? items[0])
           }
