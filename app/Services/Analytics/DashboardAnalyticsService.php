@@ -677,7 +677,14 @@ class DashboardAnalyticsService
         }
 
         return Quote::query()
-            ->with(['client', 'creator', 'purchaseAssignee'])
+            ->with([
+                'client',
+                'creator',
+                'purchaseAssignee',
+                'statusEvents' => fn ($query) => $query
+                    ->where('to_status', 'solicitud_cotizaciones')
+                    ->reorder('created_at', 'desc'),
+            ])
             ->where('status', 'solicitud_cotizaciones')
             ->orderByRaw('CASE WHEN purchase_escalated_at IS NOT NULL THEN 0 ELSE 1 END')
             ->orderByDesc('created_at')
@@ -693,6 +700,8 @@ class DashboardAnalyticsService
                 'purchaseAssigneeName' => $quote->purchaseAssignee?->name,
                 'purchaseAssignedAt' => $quote->purchase_assigned_at?->toIso8601String(),
                 'purchaseEscalatedAt' => $quote->purchase_escalated_at?->toIso8601String(),
+                'requestCreatedAt' => $quote->statusEvents->first()?->created_at?->toIso8601String()
+                    ?? $quote->created_at?->toIso8601String(),
                 'daysWaiting' => $quote->created_at
                     ? (int) $quote->created_at->diffInDays(now())
                     : 0,

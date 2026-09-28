@@ -82,16 +82,27 @@ export function DashboardPage() {
   useNotificationFocus(!loading)
 
   useEffect(() => {
-    fetchDashboard()
-      .then(setAnalytics)
-      .catch((err) =>
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'No se pudieron cargar las métricas del dashboard.',
-        ),
-      )
-      .finally(() => setLoading(false))
+    const refreshDashboard = () => {
+      fetchDashboard()
+        .then(setAnalytics)
+        .catch((err) =>
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'No se pudieron cargar las métricas del dashboard.',
+          ),
+        )
+        .finally(() => setLoading(false))
+    }
+    refreshDashboard()
+    const timer = window.setInterval(refreshDashboard, 15_000)
+    window.addEventListener('cotizacion:data-changed', refreshDashboard)
+    window.addEventListener('focus', refreshDashboard)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('cotizacion:data-changed', refreshDashboard)
+      window.removeEventListener('focus', refreshDashboard)
+    }
   }, [])
 
   const recentQuotes = analytics?.recentQuotes ?? []

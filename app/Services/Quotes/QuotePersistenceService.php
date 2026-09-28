@@ -5,6 +5,7 @@ namespace App\Services\Quotes;
 use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteLine;
+use App\Models\SalesNotification;
 use App\Models\QuoteLineOffer;
 use App\Models\Wholesaler;
 use App\Services\Sales\SalesNotificationService;
@@ -95,6 +96,10 @@ class QuotePersistenceService
                     'request_id' => $this->nullableUuid($payload['requestId'] ?? null),
                     'created_by' => $createdBy,
                     'status' => $requestedStatus,
+                    'elaboration_date' => $payload['elaborationDate']
+                        ?? $existingQuote?->elaboration_date?->toDateString()
+                        ?? $existingQuote?->created_at?->copy()->timezone('America/Mexico_City')->toDateString()
+                        ?? now('America/Mexico_City')->toDateString(),
                     'validity_days' => (int) ($payload['validityDays'] ?? 15),
                     'global_margin_percent' => (float) ($payload['globalMarginPercent'] ?? 30),
                     'tax_percent' => $taxPercent,
@@ -132,6 +137,7 @@ class QuotePersistenceService
                         'sale_price' => (float) ($linePayload['salePrice'] ?? 0),
                         'amount' => (float) ($linePayload['amount'] ?? 0),
                         'warehouse' => $linePayload['warehouse'] ?? '',
+                        'is_custom' => (bool) ($linePayload['isCustom'] ?? false),
                         'selected_wholesaler_id' => $selectedWholesalerId,
                     ],
                 );
@@ -174,6 +180,23 @@ class QuotePersistenceService
                 && ($existingQuote === null || $previousStatus !== 'solicitud_cotizaciones')
             ) {
                 $this->notifications->notifyComprasNewRequest($savedQuote, Auth::user());
+            }
+            if (
+                $requestedStatus === 'pendiente_envio'
+                && ($existingQuote === null || $previousStatus !== 'pendiente_envio')
+            ) {
+                $this->notifications->notifyVentasQuoteReady($savedQuote, Auth::user());
+            }
+            if ($previousStatus === 'pendiente_envio' && $requestedStatus !== 'pendiente_envio') {
+                $this->notifications->markQuoteReadyNotificationsRead($savedQuote);
+            }
+            if ($previousStatus === 'solicitud_cotizaciones' && $requestedStatus !== 'solicitud_cotizaciones') {
+                SalesNotification::query()
+                    ->where('quote_id', $savedQuote->id)
+                    ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+                    ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
+                    ->whereNull('read_at')
+                    ->update(['read_at' => now()]);
             }
 
             return $savedQuote;

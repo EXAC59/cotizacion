@@ -157,7 +157,7 @@
 
     {{-- Fecha / clave de cliente (sin fondo) --}}
     <div class="doc-meta">
-        <div class="meta-row"><strong>Fecha:</strong> {{ $createdAt->timezone('America/Mexico_City')->format('d/m/Y') }}</div>
+        <div class="meta-row"><strong>Fecha de elaboración:</strong> {{ $elaborationAt->format('d/m/Y') }}</div>
         @if($clientCode !== '')
             <div class="meta-row"><strong>Clave cliente:</strong> {{ $clientCode }}</div>
         @endif
@@ -205,8 +205,7 @@
             <tr>
                 <th style="width:8%;">CANTIDAD</th>
                 <th style="width:10%;">CLAVE</th>
-                <th style="width:8%;">UNIDAD</th>
-                <th style="width:44%;">DESCRIPCIÓN</th>
+                <th style="width:52%;">DESCRIPCIÓN</th>
                 <th style="width:15%;">PRECIO UNITARIO</th>
                 <th style="width:15%;">IMPORTE</th>
             </tr>
@@ -216,7 +215,6 @@
                 <tr>
                     <td class="num center">{{ number_format($line['quantity'], 2) }}</td>
                     <td class="center">{{ $line['partNumber'] ?: '' }}</td>
-                    <td class="center">{{ $line['unit'] }}</td>
                     <td class="desc">{{ $line['product'] }}</td>
                     <td class="num">{{ number_format($line['salePrice'], 2) }}</td>
                     <td class="num">{{ number_format($line['amount'], 2) }}</td>

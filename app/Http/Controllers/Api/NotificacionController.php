@@ -21,7 +21,10 @@ class NotificacionController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $payload = $this->notifications->listForUser($request->user());
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $payload = $this->notifications->listForUser($request->user(), 40, (int) ($validated['page'] ?? 1));
 
         return response()->json($payload);
     }

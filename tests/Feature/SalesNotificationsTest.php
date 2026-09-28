@@ -13,6 +13,30 @@ use Tests\AuthenticatedFeatureTestCase;
 
 class SalesNotificationsTest extends AuthenticatedFeatureTestCase
 {
+    #[Test]
+    public function inbox_pages_all_notifications_and_counts_unread_across_pages(): void
+    {
+        $admin = $this->demoUser('administrador');
+        for ($index = 0; $index < 45; $index++) {
+            $quote = $this->createQuote();
+            SalesNotification::query()->create([
+                'quote_id' => $quote->id,
+                'recipient_id' => $admin->id,
+                'audience' => 'compras',
+                'reason_code' => 'comentario_compras',
+                'message' => 'Aviso de prueba',
+            ]);
+        }
+
+        $this->getJson('/api/notificaciones?page=1')->assertOk()
+            ->assertJsonCount(40, 'data')
+            ->assertJsonPath('total', 45)
+            ->assertJsonPath('unreadCount', 45);
+        $this->getJson('/api/notificaciones?page=2')->assertOk()
+            ->assertJsonCount(5, 'data')
+            ->assertJsonPath('unreadCount', 45);
+    }
+
     private function createQuote(array $overrides = []): Quote
     {
         $client = Client::query()->create([

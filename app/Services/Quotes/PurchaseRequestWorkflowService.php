@@ -12,6 +12,10 @@ use Illuminate\Validation\ValidationException;
 
 class PurchaseRequestWorkflowService
 {
+    public function __construct(
+        private readonly QuoteActivityService $activity,
+    ) {}
+
     public function claim(Quote $quote, User $actor): Quote
     {
         $this->assertPurchasingUser($actor);
@@ -53,11 +57,15 @@ class PurchaseRequestWorkflowService
                 'created_at' => $now,
             ]);
 
+            $this->activity->recordPurchaseParticipant($locked, $actor);
+
             SalesNotification::query()
                 ->where('quote_id', $locked->id)
-                ->where('recipient_id', $actor->id)
                 ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
-                ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
+                ->whereIn('reason_code', [
+                    SalesNotificationService::REASON_SOLICITUD_COMPRAS,
+                    SalesNotificationService::REASON_SOLICITUD_COMPRAS_URGENTE,
+                ])
                 ->whereNull('read_at')
                 ->update(['read_at' => $now]);
 
@@ -135,13 +143,15 @@ class PurchaseRequestWorkflowService
 
     public function completeWhenAdvanced(Quote $quote, ?User $actor, ?string $previousStatus): Quote
     {
-        if ($previousStatus !== 'solicitud_cotizaciones' || $quote->status === 'solicitud_cotizaciones') {
+        if (
+            $previousStatus !== 'solicitud_cotizaciones'
+            || $actor === null
+            || ! in_array($actor->role_slug, ['gerente_compras', 'administrador'], true)
+        ) {
             return $quote;
         }
 
         $now = now();
-        $quote->forceFill(['purchase_completed_at' => $now])->saveQuietly();
-
         SalesNotification::query()
             ->where('quote_id', $quote->id)
             ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
@@ -152,11 +162,22 @@ class PurchaseRequestWorkflowService
             ->whereNull('read_at')
             ->update(['read_at' => $now]);
 
+        if ($quote->status === 'solicitud_cotizaciones') {
+            return $quote->fresh(['purchaseAssignee', 'purchaseAssignedByUser']);
+        }
+
+        $quote->forceFill([
+            'purchase_completed_at' => $now,
+            'purchase_assigned_to' => null,
+            'purchase_assigned_by' => null,
+            'purchase_assigned_at' => null,
+        ])->saveQuietly();
+
         QuoteInternalNote::query()->create([
             'quote_id' => $quote->id,
             'user_id' => $actor?->id,
-            'body' => 'Atención de Compras completada al avanzar la cotización a '.
-                str_replace('_', ' ', $quote->status).'.',
+            'body' => 'Atención de Compras completada por '.$actor->name.' al avanzar la cotización a '.
+                str_replace('_', ' ', $quote->status).'. Asignación de Compras liberada para Ventas.',
             'created_at' => $now,
         ]);
 

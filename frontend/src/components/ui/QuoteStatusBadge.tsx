@@ -1,13 +1,13 @@
 import { normalizeQuoteStatus } from '@/lib/quote-status'
 import { QUOTE_STATUS_LABELS, type QuoteStatus } from '@/types'
 
-/** Colores de estatus: rojo / naranja / amarillo / verde. */
+/** Colores de estatus del flujo comercial. */
 export const QUOTE_STATUS_TONE: Record<QuoteStatus, string> = {
   solicitud_cotizaciones: 'bg-red-600 text-white ring-1 ring-red-700',
   en_elaboracion: 'bg-orange-500 text-white ring-1 ring-orange-600',
   pendiente_envio: 'bg-yellow-400 text-yellow-950 ring-1 ring-yellow-500',
   enviada: 'bg-green-600 text-white ring-1 ring-green-700',
-  modificacion: 'bg-red-600 text-white ring-1 ring-red-700',
+  modificacion: 'bg-purple-600 text-white ring-1 ring-purple-700',
   aceptada: 'bg-green-600 text-white ring-1 ring-green-700',
   facturada: 'bg-green-700 text-white ring-1 ring-green-800',
 }
@@ -33,8 +33,8 @@ export const QUOTE_STATUS_STEP_TONE: Record<
     done: 'border-green-200 bg-green-50 text-green-800',
   },
   modificacion: {
-    active: 'border-red-500 bg-red-50 font-semibold text-red-900',
-    done: 'border-red-200 bg-red-50 text-red-800',
+    active: 'border-purple-500 bg-purple-50 font-semibold text-purple-900',
+    done: 'border-purple-200 bg-purple-50 text-purple-800',
   },
   aceptada: {
     active: 'border-green-600 bg-green-50 font-semibold text-green-900',

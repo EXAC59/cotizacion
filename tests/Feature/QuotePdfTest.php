@@ -15,6 +15,35 @@ use Tests\AuthenticatedFeatureTestCase;
 
 class QuotePdfTest extends AuthenticatedFeatureTestCase
 {
+    #[Test]
+    public function it_renders_the_editable_elaboration_date_in_pdf(): void
+    {
+        $quoteId = $this->createQuoteWithLines();
+        $quote = Quote::query()->with(['lines', 'client', 'creator'])->findOrFail($quoteId);
+        $quote->update(['elaboration_date' => '2026-09-15']);
+
+        $method = new ReflectionMethod(QuotePdfService::class, 'buildViewData');
+        $method->setAccessible(true);
+        $viewData = $method->invoke(app(QuotePdfService::class), $quote->fresh(['lines', 'client', 'creator']), AppSetting::current());
+        $html = view('pdf.quote', $viewData)->render();
+
+        $this->assertStringContainsString('Fecha de elaboración:</strong> 15/09/2026', $html);
+    }
+
+    #[Test]
+    public function it_does_not_render_a_unit_column_in_the_quote_pdf(): void
+    {
+        $quoteId = $this->createQuoteWithLines();
+        $quote = Quote::query()->with(['lines', 'client', 'creator'])->findOrFail($quoteId);
+        $method = new ReflectionMethod(QuotePdfService::class, 'buildViewData');
+        $method->setAccessible(true);
+        $viewData = $method->invoke(app(QuotePdfService::class), $quote, AppSetting::current());
+        $html = view('pdf.quote', $viewData)->render();
+
+        $this->assertStringNotContainsString('UNIDAD', $html);
+        $this->assertArrayNotHasKey('unit', $viewData['lines'][0]);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

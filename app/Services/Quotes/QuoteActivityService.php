@@ -23,6 +23,17 @@ class QuoteActivityService
         return $quote->fresh();
     }
 
+    public function recordPurchaseParticipant(Quote $quote, User $actor): Quote
+    {
+        $quote->forceFill([
+            'involucrado' => $this->appendParticipant($quote->involucrado, $actor->name),
+            'last_activity_at' => now(),
+            'last_activity_by' => $actor->id,
+        ])->saveQuietly();
+
+        return $quote->fresh();
+    }
+
     public function recordSentQuoteModification(Quote $quote, ?User $actor): Quote
     {
         $name = trim((string) ($actor?->name ?? 'Usuario'));

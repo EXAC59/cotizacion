@@ -28,6 +28,7 @@ class QuoteLine extends Model
         'sale_price',
         'amount',
         'warehouse',
+        'is_custom',
         'selected_wholesaler_id',
     ];
 
@@ -40,6 +41,7 @@ class QuoteLine extends Model
             'margin_percent' => 'decimal:2',
             'sale_price' => 'decimal:4',
             'amount' => 'decimal:4',
+            'is_custom' => 'boolean',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

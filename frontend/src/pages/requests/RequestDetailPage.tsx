@@ -359,6 +359,7 @@ export function RequestDetailPage() {
       }
       const saved = await persistQuote(draft)
       saveQuote(saved)
+      window.dispatchEvent(new Event('cotizacion:data-changed'))
       try {
         const [updatedRequest, linkedQuotes] = await Promise.all([
           getSolicitud(request.id),

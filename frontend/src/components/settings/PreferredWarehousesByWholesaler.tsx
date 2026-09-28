@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, GripHorizontal, Warehouse, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import {
@@ -247,7 +248,7 @@ export function PreferredWarehousesByWholesaler({
       </div>
 
       {/* Mini barra flotante al minimizar */}
-      {open && minimized && (
+      {open && minimized && createPortal(
         <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2">
           <button
             type="button"
@@ -258,11 +259,12 @@ export function PreferredWarehousesByWholesaler({
             Almacenes preferidos ({preferredWarehouses.length})
             <span className="text-xs font-normal text-indigo-600">Ampliar</span>
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Modal flotante centrado (arrastrable por el encabezado) */}
-      {open && !minimized && (
+      {open && !minimized && createPortal(
         <div
           className="fixed inset-0 z-50 bg-slate-900/45"
           role="presentation"
@@ -272,7 +274,7 @@ export function PreferredWarehousesByWholesaler({
             role="dialog"
             aria-modal="true"
             aria-labelledby="warehouses-modal-title"
-            className="fixed left-1/2 top-1/2 flex max-h-[85vh] w-[min(42rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            className="fixed left-1/2 top-1/2 flex max-h-[min(85vh,calc(100dvh-2rem))] w-[min(42rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
             style={{
               transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))`,
             }}
@@ -495,7 +497,8 @@ export function PreferredWarehousesByWholesaler({
               </div>
             </footer>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

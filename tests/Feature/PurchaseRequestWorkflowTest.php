@@ -67,6 +67,26 @@ class PurchaseRequestWorkflowTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function taking_a_request_clears_pending_alerts_for_all_buyers(): void
+    {
+        $first = $this->demoUser('gerente_compras');
+        $second = User::factory()->create(['role_id' => $first->role_id, 'active' => true]);
+        $quote = $this->pendingQuote();
+        app(SalesNotificationService::class)->notifyComprasNewRequest($quote, $first);
+
+        $this->actingAs($first)->postJson("/api/cotizaciones/{$quote->id}/compras/tomar")->assertOk();
+
+        $this->assertSame(0, SalesNotification::query()
+            ->where('quote_id', $quote->id)
+            ->whereNull('read_at')
+            ->count());
+        $this->actingAs($second)->getJson('/api/notificaciones')
+            ->assertOk()
+            ->assertJsonPath('unreadCount', 0)
+            ->assertJsonPath('total', 0);
+    }
+
+    #[Test]
     public function stale_unclaimed_requests_are_escalated_to_administration_once(): void
     {
         $quote = $this->pendingQuote();

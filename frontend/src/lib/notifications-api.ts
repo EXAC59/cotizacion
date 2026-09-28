@@ -12,18 +12,20 @@ import type {
 type NotificationsListResponse = {
   data?: SalesNotificationItem[]
   unreadCount?: number
+  total?: number
   message?: string
 }
 
-export async function listNotifications(): Promise<{
+export async function listNotifications(page = 1): Promise<{
   data: SalesNotificationItem[]
   unreadCount: number
+  total: number
 }> {
-  const response = await apiFetch(`${getApiBase()}/notificaciones`)
+  const response = await apiFetch(`${getApiBase()}/notificaciones?page=${page}`)
   const remoteBuild = response.headers.get('X-Spa-Build-Id')
   if (remoteBuild && remoteBuild !== __SPA_BUILD_ID__) {
     reloadOnceForSpaBuild()
-    return { data: [], unreadCount: 0 }
+    return { data: [], unreadCount: 0, total: 0 }
   }
   const data = (await response.json()) as NotificationsListResponse & {
     spaBuildId?: string
@@ -31,11 +33,11 @@ export async function listNotifications(): Promise<{
   }
   if (data.spaUpgradeRequired) {
     reloadOnceForSpaBuild()
-    return { data: [], unreadCount: 0 }
+    return { data: [], unreadCount: 0, total: 0 }
   }
   if (data.spaBuildId && data.spaBuildId !== __SPA_BUILD_ID__) {
     reloadOnceForSpaBuild()
-    return { data: [], unreadCount: 0 }
+    return { data: [], unreadCount: 0, total: 0 }
   }
   if (!response.ok) {
     throw new Error(data.message || `Error al listar notificaciones (${response.status})`)
@@ -43,6 +45,7 @@ export async function listNotifications(): Promise<{
   return {
     data: data.data ?? [],
     unreadCount: data.unreadCount ?? 0,
+    total: data.total ?? 0,
   }
 }
 

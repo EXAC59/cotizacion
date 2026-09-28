@@ -49,14 +49,15 @@ class QuotePdfService
      */
     private function buildViewData(Quote $quote, AppSetting $settings, ?User $signer = null): array
     {
-        $createdAt = $quote->created_at ?? now();
-        $validUntil = $createdAt->copy()->addDays((int) $quote->validity_days);
+        $elaborationAt = $quote->elaboration_date?->copy()
+            ?? $quote->created_at?->copy()->timezone('America/Mexico_City')
+            ?? now('America/Mexico_City');
+        $validUntil = $elaborationAt->copy()->addDays((int) $quote->validity_days);
 
         $lines = $quote->lines->map(function ($line) {
             return [
                 'quantity' => (float) $line->quantity,
                 'partNumber' => $line->part_number,
-                'unit' => 'No',
                 'product' => $line->product,
                 'salePrice' => (float) $line->sale_price,
                 'amount' => (float) $line->amount,
@@ -116,7 +117,7 @@ class QuotePdfService
             'lines' => $lines,
             'totals' => $totals,
             'taxPercent' => (float) $quote->tax_percent,
-            'createdAt' => $createdAt,
+            'elaborationAt' => $elaborationAt,
             'validUntil' => $validUntil,
             'logoDataUri' => $logoDataUri,
             'totalInWords' => AmountInWords::pesosMx((float) $totals['total']),

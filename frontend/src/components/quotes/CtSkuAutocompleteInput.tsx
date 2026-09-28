@@ -306,11 +306,14 @@ export function CtSkuAutocompleteInput({
                     ? item.partNumber
                     : item.clave}
                 </span>
-                <span className="line-clamp-2 text-slate-600">
-                  {item.nombre || item.descripcion}
-                  {item.providers?.length ? ` · ${item.providers.join(' / ')}` : ''}
-                  {item.marca ? ` · ${item.marca}` : ''}
+                <span className="line-clamp-2 text-slate-700">
+                  {item.descripcion || item.nombre}
                 </span>
+                {(item.providers?.length || item.marca) && (
+                  <span className="text-[10px] text-slate-500">
+                    {[item.providers?.join(' / '), item.marca].filter(Boolean).join(' · ')}
+                  </span>
+                )}
                 {item.partNumber && item.partNumber !== item.clave && (
                   <span className="font-mono text-[10px] text-slate-400">
                     Clave de catálogo: {item.clave}

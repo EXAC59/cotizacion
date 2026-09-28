@@ -185,6 +185,48 @@ class SalesNotificationService
         return $created;
     }
 
+    /** Envía a cada vendedor activo un aviso nuevo cuando la cotización queda lista. */
+    public function notifyVentasQuoteReady(Quote $quote, ?User $sender = null): int
+    {
+        $recipients = User::query()
+            ->where('active', true)
+            ->whereHas('role', fn ($role) => $role->where('slug', 'ventas'))
+            ->get();
+
+        $created = 0;
+        foreach ($recipients as $recipient) {
+            $notification = SalesNotification::query()->firstOrCreate(
+                [
+                    'quote_id' => $quote->id,
+                    'recipient_id' => $recipient->id,
+                    'audience' => self::AUDIENCE_VENTAS,
+                    'reason_code' => self::REASON_LISTA,
+                    'read_at' => null,
+                ],
+                [
+                    'sender_id' => $sender?->id,
+                    'message' => "La cotización {$quote->folio} está en Lista / Terminada y lista para envío.",
+                ],
+            );
+
+            if ($notification->wasRecentlyCreated) {
+                $created++;
+            }
+        }
+
+        return $created;
+    }
+
+    public function markQuoteReadyNotificationsRead(Quote $quote): int
+    {
+        return SalesNotification::query()
+            ->where('quote_id', $quote->id)
+            ->where('audience', self::AUDIENCE_VENTAS)
+            ->where('reason_code', self::REASON_LISTA)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+    }
+
     /**
      * Recupera avisos faltantes para cotizaciones que siguen esperando a Compras.
      * Es idempotente: notifyComprasNewRequest evita duplicar un aviso por destinatario.
@@ -200,40 +242,43 @@ class SalesNotificationService
 
         $created = 0;
         $reviewed = 0;
-        $perRecipientLimit = max(1, min($limit, 2000));
-
         foreach ($recipients as $recipient) {
-            $quotes = Quote::query()
+            $recipientReviewed = 0;
+            Quote::query()
                 ->with('creator')
                 ->where('status', 'solicitud_cotizaciones')
+                ->whereNull('purchase_assigned_to')
                 ->whereDoesntHave('salesNotifications', function ($notification) use ($recipient) {
                     $notification->where('recipient_id', $recipient->id)
                         ->where('audience', self::AUDIENCE_COMPRAS)
                         ->where('reason_code', self::REASON_SOLICITUD_COMPRAS);
                 })
-                ->orderBy('created_at')
-                ->limit($perRecipientLimit)
-                ->get();
-
-            foreach ($quotes as $quote) {
-                $notification = SalesNotification::query()->firstOrCreate(
-                    [
-                        'quote_id' => $quote->id,
-                        'recipient_id' => $recipient->id,
-                        'audience' => self::AUDIENCE_COMPRAS,
-                        'reason_code' => self::REASON_SOLICITUD_COMPRAS,
-                    ],
-                    [
-                        'sender_id' => $quote->creator?->id,
-                        'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
-                        'read_at' => null,
-                    ],
-                );
-                $reviewed++;
-                if ($notification->wasRecentlyCreated) {
-                    $created++;
-                }
-            }
+                ->chunkById(500, function ($quotes) use ($recipient, $limit, &$created, &$reviewed, &$recipientReviewed) {
+                    foreach ($quotes as $quote) {
+                        if ($limit > 0 && $recipientReviewed >= $limit) {
+                            return false;
+                        }
+                        $notification = SalesNotification::query()->firstOrCreate(
+                            [
+                                'quote_id' => $quote->id,
+                                'recipient_id' => $recipient->id,
+                                'audience' => self::AUDIENCE_COMPRAS,
+                                'reason_code' => self::REASON_SOLICITUD_COMPRAS,
+                            ],
+                            [
+                                'sender_id' => $quote->creator?->id,
+                                'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
+                                'read_at' => null,
+                            ],
+                        );
+                        $reviewed++;
+                        $recipientReviewed++;
+                        if ($notification->wasRecentlyCreated) {
+                            $created++;
+                        }
+                    }
+                    return true;
+                });
         }
 
         return [
@@ -543,56 +588,85 @@ class SalesNotificationService
     /**
      * @return array{data: list<array<string, mixed>>, unreadCount: int}
      */
-    public function listForUser(User $user, int $limit = 40): array
+    public function listForUser(User $user, int $limit = 40, int $page = 1): array
     {
         // Recupera avisos que pudieron faltar por solicitudes creadas antes de
         // habilitar las notificaciones, sin alterar los ya leídos.
         if (in_array($user->role_slug, ['gerente_compras', 'administrador'], true)) {
-            $this->syncComprasRequestNotifications();
+            $this->syncComprasRequestNotifications(0);
         }
 
         $query = SalesNotification::query()
             ->with(['quote.client', 'sender', 'recipient'])
-            ->orderByDesc('created_at')
-            ->limit($limit);
+            ->orderByDesc('created_at');
 
         $role = $user->role_slug;
         if ($role === 'ventas') {
             $query->where('audience', self::AUDIENCE_VENTAS)
                 ->where('recipient_id', $user->id)
-                ->whereHas('quote', function ($quoteQuery) use ($user) {
-                    $quoteQuery->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
-                        ->where(function ($responsible) use ($user) {
-                            $responsible->whereNull('follow_up_assigned_to')
-                                ->orWhere('follow_up_assigned_to', $user->id);
-                        });
+                ->where(function ($visibility) use ($user) {
+                    $visibility->where(function ($ready) {
+                        $ready->where('reason_code', self::REASON_LISTA)
+                            ->whereHas('quote', fn ($quote) => $quote->where('status', 'pendiente_envio'));
+                    })->orWhere(function ($regular) use ($user) {
+                        $regular->where('reason_code', '!=', self::REASON_LISTA)
+                            ->whereHas('quote', function ($quoteQuery) use ($user) {
+                                $quoteQuery->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
+                                    ->where(function ($responsible) use ($user) {
+                                        $responsible->whereNull('follow_up_assigned_to')
+                                            ->orWhere('follow_up_assigned_to', $user->id);
+                                    });
+                            });
+                    });
                 });
         } elseif (in_array($role, ['gerente_compras', 'administrador'], true)) {
             $query->where('audience', self::AUDIENCE_COMPRAS)
                 ->where(function ($recipient) use ($user) {
                     $recipient->whereNull('recipient_id')
                         ->orWhere('recipient_id', $user->id);
+                })
+                ->where(function ($notification) {
+                    $notification->whereNotIn('reason_code', [
+                        self::REASON_SOLICITUD_COMPRAS,
+                        self::REASON_SOLICITUD_COMPRAS_URGENTE,
+                    ])->orWhereHas('quote', function ($quote) {
+                        $quote->where('status', 'solicitud_cotizaciones')
+                            ->whereNull('purchase_assigned_to');
+                    });
                 });
         } else {
-            return ['data' => [], 'unreadCount' => 0];
+            return ['data' => [], 'unreadCount' => 0, 'total' => 0];
         }
 
-        $items = $query->get();
-        $data = $items->map(fn (SalesNotification $n) => $this->toApiArray($n))->values()->all();
-        $unreadCount = $items->whereNull('read_at')->count();
-
+        $total = (clone $query)->count();
+        $unreadCount = (clone $query)->whereNull('read_at')->count();
+        $pipeline = [];
         if ($role === 'ventas') {
-            $alreadyNotified = $items->pluck('quote_id')->filter()->all();
+            $alreadyNotified = (clone $query)->pluck('quote_id')->filter()->all();
             $pipelineQuotes = $this->pipelineAlertsForVentas($user, $alreadyNotified);
             $pipelineRequests = $this->pipelineRequestAlertsForVentas($user);
             $pipeline = array_values(array_merge($pipelineRequests, $pipelineQuotes));
-            $data = array_values(array_merge($pipeline, $data));
-            $unreadCount += count($pipeline);
         }
+
+        $pipelineCount = count($pipeline);
+        $total += $pipelineCount;
+        $unreadCount += $pipelineCount;
+        $offset = (max(1, $page) - 1) * $limit;
+        $pipelinePage = array_slice($pipeline, $offset, $limit);
+        $remaining = $limit - count($pipelinePage);
+        $notificationOffset = max(0, $offset - $pipelineCount);
+        $items = $remaining > 0
+            ? $query->skip($notificationOffset)->take($remaining)->get()
+            : collect();
+        $data = array_values(array_merge(
+            $pipelinePage,
+            $items->map(fn (SalesNotification $n) => $this->toApiArray($n))->values()->all(),
+        ));
 
         return [
             'data' => $data,
             'unreadCount' => $unreadCount,
+            'total' => $total,
         ];
     }
 
@@ -643,7 +717,6 @@ class SalesNotificationService
             })
             ->when($excludeQuoteIds !== [], fn ($q) => $q->whereNotIn('id', $excludeQuoteIds))
             ->orderByDesc('updated_at')
-            ->limit(40)
             ->get();
 
         return $quotes->map(function (Quote $quote) use ($user) {
@@ -690,7 +763,6 @@ class SalesNotificationService
             ->whereDoesntHave('quotes')
             ->whereNotIn('status', ['procesando', 'error'])
             ->orderByDesc('updated_at')
-            ->limit(40)
             ->get();
 
         return $requests->map(function (QuoteRequest $request) use ($user) {
@@ -733,7 +805,7 @@ class SalesNotificationService
             $allowed = $role === 'administrador'
                 || ($role === 'ventas'
                     && (int) $notification->recipient_id === (int) $user->id
-                    && ($sameCreator || $samePerson));
+                    && ($notification->reason_code === self::REASON_LISTA || $sameCreator || $samePerson));
         }
 
         if ($notification->audience === self::AUDIENCE_COMPRAS) {

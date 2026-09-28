@@ -33,7 +33,8 @@ export function QuotesPage() {
   const urlSearch = searchParams.get('q') ?? ''
   const dateFrom = searchParams.get('from') ?? ''
   const dateTo = searchParams.get('to') ?? ''
-  const listScope = parseViewerListScope(searchParams.get('scope'), user?.role)
+  // Cotizaciones abre mostrando al equipo completo; "Mías" queda como filtro opcional.
+  const listScope = parseViewerListScope(searchParams.get('scope') ?? 'all', user?.role)
 
   const [searchInput, setSearchInput] = useState(urlSearch)
   const [apiQuotes, setApiQuotes] = useState<Quote[]>([])
@@ -293,7 +294,7 @@ export function QuotesPage() {
                       </button>
                     </th>
                     <th className="px-5 py-3 font-medium text-right">Total</th>
-                    <th className="px-5 py-3 font-medium">Fecha</th>
+                    <th className="px-5 py-3 font-medium">Fecha de elaboración</th>
                     <th className="px-5 py-3 font-medium text-right">PDF</th>
                   </tr>
                 </thead>
@@ -315,7 +316,7 @@ export function QuotesPage() {
                       <td className="whitespace-pre-line px-5 py-3 text-slate-600">
                         {q.involucrado ?? '—'}
                         {q.status === 'modificacion' && !q.involucrado?.includes('Aviso:') && (
-                          <span className="mt-1 block text-xs font-medium text-red-700">
+                          <span className="mt-1 block text-xs font-medium text-purple-700">
                             Aviso: cotización enviada en modificación.
                           </span>
                         )}
@@ -334,7 +335,9 @@ export function QuotesPage() {
                         )}
                       </td>
                       <td className="whitespace-nowrap px-5 py-3 text-slate-500">
-                        {formatDateTime(q.createdAt)}
+                        {q.elaborationDate
+                          ? new Date(`${q.elaborationDate}T12:00:00`).toLocaleDateString('es-MX')
+                          : formatDateTime(q.createdAt)}
                       </td>
                       <td className="px-5 py-3 text-right">
                         <Button

@@ -24,6 +24,7 @@ class Quote extends Model
         'request_id',
         'created_by',
         'status',
+        'elaboration_date',
         'validity_days',
         'global_margin_percent',
         'tax_percent',
@@ -67,6 +68,7 @@ class Quote extends Model
             'tax_amount' => 'decimal:4',
             'total' => 'decimal:4',
             'sent_at' => 'datetime',
+            'elaboration_date' => 'date',
             'response_received_at' => 'datetime',
             'last_opened_at' => 'datetime',
             'last_activity_at' => 'datetime',
@@ -177,11 +179,16 @@ class Quote extends Model
                 ->orWhereHas('salesNotifications', function ($notification) use ($user) {
                     $notification->where('audience', 'ventas')
                         ->where('recipient_id', $user->id)
-                        ->whereNotNull('sender_id')
-                        ->whereHas(
-                            'sender.role',
-                            fn ($role) => $role->whereIn('slug', ['gerente_compras', 'administrador']),
-                        );
+                        ->where(function ($reason) {
+                            $reason->where('reason_code', 'lista_terminada')
+                                ->orWhere(function ($fromManager) {
+                                    $fromManager->whereNotNull('sender_id')
+                                        ->whereHas(
+                                            'sender.role',
+                                            fn ($role) => $role->whereIn('slug', ['gerente_compras', 'administrador']),
+                                        );
+                                });
+                        });
                 });
         });
     }

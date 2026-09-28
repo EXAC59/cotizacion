@@ -217,6 +217,7 @@ export interface QuoteLine {
   quantity: number
   product: string
   partNumber: string
+  isCustom?: boolean
   cost: number
   marginPercent: number
   salePrice: number
@@ -250,6 +251,7 @@ export interface Quote {
   customerObservations?: string
   internalNotes?: QuoteInternalNote[]
   createdAt: string
+  elaborationDate?: string
   sentAt?: string
   responseReceivedAt?: string
   invoiceNumber?: string
@@ -408,6 +410,7 @@ export interface DashboardAlertQuote {
   purchaseAssigneeName?: string | null
   purchaseAssignedAt?: string | null
   purchaseEscalatedAt?: string | null
+  requestCreatedAt?: string | null
 }
 
 export interface DashboardIntegrationIssue {

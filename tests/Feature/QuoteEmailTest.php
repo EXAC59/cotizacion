@@ -100,6 +100,36 @@ class QuoteEmailTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function purchase_can_send_a_finished_quote_to_the_customer(): void
+    {
+        Queue::fake();
+        ['quoteId' => $quoteId] = $this->createQuoteWithClientEmail();
+        Quote::query()->findOrFail($quoteId)->update(['status' => 'pendiente_envio']);
+
+        $this->actingAsDemoUser('gerente_compras')
+            ->postJson("/api/cotizaciones/{$quoteId}/enviar")
+            ->assertAccepted();
+
+        Queue::assertPushed(SendQuoteEmailJob::class, fn (SendQuoteEmailJob $job) => $job->quoteId === $quoteId);
+    }
+
+    #[Test]
+    public function it_can_queue_a_second_email_without_changing_the_creation_date(): void
+    {
+        Queue::fake();
+        ['quoteId' => $quoteId] = $this->createQuoteWithClientEmail();
+        $createdAt = Quote::query()->findOrFail($quoteId)->created_at->toIso8601String();
+
+        $this->postJson("/api/cotizaciones/{$quoteId}/enviar")->assertAccepted();
+        $this->postJson("/api/cotizaciones/{$quoteId}/enviar")->assertAccepted();
+
+        Queue::assertPushed(SendQuoteEmailJob::class, 2);
+        $quote = Quote::query()->findOrFail($quoteId);
+        $this->assertSame('enviada', $quote->status);
+        $this->assertSame($createdAt, $quote->created_at->toIso8601String());
+    }
+
+    #[Test]
     public function it_allows_editing_the_send_date_before_queueing_email(): void
     {
         Queue::fake();
@@ -128,6 +158,10 @@ class QuoteEmailTest extends AuthenticatedFeatureTestCase
         Mail::assertSent(QuoteSentMail::class, function (QuoteSentMail $mail) {
             return count($mail->attachments()) === 1;
         });
+        $this->assertDatabaseHas('quote_internal_notes', [
+            'quote_id' => $quoteId,
+            'body' => 'Cotización enviada por correo a compras@acme.test.',
+        ]);
 
         $quote = Quote::query()->findOrFail($quoteId);
         $this->assertSame('enviada', $quote->status);

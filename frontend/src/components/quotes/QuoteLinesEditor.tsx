@@ -11,6 +11,7 @@ import {
   lineProfitForLine,
   recalcLine,
   recalcLineFromSalePrice,
+  salePriceFromCost,
 } from '@/lib/calculations'
 import { formatCurrency } from '@/lib/format'
 import { preventNegativeNumberKey, sanitizePositiveDecimalInput, sanitizeQuantityInput } from '@/lib/quantity-input'
@@ -49,7 +50,6 @@ export function QuoteLinesEditor({
   void autoApplyBest
   void _readOnlyMargins
   /** Con comparador: costo/p.venta vienen de ofertas. Sin él (ventas): captura manual. */
-  const pricingFieldsLocked = showComparator
   const marginEditable = !readOnly
   const [activeLineId, setActiveLineId] = useState<string | null>(null)
   const [inventoryCollapsed, setInventoryCollapsed] = useState(false)
@@ -118,6 +118,10 @@ export function QuoteLinesEditor({
     onChange(
       lines.map((l) => {
         if (l.id !== id) return l
+        if (l.isCustom && l.usesGlobalMargin === false &&
+          Math.abs(l.salePrice - salePriceFromCost(l.cost, l.marginPercent)) > 0.0001) {
+          return recalcLineFromSalePrice({ ...l, ...patch }, l.salePrice)
+        }
         return recalcLine(
           { ...l, ...patch },
           l.usesGlobalMargin === false ? undefined : globalMargin,
@@ -178,18 +182,19 @@ export function QuoteLinesEditor({
     if (activeLineId === id) setActiveLineId(null)
   }
 
-  const addLine = () => {
+  const addLine = (isCustom = false) => {
     const line = recalcLine(
       {
         id: `ln${Date.now()}`,
         quantity: 1,
         product: '',
         partNumber: '',
+        isCustom,
         cost: 0,
         marginPercent: globalMargin,
         salePrice: 0,
         amount: 0,
-        warehouse: preferredWarehouse,
+        warehouse: isCustom ? '' : preferredWarehouse,
         usesGlobalMargin: true,
       },
       globalMargin,
@@ -199,7 +204,7 @@ export function QuoteLinesEditor({
   }
 
   const linesWithSku = useMemo(
-    () => lines.filter((l) => l.partNumber.trim() !== ''),
+    () => lines.filter((l) => !l.isCustom && l.partNumber.trim() !== ''),
     [lines],
   )
 
@@ -305,26 +310,27 @@ export function QuoteLinesEditor({
         </div>
       )}
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-xs">
+        <table className="w-full min-w-[1080px] table-fixed border-separate border-spacing-0 text-left text-xs">
           <thead className="sticky top-0 z-10 bg-slate-50 text-slate-500">
             <tr>
-              <th className="w-16 border-b border-slate-200 px-2 py-2 font-medium">Cant.</th>
-              <th className="border-b border-slate-200 px-2 py-2 font-medium">Descripción detallada</th>
-              <th className="w-36 border-b border-slate-200 px-2 py-2 font-medium">SKU</th>
-              <th className="w-24 border-b border-slate-200 px-2 py-2 font-medium text-right">Costo</th>
-              <th className="w-24 border-b border-slate-200 px-2 py-2 font-medium text-right">Margen %</th>
-              <th className="w-24 border-b border-slate-200 px-2 py-2 font-medium text-right">P. venta</th>
+              <th className="w-16 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium">Cant.</th>
+              <th className="w-56 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium">Descripción detallada</th>
+              <th className="w-36 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium">SKU</th>
+              <th className="w-24 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium text-right">Costo</th>
+              <th className="w-24 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium text-right">Margen %</th>
+              <th className="w-24 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium text-right">P. venta</th>
               {showProfit && (
-                <th className="w-24 border-b border-slate-200 px-2 py-2 font-medium text-right">Utilidad</th>
+                <th className="w-24 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium text-right">Utilidad</th>
               )}
-              <th className="w-24 border-b border-slate-200 px-2 py-2 font-medium text-right">Importe</th>
-              <th className="w-36 border-b border-slate-200 px-2 py-2 font-medium">Almacén</th>
+              <th className="w-24 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium text-right">Importe</th>
+              <th className="w-36 whitespace-nowrap border-b border-slate-200 px-2 py-2 font-medium">Almacén</th>
               <th className="w-10 border-b border-slate-200 px-1 py-2" />
             </tr>
           </thead>
           <tbody>
             {lines.map((line) => {
               const customMargin = line.usesGlobalMargin === false
+              const linePricingLocked = showComparator && !line.isCustom
               const isActive = effectiveActiveLineId === line.id
               return (
                 <tr
@@ -385,7 +391,13 @@ export function QuoteLinesEditor({
                     />
                   </td>
                   <td className="px-2 py-1.5 align-middle">
-                    <CtSkuAutocompleteInput
+                    {line.isCustom ? <Input
+                      className="w-full min-w-0 px-2 py-1.5 shadow-sm"
+                      value={line.product}
+                      placeholder="Descripción del producto"
+                      disabled={readOnly}
+                      onChange={(e) => updateLine(line.id, { product: e.target.value })}
+                    /> : <CtSkuAutocompleteInput
                       className="w-full min-w-0 px-2 py-1.5 shadow-sm"
                       value={line.product}
                       sku={line.partNumber}
@@ -395,10 +407,16 @@ export function QuoteLinesEditor({
                       onFocus={() => setActiveLineId(line.id)}
                       onChange={(text) => updateLine(line.id, { product: text })}
                       onSelect={(item) => applyCtSuggestion(line, item)}
-                    />
+                    />}
                   </td>
                   <td className="px-2 py-1.5 align-middle">
-                    <CtSkuAutocompleteInput
+                    {line.isCustom ? <Input
+                      className="w-full min-w-0 px-2 py-1.5 font-mono text-xs shadow-sm"
+                      value={line.partNumber}
+                      placeholder="Opcional"
+                      disabled={readOnly}
+                      onChange={(e) => updateLine(line.id, { partNumber: e.target.value })}
+                    /> : <CtSkuAutocompleteInput
                       className="w-full min-w-0 px-2 py-1.5 font-mono text-xs shadow-sm"
                       value={line.partNumber}
                       sku={line.partNumber}
@@ -407,7 +425,15 @@ export function QuoteLinesEditor({
                       onFocus={() => setActiveLineId(line.id)}
                       onChange={(sku) => updateLine(line.id, { partNumber: sku })}
                       onSelect={(item) => applyCtSuggestion(line, item)}
-                    />
+                    />}
+                    {!line.isCustom && line.product.trim() !== '' && (
+                      <p
+                        className="mt-1 line-clamp-2 text-[10px] leading-tight text-slate-500"
+                        title={line.product}
+                      >
+                        {line.product}
+                      </p>
+                    )}
                   </td>
                   <td className="px-2 py-1.5 align-middle">
                     <Input
@@ -417,14 +443,14 @@ export function QuoteLinesEditor({
                       className="w-full bg-slate-50 px-2 py-1.5 text-right shadow-sm"
                       placeholder="0.00"
                       value={line.cost}
-                      disabled={readOnly || pricingFieldsLocked}
-                      readOnly={pricingFieldsLocked}
+                      disabled={readOnly || linePricingLocked}
+                      readOnly={linePricingLocked}
                       title="Se asigna al seleccionar oferta del comparador"
                       onKeyDown={preventNegativeNumberKey}
                       onClick={(e) => e.stopPropagation()}
                       onFocus={() => setActiveLineId(line.id)}
                       onChange={(e) => {
-                        if (pricingFieldsLocked) return
+                        if (linePricingLocked) return
                         const val = sanitizePositiveDecimalInput(e.target.value)
                         updateLine(line.id, { cost: Number(val) || 0 })
                       }}
@@ -491,14 +517,14 @@ export function QuoteLinesEditor({
                       className="w-full bg-slate-50 px-2 py-1.5 text-right font-medium shadow-sm"
                       placeholder="0.00"
                       value={line.salePrice}
-                      disabled={readOnly || pricingFieldsLocked}
-                      readOnly={pricingFieldsLocked}
+                      disabled={readOnly || linePricingLocked}
+                      readOnly={linePricingLocked}
                       title="Se calcula con costo + margen"
                       onKeyDown={preventNegativeNumberKey}
                       onClick={(e) => e.stopPropagation()}
                       onFocus={() => setActiveLineId(line.id)}
                       onChange={(e) => {
-                        if (pricingFieldsLocked) return
+                        if (linePricingLocked) return
                         const val = sanitizePositiveDecimalInput(e.target.value)
                         updateSalePrice(line.id, Number(val) || 0)
                       }}
@@ -546,8 +572,13 @@ export function QuoteLinesEditor({
         </table>
         <div className="border-t border-slate-100 bg-slate-50/50 px-3 py-2">
           {!readOnly && (
-            <Button variant="secondary" size="sm" onClick={addLine}>
+            <Button variant="secondary" size="sm" onClick={() => addLine()}>
               + Agregar partida
+            </Button>
+          )}
+          {!readOnly && (
+            <Button variant="secondary" size="sm" className="ml-2" onClick={() => addLine(true)}>
+              + Agregar partida personalizada
             </Button>
           )}
         </div>

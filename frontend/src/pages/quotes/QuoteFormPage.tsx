@@ -46,6 +46,7 @@ import {
   fetchNextQuoteFolio,
   addQuoteInternalNote,
   claimPurchaseRequest,
+  claimQuoteFollowUp,
   getQuoteById,
   isPersistedQuoteId,
   openQuotePdf,
@@ -85,10 +86,6 @@ import {
 } from '@/hooks/useUnsavedChangesGuard'
 import { useNotificationFocus } from '@/lib/notification-focus'
 
-function todayInputValue(): string {
-  return new Intl.DateTimeFormat('en-CA').format(new Date())
-}
-
 function QuoteFormEditor({
   quoteId,
   requestId,
@@ -99,8 +96,8 @@ function QuoteFormEditor({
   clientIdParam: string | null
 }) {
   const isNew = !quoteId || quoteId === 'nueva'
-  const navigate = useNavigate()
   const location = useLocation()
+  const navigate = useNavigate()
   const { getQuote, saveQuote } = useData()
   const { user } = useAuth()
   const { can, canCreateQuotes, canEditMargins, canApproveQuotes, canSendQuotes, canConsultInventory } =
@@ -138,6 +135,10 @@ function QuoteFormEditor({
     if (requestId) return 'solicitud_cotizaciones'
     return 'en_elaboracion'
   })
+  const finishedReadOnly =
+    !isNew &&
+    status === 'pendiente_envio' &&
+    (user?.role === 'ventas' || user?.role === 'gerente_compras')
   const [savedStatus, setSavedStatus] = useState<QuoteStatus>(
     () => localExisting?.status ?? (requestId ? 'solicitud_cotizaciones' : 'en_elaboracion'),
   )
@@ -152,11 +153,24 @@ function QuoteFormEditor({
   }))
   const [purchaseActionLoading, setPurchaseActionLoading] = useState(false)
   const [purchaseActionError, setPurchaseActionError] = useState<string | null>(null)
+  const [followUpAssigneeId, setFollowUpAssigneeId] = useState<number | null>(
+    () => localExisting?.followUpAssigneeId ?? null,
+  )
+  const [followUpAssigneeName, setFollowUpAssigneeName] = useState<string | null>(
+    () => localExisting?.followUpAssigneeName ?? null,
+  )
+  const [followUpAssignedToViewer, setFollowUpAssignedToViewer] = useState(
+    () => localExisting?.followUpAssignedToViewer ?? false,
+  )
+  const [claimDeclaration, setClaimDeclaration] = useState('')
+  const [claimingReadyQuote, setClaimingReadyQuote] = useState(false)
+  const [claimReadyError, setClaimReadyError] = useState<string | null>(null)
   const isPurchasingUser = user?.role === 'gerente_compras' || user?.role === 'administrador'
   const purchaseClaimRequired = !isNew && status === 'solicitud_cotizaciones' && isPurchasingUser
   const canEditPurchaseRequest = !purchaseClaimRequired || purchaseAttention.assignedToViewer
   const needsEditLock =
     !isNew &&
+    !finishedReadOnly &&
     isPersistedQuoteId(quoteId ?? '') &&
     (canEdit || canCreate) &&
     ownedByViewer === true &&
@@ -196,12 +210,19 @@ function QuoteFormEditor({
   const [emailTo, setEmailTo] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailMessage, setEmailMessage] = useState('')
-  const [sendDate, setSendDate] = useState(
-    () => localExisting?.sentAt?.slice(0, 10) ?? todayInputValue(),
-  )
   const [sendingEmail, setSendingEmail] = useState(false)
+  const sendingEmailRef = useRef(false)
   const [emailFeedback, setEmailFeedback] = useState<string | null>(null)
   const [sentAt, setSentAt] = useState<string | undefined>(localExisting?.sentAt)
+  const [elaborationDate, setElaborationDate] = useState(() => {
+    if (localExisting?.elaborationDate) return localExisting.elaborationDate
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(localExisting?.createdAt ? new Date(localExisting.createdAt) : new Date())
+    const part = (type: string) => parts.find((item) => item.type === type)?.value ?? ''
+    return `${part('year')}-${part('month')}-${part('day')}`
+  })
+  const [initialElaborationDate] = useState(elaborationDate)
   const [invoiceNumber, setInvoiceNumber] = useState(() => localExisting?.invoiceNumber ?? '')
   const [statusHistory, setStatusHistory] = useState<QuoteStatusHistoryEntry[]>(
     () => localExisting?.statusHistory ?? [],
@@ -362,7 +383,7 @@ function QuoteFormEditor({
         setInternalNotes(quote.internalNotes ?? [])
         setLines(quote.lines)
         setSentAt(quote.sentAt)
-        setSendDate(quote.sentAt?.slice(0, 10) ?? todayInputValue())
+        setElaborationDate(quote.elaborationDate ?? quote.createdAt.slice(0, 10))
         setInvoiceNumber(quote.invoiceNumber ?? '')
         setStatusHistory(quote.statusHistory ?? [])
         setOwnedByViewer(quote.ownedByViewer ?? true)
@@ -376,6 +397,9 @@ function QuoteFormEditor({
           escalatedAt: quote.purchaseEscalatedAt ?? null,
           assignedToViewer: quote.purchaseAssignedToViewer ?? false,
         })
+        setFollowUpAssigneeId(quote.followUpAssigneeId ?? null)
+        setFollowUpAssigneeName(quote.followUpAssigneeName ?? null)
+        setFollowUpAssignedToViewer(quote.followUpAssignedToViewer ?? false)
         saveQuote(quote)
       })
       .catch(() => {
@@ -400,9 +424,10 @@ function QuoteFormEditor({
   const client = selectedClient
   const request = loadedRequest ?? undefined
 
-  const quoteFieldsReadOnly = viewingOthers || (!canEdit && !canCreate) || !canEditPurchaseRequest
+  const quoteFieldsReadOnly =
+    finishedReadOnly || viewingOthers || (!canEdit && !canCreate) || !canEditPurchaseRequest
   const canSaveQuote =
-    !viewingOthers && canEditPurchaseRequest && ((isNew && canCreate) || (!isNew && (canEdit || canApprove)))
+    !finishedReadOnly && !viewingOthers && canEditPurchaseRequest && ((isNew && canCreate) || (!isNew && (canEdit || canApprove)))
 
   const newQuoteDirty =
     isNew &&
@@ -410,6 +435,7 @@ function QuoteFormEditor({
       Boolean(clientId) ||
       customerObservations.trim() !== '' ||
       invoiceNumber.trim() !== '' ||
+      elaborationDate !== initialElaborationDate ||
       (status !== 'en_elaboracion' && status !== 'solicitud_cotizaciones'))
 
   const { dirty: editDirty, markClean } = useDirtyTracker(
@@ -422,6 +448,7 @@ function QuoteFormEditor({
       customerObservations,
       lines,
       invoiceNumber,
+      elaborationDate,
       preferredWarehouse,
       autoApplyBest,
     ],
@@ -449,16 +476,29 @@ function QuoteFormEditor({
   const workflowStep = rawWorkflowStep === -1 ? QUOTE_WORKFLOW_ORDER.length : rawWorkflowStep
   const canUseQuoteActions = lines.length > 0 && Boolean(clientId)
   const isListaTerminada = savedStatus === 'pendiente_envio'
-  const canEmail = canSendEmail && canUseQuoteActions && !viewingOthers && isListaTerminada
+  const canEmail = canSendEmail && canUseQuoteActions && !viewingOthers &&
+    ['pendiente_envio', 'enviada', 'modificacion'].includes(savedStatus) &&
+    !(user?.role === 'ventas' && savedStatus === 'pendiente_envio' && !followUpAssignedToViewer)
+  const whatsappDigits = (client?.whatsapp ?? '').replace(/\D/g, '')
+  const canWhatsApp = canEmail && whatsappDigits.length >= 10
   const isBusy = saving || actionLoading !== null
 
   const buildDraftQuote = (): Quote | null => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(elaborationDate)) {
+      alert('Selecciona una fecha de elaboración válida')
+      return null
+    }
     if (!clientId) {
       alert('Selecciona un cliente')
       return null
     }
     if (lines.length === 0) {
       alert('Agrega al menos una partida')
+      return null
+    }
+    const invalidLine = lines.findIndex((line) => !line.product.trim() || line.quantity <= 0)
+    if (invalidLine >= 0) {
+      alert(`Partida ${invalidLine + 1}: indica una descripción y una cantidad mayor que cero.`)
       return null
     }
     if (status === 'facturada' && invoiceNumber.trim() === '') {
@@ -478,13 +518,18 @@ function QuoteFormEditor({
       notes: '',
       customerObservations,
       createdAt: localExisting?.createdAt ?? new Date().toISOString(),
+      elaborationDate,
       sentAt,
       invoiceNumber: invoiceNumber.trim() || undefined,
       lines,
     }
   }
 
-  const saveDraft = async (draft: Quote, navigateAfter = false): Promise<string | null> => {
+  const saveDraft = async (
+    draft: Quote,
+    navigateAfter = false,
+    navigationState?: { showSendReady?: boolean },
+  ): Promise<string | null> => {
     beginModalBusy(setSaving)
     await waitModalBusyPaint()
     const busyStarted = performance.now()
@@ -492,6 +537,7 @@ function QuoteFormEditor({
     try {
       const saved = await persistQuote(draft)
       saveQuote(saved)
+      window.dispatchEvent(new Event('cotizacion:data-changed'))
       markClean()
       setAllowLeave(true)
       setServerQuoteId(saved.id)
@@ -499,6 +545,7 @@ function QuoteFormEditor({
       setStatus(saved.status)
       setSavedStatus(saved.status)
       setSentAt(saved.sentAt)
+      setElaborationDate(saved.elaborationDate ?? elaborationDate)
       setInvoiceNumber(saved.invoiceNumber ?? '')
       setStatusHistory(saved.statusHistory ?? [])
       setCustomerObservations(saved.customerObservations ?? '')
@@ -514,9 +561,9 @@ function QuoteFormEditor({
       })
       await waitMinBusyMs(busyStarted)
       if (navigateAfter) {
-        navigate(`/cotizaciones/${saved.id}`)
+        navigate(`/cotizaciones/${saved.id}`, { state: navigationState })
       } else if (isNew) {
-        navigate(`/cotizaciones/${saved.id}`, { replace: true })
+        navigate(`/cotizaciones/${saved.id}`, { replace: true, state: navigationState })
       } else {
         setAllowLeave(false)
       }
@@ -564,6 +611,28 @@ function QuoteFormEditor({
     }
   }
 
+  const handleClaimReadyQuote = async () => {
+    const id = serverQuoteId ?? quoteId
+    if (!id || !isPersistedQuoteId(id)) return
+    setClaimingReadyQuote(true)
+    setClaimReadyError(null)
+    try {
+      await claimQuoteFollowUp(id, claimDeclaration)
+      const refreshed = await getQuoteById(id)
+      setFollowUpAssigneeId(refreshed.followUpAssigneeId ?? null)
+      setFollowUpAssigneeName(refreshed.followUpAssigneeName ?? null)
+      setFollowUpAssignedToViewer(refreshed.followUpAssignedToViewer ?? false)
+      setOwnedByViewer(refreshed.ownedByViewer ?? true)
+      setClaimDeclaration('')
+      saveQuote(refreshed)
+      window.dispatchEvent(new Event('cotizacion:data-changed'))
+    } catch (err) {
+      setClaimReadyError(err instanceof Error ? err.message : 'No se pudo tomar la cotización.')
+    } finally {
+      setClaimingReadyQuote(false)
+    }
+  }
+
   const handleClaimPurchaseRequest = async () => {
     const id = serverQuoteId ?? quoteId
     if (!id) return
@@ -583,6 +652,7 @@ function QuoteFormEditor({
       const refreshed = await getQuoteById(id)
       setInternalNotes(refreshed.internalNotes ?? [])
       saveQuote(refreshed)
+      window.dispatchEvent(new Event('cotizacion:data-changed'))
     } catch (err) {
       setPurchaseActionError(err instanceof Error ? err.message : 'No se pudo tomar la solicitud.')
     } finally {
@@ -609,6 +679,7 @@ function QuoteFormEditor({
       const refreshed = await getQuoteById(id)
       setInternalNotes(refreshed.internalNotes ?? [])
       saveQuote(refreshed)
+      window.dispatchEvent(new Event('cotizacion:data-changed'))
     } catch (err) {
       setPurchaseActionError(err instanceof Error ? err.message : 'No se pudo liberar la solicitud.')
     } finally {
@@ -638,20 +709,17 @@ function QuoteFormEditor({
       status: targetStatus,
       ...(serverQuoteId && isPersistedQuoteId(serverQuoteId) ? { id: serverQuoteId } : {}),
     }
-    const savedId = await saveDraft(payload, false)
+    const showSendReady = targetStatus === 'pendiente_envio' && !options?.skipSendHint
+    const navigationState = showSendReady ? { showSendReady: true } : undefined
+    const savedId = await saveDraft(payload, false, navigationState)
     if (!savedId) return
 
-    const showSendReady = targetStatus === 'pendiente_envio' && !options?.skipSendHint
     setAllowLeave(true)
-    navigate(`/cotizaciones/${savedId}`, {
-      replace: isNew,
-      state: showSendReady ? { showSendReady: true } : undefined,
-    })
-    setAllowLeave(false)
     setSaveModalOpen(false)
-    if (showSendReady) {
-      setSendReadyModalOpen(true)
+    if (!isNew) {
+      navigate(`/cotizaciones/${savedId}`, { state: navigationState })
     }
+    setAllowLeave(false)
   }
 
   const openSaveModal = () => {
@@ -685,9 +753,28 @@ function QuoteFormEditor({
     setEmailTo(client?.email?.trim() ?? '')
     setEmailSubject('')
     setEmailMessage('')
-    setSendDate((current) => current || sentAt?.slice(0, 10) || todayInputValue())
     setEmailFeedback(null)
     setEmailModalOpen(true)
+  }
+
+  const handleSendWhatsApp = () => {
+    if (!canWhatsApp) return
+    const id = serverQuoteId ?? quoteId
+    if (!id || !isPersistedQuoteId(id)) return
+
+    // WhatsApp no permite adjuntar archivos desde un enlace web: se descarga el PDF
+    // y se abre el chat con el mensaje listo para que el vendedor lo adjunte.
+    const phone = whatsappDigits.startsWith('521') && whatsappDigits.length === 13
+      ? `52${whatsappDigits.slice(3)}`
+      : whatsappDigits.startsWith('52')
+        ? whatsappDigits
+        : `52${whatsappDigits}`
+    const greeting = client?.contact?.trim() || client?.company?.trim() || 'cliente'
+    const message = `Hola ${greeting}, te comparto la cotización ${folio}. Adjunto el PDF con la propuesta.`
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer')
+    setSendReadyModalOpen(false)
+    void openQuotePdf(id, true)
+    setEmailFeedback('Se descargó el PDF y se abrió WhatsApp. Adjunta el archivo descargado para enviarlo.')
   }
 
   const refreshQuoteAfterSend = async (id?: string) => {
@@ -706,19 +793,23 @@ function QuoteFormEditor({
   }
 
   const handleSendEmail = async () => {
+    if (sendingEmailRef.current) return
     const to = emailTo.trim()
     if (!to) {
       setEmailFeedback('Indica un correo destinatario.')
       return
     }
 
+    sendingEmailRef.current = true
     beginModalBusy(setSendingEmail)
     await waitModalBusyPaint()
     const busyStarted = performance.now()
     setEmailFeedback(null)
     setActionLoading('email')
     try {
-      const quoteIdForSend = await ensureQuoteSaved()
+      const quoteIdForSend = finishedReadOnly && serverQuoteId && isPersistedQuoteId(serverQuoteId)
+        ? serverQuoteId
+        : await ensureQuoteSaved()
       if (!quoteIdForSend) {
         await waitMinBusyMs(busyStarted)
         return
@@ -728,13 +819,13 @@ function QuoteFormEditor({
         to,
         subject: emailSubject.trim() || undefined,
         message: emailMessage.trim() || undefined,
-        sentAt: sendDate || undefined,
       })
       const nextStatus = result.status ?? 'enviada'
       const nextSentAt = result.sentAt ?? new Date().toISOString()
       setStatus(nextStatus)
       setSavedStatus(nextStatus)
       setSentAt(nextSentAt)
+      window.dispatchEvent(new Event('cotizacion:data-changed'))
       await waitMinBusyMs(busyStarted)
       setEmailModalOpen(false)
       setEmailFeedback(
@@ -748,6 +839,7 @@ function QuoteFormEditor({
       )
       await waitMinBusyMs(busyStarted)
     } finally {
+      sendingEmailRef.current = false
       setSendingEmail(false)
       setActionLoading(null)
     }
@@ -756,7 +848,7 @@ function QuoteFormEditor({
   const handleOpenPdf = async () => {
     setActionLoading('pdf')
     try {
-      if (viewingOthers && quoteId && isPersistedQuoteId(quoteId)) {
+      if ((viewingOthers || finishedReadOnly) && quoteId && isPersistedQuoteId(quoteId)) {
         await openQuotePdf(quoteId)
         return
       }
@@ -866,8 +958,12 @@ function QuoteFormEditor({
               title={
                 !canSendEmail
                   ? 'No tienes permiso para enviar cotizaciones'
-                  : !isListaTerminada
-                    ? 'Disponible cuando la cotización esté en Lista / Terminada'
+                  : user?.role === 'ventas' && savedStatus === 'pendiente_envio' && !followUpAssignedToViewer
+                    ? followUpAssigneeId
+                      ? `La cotización la está atendiendo ${followUpAssigneeName ?? 'otro vendedor'}.`
+                      : 'Toma la cotización antes de enviarla.'
+                    : !canEmail && !['pendiente_envio', 'enviada', 'modificacion'].includes(savedStatus)
+                    ? 'Disponible cuando la cotización esté terminada o enviada'
                     : !clientId
                       ? 'Selecciona un cliente'
                       : lines.length === 0
@@ -883,12 +979,15 @@ function QuoteFormEditor({
               variant="secondary"
               size="sm"
               className={isListaTerminada ? 'ring-2 ring-yellow-400 ring-offset-1' : ''}
-              disabled
+              disabled={!canWhatsApp || isBusy}
               title={
-                isListaTerminada
-                  ? 'Próximamente — envío por WhatsApp'
-                  : 'Disponible cuando la cotización esté en Lista / Terminada'
+                !canEmail
+                  ? 'Toma la cotización antes de enviarla'
+                  : whatsappDigits.length < 10
+                    ? 'Agrega un WhatsApp válido al cliente'
+                    : 'Abrir WhatsApp y descargar el PDF para adjuntarlo'
               }
+              onClick={handleSendWhatsApp}
             >
               <MessageCircle className="h-4 w-4" />
               WhatsApp
@@ -952,9 +1051,53 @@ function QuoteFormEditor({
 
       {isListaTerminada && !viewingOthers && (
         <p className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-950">
-          Esta cotización está en <strong>Lista / Terminada</strong>. Para enviarla al cliente usa
-          los botones <strong>Email</strong> o <strong>WhatsApp</strong> (arriba a la derecha).
+          Esta cotización está en <strong>Lista / Terminada</strong>.
+          {finishedReadOnly
+            ? ' Ventas y Compras pueden consultarla y descargar el PDF, pero ya no editarla.'
+            : ' Para enviarla al cliente usa el botón Email (arriba a la derecha).'}
         </p>
+      )}
+
+      {isListaTerminada && user?.role === 'ventas' && !viewingOthers && (
+        <div className="mb-4 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3">
+          {followUpAssignedToViewer ? (
+            <p className="text-sm text-indigo-950">
+              Tomaste esta cotización. Ya puedes enviarla al cliente.
+            </p>
+          ) : followUpAssigneeId ? (
+            <p className="text-sm text-indigo-950">
+              La cotización está asignada a <strong>{followUpAssigneeName ?? 'otro vendedor'}</strong>.
+            </p>
+          ) : (
+            <>
+              <label className="text-sm font-medium text-indigo-950" htmlFor="ready-quote-claim">
+                Toma la cotización antes de enviarla
+              </label>
+              <textarea
+                id="ready-quote-claim"
+                className="mt-2 min-h-20 w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                maxLength={1000}
+                value={claimDeclaration}
+                onChange={(event) => setClaimDeclaration(event.target.value)}
+                placeholder="Escribe la acción que realizarás con esta cotización."
+                disabled={claimingReadyQuote}
+              />
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-indigo-800">Indica al menos 10 caracteres; quedará en la bitácora.</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={claimingReadyQuote || claimDeclaration.trim().length < 10}
+                  onClick={() => void handleClaimReadyQuote()}
+                >
+                  {claimingReadyQuote ? <InlineBusy size="sm" /> : <UserCheck className="h-4 w-4" />}
+                  Tomar cotización
+                </Button>
+              </div>
+              {claimReadyError && <p className="mt-2 text-sm text-red-700">{claimReadyError}</p>}
+            </>
+          )}
+        </div>
       )}
 
       {viewingOthers && (
@@ -1015,6 +1158,11 @@ function QuoteFormEditor({
                     En elaboración no se marca como lista para ventas. Terminada sí queda lista
                     para el siguiente paso.
                   </p>
+                  {saveError && (
+                    <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+                      No se pudo completar el guardado: {saveError}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-3">
@@ -1076,8 +1224,7 @@ function QuoteFormEditor({
                     Cotización lista para enviar
                   </h3>
                   <p className="mt-2 text-sm text-slate-600">
-                    Ya está en <strong>Lista / Terminada</strong>. El envío se hace con los botones{' '}
-                    <strong>Email</strong> y <strong>WhatsApp</strong> de arriba.
+                    Se guardó en <strong>Lista / Terminada</strong>. Elige cómo compartirla con el cliente.
                   </p>
                 </div>
 
@@ -1098,12 +1245,28 @@ function QuoteFormEditor({
                     variant="secondary"
                     size="sm"
                     className="w-full justify-center"
-                    disabled
-                    title="Próximamente"
+                    disabled={!canWhatsApp || isBusy}
+                    title={
+                      !canEmail
+                        ? 'Toma la cotización antes de enviarla'
+                        : whatsappDigits.length < 10
+                          ? 'Agrega un WhatsApp válido al cliente'
+                          : 'Abrir WhatsApp y descargar el PDF para adjuntarlo'
+                    }
+                    onClick={handleSendWhatsApp}
                   >
                     <MessageCircle className="h-4 w-4" />
-                    WhatsApp (próximamente)
+                    Enviar por WhatsApp
                   </Button>
+                  {whatsappDigits.length < 10 && (
+                    <p className="text-xs text-amber-700">El cliente no tiene un número de WhatsApp válido registrado.</p>
+                  )}
+                  {user?.role === 'ventas' && savedStatus === 'pendiente_envio' && !followUpAssignedToViewer && (
+                    <p className="text-xs text-indigo-700">Toma la cotización antes de enviarla por cualquier canal.</p>
+                  )}
+                  {canWhatsApp && (
+                    <p className="text-xs text-slate-500">Se abrirá el chat y se descargará el PDF para que lo adjuntes.</p>
+                  )}
                   {editDirty && (
                     <Button
                       variant="secondary"
@@ -1318,20 +1481,17 @@ function QuoteFormEditor({
                   Ver PDF no cambia el estatus.
                 </p>
               </div>
-              {(status === 'pendiente_envio' || status === 'enviada' || status === 'modificacion') && (
-                <div>
-                  <Label>Fecha de envío</Label>
-                  <Input
-                    type="date"
-                    value={sendDate}
-                    disabled={viewingOthers || status !== 'pendiente_envio' || isBusy}
-                    onChange={(e) => setSendDate(e.target.value)}
-                  />
-                  <p className="mt-1 text-xs text-slate-500">
-                    Capturada con la fecha de hoy. Puedes modificarla antes de enviar la cotización.
-                  </p>
-                </div>
-              )}
+              <div>
+                <Label htmlFor="elaboration-date">Fecha de elaboración</Label>
+                <Input
+                  id="elaboration-date"
+                  type="date"
+                  value={elaborationDate}
+                  onChange={(event) => setElaborationDate(event.target.value)}
+                  disabled={quoteFieldsReadOnly || isBusy}
+                  className="mt-1"
+                />
+              </div>
               {!isNew && statusHistory.length > 0 && (
                 <div>
                   <Label>Historial de estatus</Label>

@@ -35,6 +35,7 @@ type OperationalAlert = {
   folio: string
   label: string
   detail: string
+  createdAt?: string | null
 }
 
 function mapOperationalAlerts(unanswered: DashboardAlertQuote[]): OperationalAlert[] {
@@ -48,11 +49,12 @@ function mapOperationalAlerts(unanswered: DashboardAlertQuote[]): OperationalAle
 }
 
 function mapPurchaseRequestAlerts(quotes: DashboardAlertQuote[]): OperationalAlert[] {
-  return quotes.map((quote) => ({
+  return quotes.filter((quote) => quote.purchaseAttentionStatus !== 'en_atencion').map((quote) => ({
     id: `purchase-request-${quote.id}`,
     quoteId: quote.id,
     folio: quote.folio,
     label: 'Solicitud de cotización',
+    createdAt: quote.requestCreatedAt,
     detail: quote.purchaseAttentionStatus === 'en_atencion'
       ? `En atención por ${quote.purchaseAssigneeName ?? 'Compras'}`
       : 'Pendiente de revisión por Compras',
@@ -69,6 +71,8 @@ export function NotificationsBell() {
   const [operational, setOperational] = useState<OperationalAlert[]>([])
   const [purchaseRequests, setPurchaseRequests] = useState<OperationalAlert[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
+  const [notificationTotal, setNotificationTotal] = useState(0)
+  const [notificationPage, setNotificationPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [bannerPulse, setBannerPulse] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -86,7 +90,7 @@ export function NotificationsBell() {
     setLoading(true)
     try {
       const tasks: [
-        Promise<{ data: SalesNotificationItem[]; unreadCount: number }>,
+        Promise<{ data: SalesNotificationItem[]; unreadCount: number; total: number }>,
         Promise<{ operational: OperationalAlert[]; purchaseRequests: OperationalAlert[] }>,
       ] = [
         listNotifications(),
@@ -102,6 +106,8 @@ export function NotificationsBell() {
       const [inbox, dashboardAlerts] = await Promise.all(tasks)
       setItems(inbox.data)
       setUnreadCount(inbox.unreadCount)
+      setNotificationTotal(inbox.total)
+      setNotificationPage(1)
       setOperational(dashboardAlerts.operational)
       setPurchaseRequests(dashboardAlerts.purchaseRequests)
     } catch {
@@ -111,11 +117,32 @@ export function NotificationsBell() {
     }
   }, [enabled, showOperational])
 
+  const loadMore = async () => {
+    if (loading) return
+    setLoading(true)
+    try {
+      const nextPage = notificationPage + 1
+      const next = await listNotifications(nextPage)
+      setItems((previous) => [...previous, ...next.data])
+      setNotificationPage(nextPage)
+      setNotificationTotal(next.total)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   useEffect(() => {
     void refresh()
     if (!enabled) return
-    const timer = window.setInterval(() => void refresh(), 60_000)
-    return () => window.clearInterval(timer)
+    const timer = window.setInterval(() => void refresh(), 15_000)
+    const onFocus = () => void refresh()
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('cotizacion:data-changed', onFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('cotizacion:data-changed', onFocus)
+    }
   }, [enabled, refresh])
 
   useEffect(() => {
@@ -172,8 +199,6 @@ export function NotificationsBell() {
 
   if (!enabled) return null
 
-  const badgeCount = unreadCount + operational.length
-
   const goToOperationalAlerts = () => {
     setOpen(false)
     goToDashboardAlerts(navigate, location, 'cotizaciones-sin-avance')
@@ -223,6 +248,16 @@ export function NotificationsBell() {
       return
     }
 
+    if (item.quoteId && ['solicitud_recibida', 'solicitud_compras_urgente'].includes(item.reasonCode)) {
+      navigateWithNotificationFocus(
+        navigate,
+        location,
+        { pathname: `/cotizaciones/${item.quoteId}` },
+        quoteDetailFocus(item.folio ?? 'Cotización', item.reasonLabel),
+      )
+      return
+    }
+
     if (item.quoteId) {
       navigateWithNotificationFocus(
         navigate,
@@ -244,6 +279,7 @@ export function NotificationsBell() {
   const inboxQuoteIds = new Set(inboxItems.map((item) => item.quoteId).filter(Boolean))
   const purchaseRequestFallback = purchaseRequests.filter((alert) => !inboxQuoteIds.has(alert.quoteId))
   const pipelineTotal = pipelineQuoteItems.length + pipelineRequestItems.length
+  const badgeCount = unreadCount + purchaseRequestFallback.length + operational.length
 
   const panel =
     open && panelStyle && typeof document !== 'undefined'
@@ -281,6 +317,11 @@ export function NotificationsBell() {
                           {alert.folio} · {alert.label}
                         </span>
                         <span className="mt-0.5 block text-xs text-slate-600">{alert.detail}</span>
+                        {alert.createdAt && (
+                          <span className="mt-1 block text-[11px] text-slate-400">
+                            Recibida: {formatDateTime(alert.createdAt)}
+                          </span>
+                        )}
                       </button>
                     </li>
                   ))}
@@ -359,6 +400,13 @@ export function NotificationsBell() {
                   </button>
                 </li>
               ))}
+              {notificationTotal > items.length && (
+                <li className="px-3 py-2 text-center">
+                  <Button type="button" variant="secondary" size="sm" disabled={loading} onClick={() => void loadMore()}>
+                    {loading ? 'Cargando…' : 'Cargar más notificaciones'}
+                  </Button>
+                </li>
+              )}
               {operational.length > 0 && (
                 <>
                   <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
@@ -429,8 +477,8 @@ export function NotificationsBell() {
       >
         <Bell className="h-7 w-7" strokeWidth={2.35} aria-hidden="true" />
         {badgeCount > 0 && (
-          <span className="absolute right-0 top-0 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
-            {badgeCount > 9 ? '9+' : badgeCount}
+          <span className="absolute right-0 top-0 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
+            {badgeCount}
           </span>
         )}
       </Button>

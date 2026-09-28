@@ -30,6 +30,7 @@ type QuoteApiLine = {
   product: string
 
   partNumber: string
+  isCustom?: boolean
 
   cost: number
 
@@ -98,6 +99,8 @@ type QuoteApiResponse = {
   total?: number
 
   createdAt?: string
+
+  elaborationDate?: string
 
   sentAt?: string | null
 
@@ -181,6 +184,8 @@ type QuoteSummaryApi = {
   linesCount: number
 
   createdAt?: string
+
+  elaborationDate?: string
 
   sentAt?: string | null
 
@@ -267,6 +272,7 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     total: data.total ?? undefined,
 
     createdAt: data.createdAt ?? new Date().toISOString(),
+    elaborationDate: data.elaborationDate,
 
     sentAt: data.sentAt ?? undefined,
 
@@ -323,6 +329,7 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
       product: line.product,
 
       partNumber: line.partNumber,
+      isCustom: line.isCustom ?? false,
 
       cost: line.cost,
 
@@ -419,6 +426,7 @@ export async function persistQuote(quote: Quote): Promise<Quote> {
       customerObservations: quote.customerObservations ?? '',
 
       sentAt: quote.sentAt ?? null,
+      elaborationDate: quote.elaborationDate ?? null,
 
       invoiceNumber: quote.invoiceNumber?.trim() || null,
 
@@ -433,6 +441,7 @@ export async function persistQuote(quote: Quote): Promise<Quote> {
         product: line.product,
 
         partNumber: line.partNumber,
+        isCustom: line.isCustom ?? false,
 
         cost: line.cost,
 
@@ -472,7 +481,7 @@ export async function persistQuote(quote: Quote): Promise<Quote> {
 
 
 
-  const data = (await response.json()) as QuoteApiResponse
+  const data = (await response.json()) as QuoteApiResponse & { errors?: Record<string, string[]> }
 
 
 
@@ -488,6 +497,12 @@ export async function persistQuote(quote: Quote): Promise<Quote> {
       }
     }
 
+    const firstError = data.errors && Object.entries(data.errors)[0]
+    if (firstError) {
+      const field = firstError[0].replace(/^lines\.(\d+)\./, (_, index: string) =>
+        `Partida ${Number(index) + 1}: `)
+      throw new Error(`${field}: ${firstError[1][0] || 'Dato obligatorio'}`)
+    }
     throw new Error(data.message || `Error al guardar cotización (${response.status})`)
   }
 
@@ -572,6 +587,7 @@ export async function listQuotes(params?: {
     notes: '',
 
     createdAt: row.createdAt ?? new Date().toISOString(),
+    elaborationDate: row.elaborationDate,
 
     sentAt: row.sentAt ?? undefined,
 

@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Mail\QuoteSentMail;
 use App\Models\AppSetting;
 use App\Models\Quote;
+use App\Models\QuoteInternalNote;
 use App\Models\User;
 use App\Services\Quotes\QuotePdfService;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -58,6 +59,13 @@ class SendQuoteEmailJob implements ShouldQueue
             customMessage: $this->message,
             customSubject: $this->subject,
         ));
+
+        QuoteInternalNote::query()->create([
+            'quote_id' => $quote->id,
+            'user_id' => $this->sentByUserId,
+            'body' => 'Cotización enviada por correo a '.$this->toEmail.'.',
+            'created_at' => now(),
+        ]);
 
         $sentFrom = config('quotes.sent_from_statuses', []);
 

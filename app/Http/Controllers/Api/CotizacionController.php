@@ -150,6 +150,7 @@ class CotizacionController extends Controller
             'notes' => ['nullable', 'string'],
             'customerObservations' => ['nullable', 'string', 'max:4000'],
             'sentAt' => ['nullable', 'date'],
+            'elaborationDate' => ['nullable', 'date_format:Y-m-d'],
             'createdByEmail' => ['nullable', 'email', 'max:255'],
             'lines' => ['nullable', 'array'],
             'lines.*.id' => ['nullable', 'string', 'max:80'],
@@ -162,6 +163,7 @@ class CotizacionController extends Controller
             'lines.*.salePrice' => ['nullable', 'numeric', 'min:0'],
             'lines.*.amount' => ['nullable', 'numeric', 'min:0'],
             'lines.*.warehouse' => ['nullable', 'string', 'max:80'],
+            'lines.*.isCustom' => ['nullable', 'boolean'],
             'lines.*.usesGlobalMargin' => ['nullable', 'boolean'],
             'lines.*.selectedWholesalerId' => ['nullable', 'uuid', 'exists:wholesalers,id'],
             'lines.*.offers' => ['nullable', 'array'],
@@ -171,12 +173,20 @@ class CotizacionController extends Controller
             'lines.*.offers.*.warehouse' => ['nullable', 'string'],
             'lines.*.offers.*.leadDays' => ['nullable', 'integer'],
             'lines.*.offers.*.isSelected' => ['nullable', 'boolean'],
+        ], [
+            'clientId.required' => 'Selecciona un cliente.',
+            'clientId.exists' => 'El cliente seleccionado ya no existe.',
+            'lines.*.quantity.required' => 'Indica la cantidad de la partida.',
+            'lines.*.quantity.min' => 'La cantidad debe ser mayor que cero.',
+            'lines.*.product.required' => 'Indica la descripción del producto.',
+            'lines.*.offers.*.wholesalerId.required_with' => 'Selecciona un mayorista válido para la oferta.',
         ]);
 
         $previousQuote = null;
         if (! empty($validated['id']) && Str::isUuid($validated['id'])) {
             $existing = Quote::query()->find($validated['id']);
             if ($existing) {
+                $this->assertQuoteEditableByRole($request, $existing);
                 $this->ensureVentasCanMutateQuote($request, $existing);
                 $this->purchaseWorkflow->assertCanEdit($existing, $request->user());
                 $previousQuote = $existing->replicate();
@@ -304,6 +314,7 @@ class CotizacionController extends Controller
         ]);
 
         $this->ensureVentasCanMutateQuote($request, $quote);
+        $this->ensureSalesClaimedReadyQuote($request, $quote);
 
         $toEmail = trim($validated['to'] ?? $quote->client?->email ?? '');
 
@@ -335,6 +346,9 @@ class CotizacionController extends Controller
                 'response_received_at' => null,
             ]);
             $this->statusHistory->record($quote, $previousStatus, 'enviada');
+            if ($previousStatus === 'pendiente_envio') {
+                $this->salesNotifications->markQuoteReadyNotificationsRead($quote);
+            }
         } elseif ($previousStatus === 'enviada' && $quote->sent_at === null) {
             $quote->update([
                 'sent_at' => isset($validated['sentAt'])
@@ -391,6 +405,7 @@ class CotizacionController extends Controller
         }
 
         $quote = Quote::query()->findOrFail($id);
+        $this->assertQuoteEditableByRole(request(), $quote);
 
         // Si ya está bloqueada, devolver el conflicto primero para que el usuario
         // vea quién la está atendiendo, incluso si no es el creador original.
@@ -457,6 +472,7 @@ class CotizacionController extends Controller
             'total' => (float) $quote->total,
             'linesCount' => (int) ($quote->lines_count ?? $quote->lines()->count()),
             'createdAt' => $quote->created_at?->toIso8601String(),
+            'elaborationDate' => $quote->elaboration_date?->toDateString() ?? $quote->created_at?->copy()->timezone('America/Mexico_City')->toDateString(),
             'sentAt' => $quote->sent_at?->toIso8601String(),
             'responseReceivedAt' => $quote->response_received_at?->toIso8601String(),
             'invoiceNumber' => $quote->invoice_number,
@@ -516,6 +532,7 @@ class CotizacionController extends Controller
             'taxAmount' => (float) $quote->tax_amount,
             'total' => (float) $quote->total,
             'createdAt' => $quote->created_at?->toIso8601String(),
+            'elaborationDate' => $quote->elaboration_date?->toDateString() ?? $quote->created_at?->copy()->timezone('America/Mexico_City')->toDateString(),
             'sentAt' => $quote->sent_at?->toIso8601String(),
             'responseReceivedAt' => $quote->response_received_at?->toIso8601String(),
             'invoiceNumber' => $quote->invoice_number,
@@ -547,6 +564,7 @@ class CotizacionController extends Controller
                 'salePrice' => (float) $line->sale_price,
                 'amount' => (float) $line->amount,
                 'warehouse' => $line->warehouse,
+                'isCustom' => (bool) $line->is_custom,
                 'selectedWholesalerId' => $line->selected_wholesaler_id,
                 'offers' => $line->offers->map(function ($offer) use ($mask) {
                     $name = $offer->wholesaler?->name;
@@ -644,6 +662,33 @@ class CotizacionController extends Controller
 
         if (! $quote->isVisibleToSalesperson($user)) {
             abort(403, 'Solo puedes editar cotizaciones que creaste o que compras te envió.');
+        }
+    }
+
+    private function assertQuoteEditableByRole(Request $request, Quote $quote): void
+    {
+        $user = $request->user();
+        $user?->loadMissing('role');
+
+        if (
+            $quote->status === 'pendiente_envio'
+            && in_array($user?->role_slug, ['ventas', 'gerente_compras'], true)
+        ) {
+            abort(403, 'La cotización está terminada y solo se permite consultarla.');
+        }
+    }
+
+    private function ensureSalesClaimedReadyQuote(Request $request, Quote $quote): void
+    {
+        $user = $request->user();
+        $user?->loadMissing('role');
+
+        if (
+            $user?->role_slug === 'ventas'
+            && $quote->status === 'pendiente_envio'
+            && (int) $quote->follow_up_assigned_to !== (int) $user->id
+        ) {
+            abort(403, 'Antes de enviar, toma esta cotización para dar seguimiento.');
         }
     }
 
