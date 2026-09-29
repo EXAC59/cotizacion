@@ -185,6 +185,8 @@ if [ "`$needs_frontend" -gt 0 ]; then
   echo '>> Build frontend (sin cache Docker)...'
   `$DC build --no-cache frontend
   `$DC up -d --force-recreate frontend
+  echo '>> Sincronizando el build-id de la SPA con la API...'
+  ./scripts/sync-spa-build-id.sh
 fi
 echo SYNC_OK
 "@ -replace "`r", ''
