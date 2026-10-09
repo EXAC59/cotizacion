@@ -86,6 +86,9 @@ services:
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_WABA_ID: ${WHATSAPP_WABA_ID:-}
+      WHATSAPP_APP_ID: ${WHATSAPP_APP_ID:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-es_MX}
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
     depends_on:
@@ -129,7 +132,7 @@ services:
       - cotizacion
 
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:2.41.7
     container_name: cotizacion_n8n
     restart: unless-stopped
     ports:

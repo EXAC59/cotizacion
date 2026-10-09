@@ -91,6 +91,21 @@ export async function getClientQuotes(
   return data.data ?? []
 }
 
+export type ClientQuotePage = {
+  data: ClientQuoteSummary[]
+  meta: { page: number; lastPage: number; total: number; from: number | null; to: number | null }
+}
+
+export async function getClientQuotePage(id: string, page = 1): Promise<ClientQuotePage> {
+  const params = new URLSearchParams({ scope: 'all', page: String(page), limit: '50' })
+  const response = await apiFetch(`${getApiBase()}/clientes/${id}/cotizaciones?${params}`)
+  const data = (await response.json()) as ClientQuotePage & { message?: string }
+  if (!response.ok) {
+    throw new Error(data.message || `Error al cargar el historial de cotizaciones (${response.status})`)
+  }
+  return data
+}
+
 export async function createClient(
   payload: Omit<Client, 'id' | 'createdAt' | 'stats'>,
 ): Promise<Client> {

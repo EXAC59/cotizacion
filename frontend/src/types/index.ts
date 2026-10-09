@@ -243,6 +243,7 @@ export interface Quote {
   clientId: string
   clientName: string
   requestId?: string
+  requestFolio?: string
   status: QuoteStatus
   validityDays?: number
   globalMarginPercent: number
@@ -394,6 +395,7 @@ export interface SalespersonProfit {
 }
 
 export interface DashboardAlertQuote {
+  status?: QuoteStatus
   id: string
   folio: string
   clientName: string
@@ -544,7 +546,7 @@ export interface ReportesAnalytics {
 export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   solicitud_cotizaciones: 'Solicitud de cotizaciones',
   en_elaboracion: 'En elaboración',
-  pendiente_envio: 'Lista / Terminada',
+  pendiente_envio: 'Terminada sin enviar',
   enviada: 'Enviada',
   modificacion: 'Modificación cotización',
   aceptada: 'Aceptada',

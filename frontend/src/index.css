@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@source '../pruebas/mensajeria';
 
 @theme {
   --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;

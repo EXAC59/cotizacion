@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\EnsureActiveUser;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,7 +20,7 @@ class AuthController extends Controller
             // Acepta usuario o correo (compatibilidad con clientes antiguos que mandan "email").
             'username' => ['nullable', 'string', 'max:190'],
             'email' => ['nullable', 'string', 'max:190'],
-            'password' => ['required', 'string'],
+            'password' => ['required', 'string', 'max:120'],
         ]);
 
         $login = trim((string) ($validated['username'] ?? $validated['email'] ?? ''));
@@ -86,6 +87,19 @@ class AuthController extends Controller
         }
 
         return response()->json(['message' => 'Sesión cerrada.']);
+    }
+
+    /** Consulta de arranque: no tener sesión es un estado normal, no un error HTTP. */
+    public function session(Request $request, EnsureActiveUser $activeUsers): JsonResponse
+    {
+        $user = Auth::guard('sanctum')->user();
+        if ($user === null) {
+            return response()->json(['user' => null]);
+        }
+
+        $request->setUserResolver(fn (?string $guard = null) => $guard === null ? $user : Auth::guard($guard)->user());
+
+        return $activeUsers->handle($request, fn (Request $resolved) => $this->me($resolved));
     }
 
     public function me(Request $request): JsonResponse

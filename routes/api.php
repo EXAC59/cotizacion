@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\DashboardWorkspaceController;
 use App\Http\Controllers\Api\ClienteController;
 use App\Http\Controllers\Api\ClienteImportController;
 use App\Http\Controllers\Api\ComparadorController;
@@ -18,13 +19,15 @@ use App\Http\Controllers\Api\ReportesController;
 use App\Http\Controllers\Api\SolicitudController;
 use App\Http\Controllers\Api\SolicitudLecturaController;
 use App\Http\Controllers\Api\WhatsAppWebhookController;
+use App\Http\Controllers\Api\WhatsAppTemplateController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', [HealthController::class, 'index']);
 /** Branding público (login / landing) — solo nombre, subtítulo y logo. */
 Route::get('/configuracion/branding', [ConfiguracionController::class, 'branding'])
     ->middleware('throttle:60,1');
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
+Route::get('/session', [AuthController::class, 'session']);
 
 /** Webhook Meta WhatsApp Cloud API (público; verificación por token). */
 Route::get('/whatsapp/webhook', [WhatsAppWebhookController::class, 'verify']);
@@ -45,9 +48,29 @@ Route::middleware('n8n.webhook')->group(function () {
     Route::post('/marcas/resolver', [MarcaController::class, 'resolver']);
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class])->group(function () {
+    Route::get('/whatsapp/plantillas', [WhatsAppTemplateController::class, 'index'])
+        ->middleware('permission:cotizaciones,send');
+    Route::post('/whatsapp/plantillas', [WhatsAppTemplateController::class, 'store'])
+        ->middleware(['permission:admin,manage', 'throttle:10,1']);
+    Route::post('/cotizaciones/{id}/enviar-whatsapp', [CotizacionController::class, 'enviarWhatsApp'])
+        ->middleware(['permission:cotizaciones,send', 'throttle:10,1']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'me']);
+
+    Route::prefix('mensajeria')->middleware([
+        \App\Http\Middleware\MessagingEnabled::class,
+        'permission:cotizaciones,view',
+    ])->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\MensajeriaController::class, 'index']);
+        Route::get('/pendientes', [\App\Http\Controllers\Api\MensajeriaController::class, 'pending']);
+        Route::get('/{id}', [\App\Http\Controllers\Api\MensajeriaController::class, 'show'])->whereUuid('id');
+        Route::post('/{id}/abrir', [\App\Http\Controllers\Api\MensajeriaController::class, 'open'])->whereUuid('id');
+        Route::post('/{id}/leer', [\App\Http\Controllers\Api\MensajeriaController::class, 'read'])->whereUuid('id');
+        Route::post('/{id}/tomar', [\App\Http\Controllers\Api\MensajeriaController::class, 'claim'])->whereUuid('id')->middleware('permission:cotizaciones,edit');
+        Route::post('/{id}/mensajes', [\App\Http\Controllers\Api\MensajeriaController::class, 'send'])->whereUuid('id')->middleware(['permission:cotizaciones,edit', 'throttle:60,1']);
+        Route::post('/{id}/seguimiento', [\App\Http\Controllers\Api\MensajeriaController::class, 'workflow'])->whereUuid('id')->middleware('permission:cotizaciones,edit');
+    });
 
     Route::get('/rbac/permissions', [RbacController::class, 'permissions']);
     Route::put('/rbac/permissions', [RbacController::class, 'updatePermissions'])
@@ -69,17 +92,30 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])
         ->middleware('permission:dashboard,view');
 
+    Route::get('/dashboard/quotes', [DashboardWorkspaceController::class, 'index'])
+        ->middleware(['permission:dashboard,view', 'permission:cotizaciones,view']);
+
+    Route::post('/cotizaciones/{id}/viewed', [DashboardWorkspaceController::class, 'viewed'])
+        ->middleware('permission:cotizaciones,view');
+
     Route::post('/debug/client', function (\Illuminate\Http\Request $request) {
+        if (strlen($request->getContent()) > 16384) {
+            abort(413, 'El reporte excede el tamaño permitido.');
+        }
         $entry = [
             'at' => now()->toIso8601String(),
             'user_id' => optional($request->user())->id,
             'payload' => $request->all(),
         ];
+        $encoded = json_encode($entry, JSON_UNESCAPED_UNICODE);
+        if ($encoded === false || strlen($encoded) > 16384) {
+            abort(413, 'El reporte excede el tamaño permitido.');
+        }
         \Illuminate\Support\Facades\Log::info('spa.client', $entry);
         try {
             file_put_contents(
                 storage_path('logs/spa-client.ndjson'),
-                json_encode($entry, JSON_UNESCAPED_UNICODE)."\n",
+                $encoded."\n",
                 FILE_APPEND | LOCK_EX,
             );
         } catch (\Throwable) {
@@ -87,7 +123,7 @@ Route::middleware('auth:sanctum')->group(function () {
         }
 
         return response()->noContent();
-    })->middleware('auth:sanctum');
+    })->middleware('throttle:30,1');
 
     Route::get('/reportes', [ReportesController::class, 'index'])
         ->middleware('permission:reportes,view');

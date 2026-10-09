@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, FileText, Pencil, Plus, Trash2 } from 'lucide-react'
 import { DeleteClientDialog } from '@/components/clients/DeleteClientDialog'
 import { Button } from '@/components/ui/Button'
@@ -12,7 +12,8 @@ import {
   ClientDeleteError,
   deleteClient,
   getClientDetail,
-  getClientQuotes,
+  getClientQuotePage,
+  type ClientQuotePage,
 } from '@/lib/clients-api'
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format'
 import type { Client, ClientQuoteSummary } from '@/types'
@@ -29,6 +30,8 @@ function Field({ label, value }: { label: string; value: string }) {
 export function ClientDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const historyRef = useRef<HTMLDivElement>(null)
   const { can } = usePermission()
   const canEdit = can('clientes', 'edit')
   const canDelete = can('clientes', 'delete')
@@ -36,6 +39,9 @@ export function ClientDetailPage() {
 
   const [client, setClient] = useState<Client | null>(null)
   const [quotes, setQuotes] = useState<ClientQuoteSummary[]>([])
+  const [quoteMeta, setQuoteMeta] = useState<ClientQuotePage['meta'] | null>(null)
+  const [quotesLoading, setQuotesLoading] = useState(false)
+  const [quotesError, setQuotesError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -49,11 +55,12 @@ export function ClientDetailPage() {
     let cancelled = false
     setLoading(true)
 
-    Promise.all([getClientDetail(id), getClientQuotes(id)])
+    Promise.all([getClientDetail(id), getClientQuotePage(id)])
       .then(([clientData, quoteData]) => {
         if (!cancelled) {
           setClient(clientData)
-          setQuotes(quoteData)
+          setQuotes(quoteData.data)
+          setQuoteMeta(quoteData.meta)
           setError(null)
         }
       })
@@ -70,6 +77,25 @@ export function ClientDetailPage() {
       cancelled = true
     }
   }, [id])
+
+  useEffect(() => {
+    if (!loading && location.hash === '#historial-cotizaciones') historyRef.current?.scrollIntoView({ block: 'start' })
+  }, [loading, location.hash, id])
+
+  const loadQuotePage = async (page: number) => {
+    if (!id || quotesLoading) return
+    setQuotesLoading(true)
+    setQuotesError(null)
+    try {
+      const result = await getClientQuotePage(id, page)
+      setQuotes(result.data)
+      setQuoteMeta(result.meta)
+    } catch (err: unknown) {
+      setQuotesError(err instanceof Error ? err.message : 'No se pudo cargar el historial.')
+    } finally {
+      setQuotesLoading(false)
+    }
+  }
 
   const openDelete = () => {
     setDeleteError(null)
@@ -228,12 +254,14 @@ export function ClientDetailPage() {
         </Card>
       </div>
 
-      <Card className="mt-6">
+      <div ref={historyRef} id="historial-cotizaciones" className="mt-6 scroll-mt-6">
+      <Card>
         <CardHeader
           title="Historial de cotizaciones"
-          subtitle={`${quotes.length} cotización(es) · quién las hizo y en qué estado`}
+          subtitle={`${quoteMeta?.total ?? quotes.length} cotización(es) · todos los usuarios y estados · más recientes primero`}
         />
         <CardBody className="p-0">
+          {quotesError && <p role="alert" className="px-5 py-3 text-sm text-red-700">{quotesError}</p>}
           {quotes.length === 0 ? (
             <p className="px-5 py-8 text-sm text-slate-500">Este cliente aún no tiene cotizaciones.</p>
           ) : (
@@ -271,7 +299,7 @@ export function ClientDetailPage() {
                       <td className="px-5 py-3">{formatCurrency(q.total)}</td>
                       <td className="px-5 py-3">{q.linesCount}</td>
                       <td className="px-5 py-3 text-slate-600">
-                        {q.createdAt ? formatDate(q.createdAt) : '—'}
+                        {q.createdAt ? formatDateTime(q.createdAt) : '—'}
                       </td>
                       <td className="px-5 py-3 text-slate-600">
                         {q.sentAt ? formatDateTime(q.sentAt) : '—'}
@@ -282,8 +310,18 @@ export function ClientDetailPage() {
               </table>
             </div>
           )}
+          {quoteMeta && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3" aria-busy={quotesLoading}>
+            <p className="text-sm text-slate-600">Mostrando {quoteMeta.from ?? 0}–{quoteMeta.to ?? 0} de {quoteMeta.total}</p>
+            {quoteMeta.lastPage > 1 && <nav aria-label="Páginas del historial de cotizaciones" className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" disabled={quotesLoading || quoteMeta.page <= 1} onClick={() => void loadQuotePage(quoteMeta.page - 1)}>Anterior</Button>
+              <span className="text-xs text-slate-600">{quoteMeta.page} / {quoteMeta.lastPage}</span>
+              <Button variant="secondary" size="sm" disabled={quotesLoading || quoteMeta.page >= quoteMeta.lastPage} onClick={() => void loadQuotePage(quoteMeta.page + 1)}>Siguiente</Button>
+            </nav>}
+            {quotesLoading && <InlineBusy label="Cargando historial…" />}
+          </div>}
         </CardBody>
       </Card>
+      </div>
     </div>
   )
 }

@@ -82,6 +82,7 @@ class SolicitudIndexFilterTest extends AuthenticatedFeatureTestCase
 
         $match = QuoteRequest::query()->create([
             'client_id' => $client->id,
+            'folio' => 'SC-0042',
             'source' => 'text',
             'status' => 'procesada',
             'raw_text' => 'productos',
@@ -100,6 +101,11 @@ class SolicitudIndexFilterTest extends AuthenticatedFeatureTestCase
 
         $byId = $this->getJson("/api/solicitudes?q={$match->id}");
         $byId->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $match->id);
+
+        $byFolio = $this->getJson('/api/solicitudes?q=SC-0042');
+        $byFolio->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $match->id);
     }

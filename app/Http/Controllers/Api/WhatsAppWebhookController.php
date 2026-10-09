@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use App\Models\QuoteInternalNote;
 
 class WhatsAppWebhookController extends Controller
 {
@@ -33,10 +34,39 @@ class WhatsAppWebhookController extends Controller
     }
 
     /**
-     * Eventos entrantes (mensajes / estados). Por ahora solo ack 200.
+     * Estados de los envíos aceptados por Meta. La firma se valida en middleware.
      */
     public function receive(Request $request): Response
     {
+        $labels = ['sent' => 'enviado', 'delivered' => 'entregado', 'read' => 'leído', 'failed' => 'fallido'];
+        foreach ($request->input('entry', []) as $entry) {
+            foreach ($entry['changes'] ?? [] as $change) {
+                $value = $change['value'] ?? [];
+                if ((string) ($value['metadata']['phone_number_id'] ?? '') !== (string) config('whatsapp.phone_number_id')
+                    || ! filled(config('whatsapp.phone_number_id'))) {
+                    continue;
+                }
+                foreach ($value['statuses'] ?? [] as $status) {
+                    $id = $status['id'] ?? '';
+                    $label = $labels[$status['status'] ?? ''] ?? null;
+                    if (! is_string($id) || ! preg_match('/^wamid\.[A-Za-z0-9=+\/_-]{1,240}$/', $id) || $label === null) {
+                        continue;
+                    }
+                    $receipt = QuoteInternalNote::query()->where('body', 'like', '% Mensaje: '.$id.'.')->get()
+                        ->first(fn ($note) => str_ends_with($note->body, ' Mensaje: '.$id.'.'));
+                    if ($receipt === null) {
+                        continue;
+                    }
+                    $body = 'WhatsApp: mensaje '.$id.' — '.$label.'.';
+                    if (! QuoteInternalNote::query()->where('quote_id', $receipt->quote_id)->where('body', $body)->exists()) {
+                        QuoteInternalNote::query()->create([
+                            'quote_id' => $receipt->quote_id, 'user_id' => null,
+                            'body' => $body, 'created_at' => now(),
+                        ]);
+                    }
+                }
+            }
+        }
         Log::info('WhatsApp webhook event', [
             'object' => $request->input('object'),
             'entry_count' => is_array($request->input('entry')) ? count($request->input('entry')) : 0,

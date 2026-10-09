@@ -59,11 +59,11 @@ class AuthTest extends TestCase
     }
 
     #[Test]
-    public function failed_logins_do_not_lock_out_the_account(): void
+    public function failed_logins_are_temporarily_limited_and_do_not_permanently_lock_the_account(): void
     {
         $this->seedDemoUsers();
 
-        for ($i = 0; $i < 8; $i++) {
+        for ($i = 0; $i < 5; $i++) {
             $response = $this->postJson('/api/login', [
                 'username' => 'maria',
                 'password' => 'wrong-password',
@@ -75,6 +75,11 @@ class AuthTest extends TestCase
             $this->assertStringNotContainsString('Too Many Attempts', $message);
         }
 
+        $this->postJson('/api/login', [
+            'username' => 'maria', 'password' => 'demo',
+        ])->assertStatus(429)->assertHeader('Retry-After');
+
+        $this->travel(61)->seconds();
         $this->postJson('/api/login', [
             'username' => 'maria',
             'password' => 'demo',

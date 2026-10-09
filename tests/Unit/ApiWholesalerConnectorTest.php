@@ -7,9 +7,18 @@ use Illuminate\Support\Env;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
+use Tests\Concerns\RestoresWholesalerEnvironment;
 
 class ApiWholesalerConnectorTest extends TestCase
 {
+    use RestoresWholesalerEnvironment;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->saveWholesalerEnvironment();
+    }
+
     #[Test]
     public function it_builds_bearer_auth_headers_by_default(): void
     {

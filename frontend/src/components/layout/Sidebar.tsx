@@ -5,10 +5,14 @@ import { brandingLogoSrc } from '@/lib/branding-api'
 import { MODULE_ROUTES } from '@/lib/module-routes'
 import { ROLE_LABELS } from '@/types'
 
-export function Sidebar() {
+export function Sidebar({ onNavigate, className = '', messagingUnreadCount = 0 }: { onNavigate?: () => void; className?: string; messagingUnreadCount?: number }) {
   const { user, canModule } = usePermission()
   const { branding } = useBranding()
-  const visibleNav = MODULE_ROUTES.filter((item) => {
+  const menuOrder = ['/dashboard', '/cotizaciones', '/recordatorios', '/mensajeria', '/solicitudes']
+  const visibleNav = [...MODULE_ROUTES].sort((a, b) => {
+    const rank = (path: string) => { const index = menuOrder.indexOf(path); return index < 0 ? menuOrder.length : index }
+    return rank(a.path) - rank(b.path)
+  }).filter((item) => {
     if (!canModule(item.module)) return false
     if (item.roles && user && !item.roles.includes(user.role)) return false
     return true
@@ -17,7 +21,7 @@ export function Sidebar() {
   const initial = (branding.appName.trim().charAt(0) || 'C').toUpperCase()
 
   return (
-    <aside className="app-sidebar-shell relative flex w-64 shrink-0 flex-col text-slate-300 shadow-[8px_0_32px_-18px_rgba(0,0,0,0.55)] sm:w-72">
+    <aside className={`app-sidebar-shell relative flex w-64 shrink-0 flex-col text-slate-300 shadow-[8px_0_32px_-18px_rgba(0,0,0,0.55)] sm:w-72 ${className}`}>
       <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-gradient-to-b from-indigo-400/40 via-slate-600/40 to-transparent" />
 
       <div className="border-b border-white/5 px-5 py-5">
@@ -50,6 +54,7 @@ export function Sidebar() {
             key={path}
             to={path}
             end={end}
+            onClick={onNavigate}
             className={({ isActive }) =>
               `nav-link-motion flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
                 isActive
@@ -59,7 +64,12 @@ export function Sidebar() {
             }
           >
             <Icon className="mt-0.5 h-5 w-5 shrink-0 opacity-90" />
-            <span className="min-w-0 leading-snug break-words">{label}</span>
+            <span className="min-w-0 leading-snug break-words">{label.toUpperCase()}</span>
+            {path === '/mensajeria' && messagingUnreadCount > 0 && (
+              <span className="ml-auto shrink-0 rounded-full bg-rose-600 px-2 py-0.5 text-xs font-bold tabular-nums text-white" aria-label={`${messagingUnreadCount} pendientes de Mensajería`}>
+                {messagingUnreadCount.toLocaleString('es-MX')}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

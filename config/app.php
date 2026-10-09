@@ -41,6 +41,11 @@ return [
 
     'debug' => (bool) env('APP_DEBUG', false),
 
+    // Internal reverse proxies only; do not trust client-supplied forwarding headers.
+    'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) env(
+        'TRUSTED_PROXIES', '127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16',
+    ))))),
+
     /*
     |--------------------------------------------------------------------------
     | Application URL

@@ -9,6 +9,7 @@ use App\Models\QuoteRequest;
 use App\Models\User;
 use App\Services\Rbac\RbacService;
 use App\Services\Sales\SalesNotificationService;
+use App\Services\SolicitudLecturaService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -25,7 +26,7 @@ class SolicitudToQuoteService
     ) {}
 
     /**
-     * @return array{quote: Quote|null, created: bool, skippedReason: string|null}
+     * @return array{quote: Quote|null, created: bool, skippedReason: string|null, comprasNotificationCount: int}
      */
     public function ensureQuoteForRequest(QuoteRequest $request, ?User $actor = null): array
     {
@@ -39,10 +40,15 @@ class SolicitudToQuoteService
         if ($existing !== null) {
             $this->notifications->notifyComprasNewRequest($existing, $actor);
 
+            $notificationCount = $existing->salesNotifications()
+                ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+                ->count();
+
             return [
                 'quote' => $existing->loadMissing(['client', 'lines']),
                 'created' => false,
                 'skippedReason' => null,
+                'comprasNotificationCount' => $notificationCount,
             ];
         }
 
@@ -51,6 +57,7 @@ class SolicitudToQuoteService
                 'quote' => null,
                 'created' => false,
                 'skippedReason' => 'missing_client',
+                'comprasNotificationCount' => 0,
             ];
         }
 
@@ -59,6 +66,7 @@ class SolicitudToQuoteService
                 'quote' => null,
                 'created' => false,
                 'skippedReason' => 'missing_lines',
+                'comprasNotificationCount' => 0,
             ];
         }
 
@@ -69,6 +77,7 @@ class SolicitudToQuoteService
                     'quote' => null,
                     'created' => false,
                     'skippedReason' => 'no_permission',
+                    'comprasNotificationCount' => 0,
                 ];
             }
         }
@@ -91,18 +100,39 @@ class SolicitudToQuoteService
 
         $this->notifications->notifyComprasNewRequest($quote, $actor);
 
+        $notificationCount = $quote->salesNotifications()
+            ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+            ->count();
+
         return [
             'quote' => $quote,
             'created' => true,
             'skippedReason' => null,
+            'comprasNotificationCount' => $notificationCount,
         ];
     }
 
     /**
-     * Asegura cotización y sincroniza partidas desde la solicitud
-     * (sin exigir bloqueo de edición de la cotización).
+     * Guarda solicitud y cotización bajo la misma transacción, conservando los
+     * bloqueos que impiden competir con la toma de atención de Compras.
      *
-     * @return array{quote: Quote|null, created: bool, skippedReason: string|null}
+     * @return array{quote: Quote|null, created: bool, skippedReason: string|null, comprasNotificationCount: int}
+     */
+    public function replaceRequestLinesAndSync(string $requestId, array $lines, ?User $actor = null): array
+    {
+        return DB::transaction(function () use ($requestId, $lines, $actor) {
+            $request = app(SolicitudLecturaService::class)->reemplazarLineas($requestId, $lines);
+
+            return $this->syncQuoteFromRequest($request->fresh(['lines', 'client']), $actor);
+        });
+    }
+
+    /**
+     * Asegura cotización y sincroniza partidas desde la solicitud
+     * para una solicitud inicial no tomada. La entrada de edición usa
+     * replaceRequestLinesAndSync para comprobar su estado y conservar los bloqueos.
+     *
+     * @return array{quote: Quote|null, created: bool, skippedReason: string|null, comprasNotificationCount: int}
      */
     public function syncQuoteFromRequest(QuoteRequest $request, ?User $actor = null): array
     {
@@ -152,6 +182,7 @@ class SolicitudToQuoteService
             'quote' => $quote->fresh(['client', 'lines']),
             'created' => false,
             'skippedReason' => null,
+            'comprasNotificationCount' => $ensured['comprasNotificationCount'],
         ];
     }
 

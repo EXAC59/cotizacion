@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { AuthContext } from '@/context/auth-context'
 
-import { fetchCurrentUser, loginRequest, logoutRequest } from '@/lib/auth-api'
+import { fetchCurrentUser, loginRequest, logoutRequest, markSessionEnded } from '@/lib/auth-api'
 import { setAuthToken } from '@/lib/auth-token'
 
 import { setUnauthorizedHandler } from '@/lib/api-fetch'
@@ -24,6 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user])
 
   const clearSession = useCallback(() => {
+    markSessionEnded()
     setAuthToken(null)
     setUser(null)
   }, [])

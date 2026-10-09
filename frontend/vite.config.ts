@@ -30,7 +30,7 @@ export default defineConfig(({ mode, command }) => {
       {
         name: 'spa-inline-upgrade-poller',
         transformIndexHtml(html) {
-          if (html.includes('checkForDeploy')) {
+          if (html.includes('checkForDeploy') || html.includes('reload-poller.js')) {
             return html
           }
           const snippet = `<script>

@@ -23,6 +23,7 @@ class PurchaseRequestWorkflowTest extends AuthenticatedFeatureTestCase
         return Quote::query()->create([
             'folio' => 'COT-COMPRAS-'.uniqid(),
             'client_id' => $client->id,
+            'created_by' => $this->demoUser('ventas')->id,
             'status' => 'solicitud_cotizaciones',
             'validity_days' => 15,
             'global_margin_percent' => 30,
@@ -44,12 +45,42 @@ class PurchaseRequestWorkflowTest extends AuthenticatedFeatureTestCase
             'active' => true,
         ]);
         $quote = $this->pendingQuote();
+        app(SalesNotificationService::class)->notifyComprasNewRequest($quote);
+        $folio = $quote->folio;
+        $this->assertSame(2, SalesNotification::query()->where('quote_id', $quote->id)->whereNull('read_at')->count());
 
         $this->actingAs($first);
         $this->postJson("/api/cotizaciones/{$quote->id}/compras/tomar")
             ->assertOk()
             ->assertJsonPath('purchaseAttentionStatus', 'en_atencion')
             ->assertJsonPath('purchaseAssignedToViewer', true);
+
+        $this->assertStringContainsString(
+            $first->name,
+            (string) $quote->fresh()->involucrado,
+        );
+        $this->assertSame(
+            0,
+            SalesNotification::query()
+                ->where('quote_id', $quote->id)
+                ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+                ->whereNull('read_at')
+                ->count(),
+        );
+        $this->assertSame($folio, $quote->fresh()->folio);
+        $this->assertSame($this->demoUser('ventas')->id, $quote->fresh()->created_by);
+
+        app(\App\Services\Quotes\PurchaseRequestWorkflowService::class)
+            ->completeWhenAdvanced($quote->fresh(), $first, 'solicitud_cotizaciones');
+
+        $this->assertSame(
+            0,
+            SalesNotification::query()
+                ->where('quote_id', $quote->id)
+                ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
+                ->whereNull('read_at')
+                ->count(),
+        );
 
         $this->actingAs($second);
         $this->postJson("/api/cotizaciones/{$quote->id}/compras/tomar")
@@ -64,26 +95,6 @@ class PurchaseRequestWorkflowTest extends AuthenticatedFeatureTestCase
         $this->assertDatabaseHas('quote_internal_notes', [
             'quote_id' => $quote->id,
         ]);
-    }
-
-    #[Test]
-    public function taking_a_request_clears_pending_alerts_for_all_buyers(): void
-    {
-        $first = $this->demoUser('gerente_compras');
-        $second = User::factory()->create(['role_id' => $first->role_id, 'active' => true]);
-        $quote = $this->pendingQuote();
-        app(SalesNotificationService::class)->notifyComprasNewRequest($quote, $first);
-
-        $this->actingAs($first)->postJson("/api/cotizaciones/{$quote->id}/compras/tomar")->assertOk();
-
-        $this->assertSame(0, SalesNotification::query()
-            ->where('quote_id', $quote->id)
-            ->whereNull('read_at')
-            ->count());
-        $this->actingAs($second)->getJson('/api/notificaciones')
-            ->assertOk()
-            ->assertJsonPath('unreadCount', 0)
-            ->assertJsonPath('total', 0);
     }
 
     #[Test]

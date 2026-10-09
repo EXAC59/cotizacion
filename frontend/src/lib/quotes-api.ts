@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api-fetch'
+import { isSessionEnding } from '@/lib/auth-api'
 import { salePriceFromCost } from '@/lib/calculations'
 import { normalizeQuoteStatus } from '@/lib/quote-status'
 
@@ -77,6 +78,8 @@ type QuoteApiResponse = {
   clientName?: string
 
   requestId?: string | null
+
+  requestFolio?: string | null
 
   status: Quote['status']
 
@@ -254,6 +257,8 @@ export function mapQuoteFromApi(data: QuoteApiResponse): Quote {
     clientName: data.clientName ?? '',
 
     requestId: data.requestId ?? undefined,
+
+    requestFolio: data.requestFolio ?? undefined,
 
     status: normalizeQuoteStatus(data.status),
 
@@ -538,6 +543,7 @@ export async function listQuotes(params?: {
   onlyMadeBy?: boolean
   /** Bandeja compartida: sin responsable o asignadas al vendedor autenticado. */
   remindersPool?: boolean
+  sort?: 'oldest' | 'newest'
   from?: string
   to?: string
 }): Promise<Quote[]> {
@@ -548,6 +554,7 @@ export async function listQuotes(params?: {
   if (params?.scope) qs.set('scope', params.scope)
   if (params?.onlyMadeBy) qs.set('only_made_by', '1')
   if (params?.remindersPool) qs.set('recordatorios_pool', '1')
+  if (params?.sort) qs.set('sort', params.sort)
   if (params?.from) qs.set('from', params.from)
   if (params?.to) qs.set('to', params.to)
   const query = qs.toString()
@@ -948,9 +955,17 @@ export async function acquireQuoteLock(id: string): Promise<AcquireQuoteLockResu
 }
 
 export async function releaseQuoteLock(id: string): Promise<void> {
+  // Tras logout/expiración no enviar una limpieza con una sesión inválida.
+  if (isSessionEnding()) return
   await apiFetch(`${getApiBase()}/cotizaciones/${encodeURIComponent(id)}/bloqueo`, {
     method: 'DELETE',
     headers: { Accept: 'application/json' },
     keepalive: true,
   })
+}
+
+/** Read tracking is called only after the detail page successfully loads. */
+export async function markQuoteViewed(id: string): Promise<void> {
+  const response = await apiFetch(`${getApiBase()}/cotizaciones/${id}/viewed`, { method: 'POST' })
+  if (!response.ok) throw new Error('No se pudo registrar la lectura.')
 }

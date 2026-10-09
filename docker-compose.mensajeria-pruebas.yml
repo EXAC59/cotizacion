@@ -1,0 +1,14 @@
+# Chat UI for testing; calls the test API through the same HTTPS origin.
+# docker compose -p cotizacion-mensajeria-pruebas -f docker-compose.mensajeria-pruebas.yml up -d --build
+services:
+  mensajeria:
+    image: cotizacion-mensajeria-pruebas:latest
+    build:
+      context: ./frontend
+      dockerfile: pruebas/mensajeria/Dockerfile
+      args:
+        PROTOTYPE_BUILD_ID: ${MENSAJERIA_BUILD_ID:-mensajeria-pruebas}
+        VITE_MENSAJERIA_LIVE: "true"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"

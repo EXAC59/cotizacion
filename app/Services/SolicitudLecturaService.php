@@ -36,7 +36,7 @@ class SolicitudLecturaService
      */
     public function crearProcesando(array $meta): QuoteRequest
     {
-        return $this->crearSolicitudBase($meta, 'procesando');
+        return DB::transaction(fn () => $this->crearSolicitudBase($meta, 'procesando'));
     }
 
     /**
@@ -48,10 +48,26 @@ class SolicitudLecturaService
         ?string $workflowStatus = null,
     ): QuoteRequest {
         return DB::transaction(function () use ($requestId, $lineas) {
-            $request = QuoteRequest::query()->findOrFail($requestId);
+            $request = QuoteRequest::query()->lockForUpdate()->findOrFail($requestId);
 
             if (! in_array($request->status, ['procesada', 'precios_listos'], true)) {
                 abort(422, 'Solo se pueden editar líneas de solicitudes procesadas.');
+            }
+
+            // No sobrescribir trabajo reservado por Compras ni documentos comerciales
+            // desde la edición de la solicitud. Estas partidas se editan en Cotizaciones.
+            $quotes = $request->quotes()->orderBy('id')->lockForUpdate()->get();
+            foreach ($quotes as $quote) {
+                app(\App\Services\Quotes\QuoteLockService::class)->lockPayload($quote);
+                if ($quote->status !== 'solicitud_cotizaciones'
+                    || $quote->purchase_assigned_to !== null
+                    || $quote->purchase_completed_at !== null
+                    || $quote->follow_up_assigned_to !== null
+                    || $quote->sent_at !== null
+                    || $quote->locked_by !== null
+                    || (int) $quote->created_by !== (int) $request->created_by) {
+                    abort(403, 'La cotización vinculada ya está en atención. Edita sus partidas desde Cotizaciones.');
+                }
             }
 
             QuoteRequestLine::query()->where('request_id', '=', $request->id)->delete();

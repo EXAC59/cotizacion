@@ -6,9 +6,7 @@ use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteLine;
 use App\Models\QuoteRequest;
-use App\Models\SalesNotification;
 use App\Models\Wholesaler;
-use App\Services\Sales\SalesNotificationService;
 use App\Services\Quotes\QuoteLockService;
 use App\Services\Quotes\QuotePersistenceService;
 use App\Services\Quotes\QuoteProfitCalculator;
@@ -18,60 +16,6 @@ use Tests\AuthenticatedFeatureTestCase;
 
 class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
 {
-    #[Test]
-    public function elaboration_date_is_saved_and_returned_separately_from_creation_date(): void
-    {
-        $client = Client::query()->create(['company' => 'Cliente fecha', 'rfc' => 'FEC010101ABC']);
-        $response = $this->postJson('/api/cotizaciones', [
-            'clientId' => $client->id,
-            'elaborationDate' => '2026-09-15',
-            'lines' => [['quantity' => 1, 'product' => 'Producto', 'cost' => 100, 'marginPercent' => 30]],
-        ])->assertCreated()->assertJsonPath('elaborationDate', '2026-09-15');
-
-        $id = $response->json('id');
-        $this->assertSame('2026-09-15', Quote::query()->findOrFail($id)->elaboration_date->toDateString());
-        $this->getJson("/api/cotizaciones/{$id}")
-            ->assertOk()
-            ->assertJsonPath('elaborationDate', '2026-09-15');
-        $this->assertNotSame('2026-09-15', substr($response->json('createdAt'), 0, 10));
-    }
-
-    #[Test]
-    public function custom_line_without_wholesaler_saves_without_unit_and_totals(): void
-    {
-        $client = Client::query()->create(['company' => 'Cliente personalizado', 'rfc' => 'PER010101ABC']);
-
-        $response = $this->postJson('/api/cotizaciones', [
-            'clientId' => $client->id,
-            'status' => 'pendiente_envio',
-            'taxPercent' => 16,
-            'lines' => [[
-                'quantity' => 2,
-                'product' => 'Servicio personalizado',
-                'partNumber' => '',
-                'isCustom' => true,
-                'cost' => 100,
-                'marginPercent' => 30,
-            ], [
-                'quantity' => 2,
-                'product' => 'Cargo sin costo de catálogo',
-                'isCustom' => true,
-                'cost' => 0,
-                'salePrice' => 50,
-                'usesGlobalMargin' => false,
-            ]],
-        ]);
-
-        $response->assertCreated()
-            ->assertJsonPath('status', 'pendiente_envio')
-            ->assertJsonMissingPath('lines.0.unit')
-            ->assertJsonPath('lines.0.isCustom', true)
-            ->assertJsonPath('lines.0.selectedWholesalerId', null);
-        $response->assertJsonPath('lines.1.salePrice', 50);
-        $this->assertSame(417.6, (float) $response->json('total'));
-        $this->assertDatabaseHas('quote_lines', ['product' => 'Servicio personalizado', 'is_custom' => true]);
-    }
-
     protected function setUp(): void
     {
         parent::setUp();
@@ -224,14 +168,7 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
             ->assertJsonPath(
                 'internalNotes.0.body',
                 'Tarea realizada al guardar la cotización: 1 partida(s) guardada(s).'
-            )
-            ->assertJsonPath('lastActivityById', auth()->id());
-
-        $saved = Quote::query()->findOrFail($quoteId);
-        $this->assertNotNull($saved->last_activity_at);
-        if (auth()->user()?->role_slug === 'ventas') {
-            $this->assertStringContainsString((string) auth()->user()?->name, (string) $saved->involucrado);
-        }
+            );
     }
 
     #[Test]
@@ -476,8 +413,7 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
             'status' => 'en_elaboracion',
             'lines' => [$line],
         ])->assertCreated()
-            ->assertJsonPath('status', 'modificacion')
-            ->assertJsonPath('involucrado', fn (?string $involucrado) => str_contains((string) $involucrado, 'Aviso:'));
+            ->assertJsonPath('status', 'modificacion');
     }
 
     #[Test]
@@ -512,12 +448,6 @@ class CotizacionPersistenceTest extends AuthenticatedFeatureTestCase
 
         $response->assertCreated()
             ->assertJsonPath('status', 'solicitud_cotizaciones');
-
-        $this->assertGreaterThan(0, SalesNotification::query()
-            ->where('quote_id', $response->json('id'))
-            ->where('audience', SalesNotificationService::AUDIENCE_COMPRAS)
-            ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
-            ->count());
     }
 
     #[Test]

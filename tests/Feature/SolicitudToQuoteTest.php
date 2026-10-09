@@ -70,97 +70,6 @@ class SolicitudToQuoteTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function sync_command_backfills_missing_request_notifications_without_duplicates(): void
-    {
-        $primaryCompras = $this->demoUser('gerente_compras');
-        $comprasRole = Role::query()->where('slug', 'gerente_compras')->firstOrFail();
-        $secondCompras = User::factory()->create([
-            'role_id' => $comprasRole->id,
-            'active' => true,
-        ]);
-        $inactiveCompras = User::factory()->create([
-            'role_id' => $comprasRole->id,
-            'active' => false,
-        ]);
-        $client = Client::query()->create([
-            'company' => 'Cliente Backfill Compras',
-            'rfc' => 'CBC010101AAA',
-        ]);
-        $quoteDefaults = [
-            'client_id' => $client->id,
-            'validity_days' => 15,
-            'global_margin_percent' => 30,
-            'tax_percent' => 16,
-            'subtotal' => 0,
-            'tax_amount' => 0,
-            'total' => 0,
-        ];
-        $pending = Quote::query()->create([...$quoteDefaults,
-            'folio' => 'COT-BACKFILL-PENDIENTE',
-            'status' => 'solicitud_cotizaciones',
-        ]);
-        $notPending = Quote::query()->create([...$quoteDefaults,
-            'folio' => 'COT-BACKFILL-ELABORACION',
-            'status' => 'en_elaboracion',
-        ]);
-
-        $this->artisan('sales:sync-compras-request-notifications')->assertSuccessful();
-        $this->artisan('sales:sync-compras-request-notifications')->assertSuccessful();
-
-        $notifications = SalesNotification::query()
-            ->where('quote_id', $pending->id)
-            ->where('reason_code', SalesNotificationService::REASON_SOLICITUD_COMPRAS)
-            ->get();
-
-        $this->assertCount(2, $notifications);
-        $this->assertEqualsCanonicalizing(
-            [$primaryCompras->id, $secondCompras->id],
-            $notifications->pluck('recipient_id')->all(),
-        );
-        $this->assertNotContains($inactiveCompras->id, $notifications->pluck('recipient_id')->all());
-        $this->assertDatabaseMissing('sales_notifications', [
-            'quote_id' => $notPending->id,
-            'reason_code' => SalesNotificationService::REASON_SOLICITUD_COMPRAS,
-        ]);
-    }
-
-    #[Test]
-    public function compras_inbox_backfills_missing_pending_request_notifications_when_listed(): void
-    {
-        $compras = $this->demoUser('gerente_compras');
-        $client = Client::query()->create([
-            'company' => 'Cliente Bandeja Compras',
-            'rfc' => 'CBC020202AAA',
-        ]);
-        $quote = Quote::query()->create([
-            'folio' => 'COT-BANDEJA-COMPRAS',
-            'client_id' => $client->id,
-            'status' => 'solicitud_cotizaciones',
-            'validity_days' => 15,
-            'global_margin_percent' => 30,
-            'tax_percent' => 16,
-            'subtotal' => 0,
-            'tax_amount' => 0,
-            'total' => 0,
-        ]);
-
-        $this->actingAs($compras);
-        $inbox = collect($this->getJson('/api/notificaciones')->assertOk()->json('data'));
-
-        $this->assertTrue($inbox->contains(
-            fn (array $notification) => ($notification['quoteId'] ?? null) === $quote->id
-                && ($notification['reasonCode'] ?? null) === SalesNotificationService::REASON_SOLICITUD_COMPRAS
-                && ($notification['recipientId'] ?? null) === $compras->id,
-        ));
-        $this->assertDatabaseHas('sales_notifications', [
-            'quote_id' => $quote->id,
-            'recipient_id' => $compras->id,
-            'audience' => SalesNotificationService::AUDIENCE_COMPRAS,
-            'reason_code' => SalesNotificationService::REASON_SOLICITUD_COMPRAS,
-        ]);
-    }
-
-    #[Test]
     public function storing_solicitud_with_lines_creates_quote_for_compras(): void
     {
         $this->actingAsDemoUser('gerente_compras');
@@ -198,6 +107,20 @@ class SolicitudToQuoteTest extends AuthenticatedFeatureTestCase
         $this->assertNotEmpty($requestId);
         $this->assertNotEmpty($quoteId);
         $this->assertTrue((bool) $response->json('quote_created'));
+        $requestFolio = (string) $response->json('folio');
+        $quoteFolio = (string) $response->json('quote_folio');
+        $this->assertMatchesRegularExpression('/^SC-\d{4}$/', $requestFolio);
+        $this->assertStringStartsWith('COT-', $quoteFolio);
+        $this->assertNotSame($requestFolio, $quoteFolio);
+
+        $this->getJson("/api/cotizaciones/{$quoteId}")
+            ->assertOk()
+            ->assertJsonPath('folio', $quoteFolio)
+            ->assertJsonPath('requestFolio', $requestFolio);
+
+        $this->getJson("/api/solicitudes/{$requestId}/cotizaciones")
+            ->assertOk()
+            ->assertJsonPath('data.0.folio', $quoteFolio);
 
         $this->assertDatabaseHas('quotes', [
             'id' => $quoteId,

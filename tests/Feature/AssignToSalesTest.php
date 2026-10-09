@@ -5,71 +5,52 @@ namespace Tests\Feature;
 use App\Models\Client;
 use App\Models\Quote;
 use App\Models\QuoteRequest;
-use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\AuthenticatedFeatureTestCase;
 
+/** El flujo vigente usa compras/tomar y seguimiento/tomar, conservando dueño y folio. */
 class AssignToSalesTest extends AuthenticatedFeatureTestCase
 {
-    private function createQuoteFor(): Quote
+    public static function retiredAssignmentRoutes(): array
     {
-        $creator = $this->demoUser('gerente_compras');
-        $client = Client::query()->create([
-            'company' => 'Cliente Assign Gone SA',
-            'rfc' => 'CAG010101AAA',
-        ]);
-
-        return Quote::query()->create([
-            'folio' => 'COT-ASSIGN-'.uniqid(),
-            'client_id' => $client->id,
-            'status' => 'en_elaboracion',
-            'validity_days' => 15,
-            'global_margin_percent' => 30,
-            'tax_percent' => 16,
-            'subtotal' => 100,
-            'tax_amount' => 16,
-            'total' => 116,
-            'created_by' => $creator->id,
-        ]);
+        $cases = [];
+        foreach (['ventas', 'gerente_compras', 'administrador'] as $role) {
+            foreach ([
+                ['GET', '/api/usuarios/ventas'], ['GET', '/api/usuarios/compras'],
+                ['POST', '/api/cotizaciones/:quote/asignar-ventas'], ['POST', '/api/cotizaciones/:quote/asignar-compras'],
+                ['POST', '/api/solicitudes/:request/asignar-ventas'], ['POST', '/api/solicitudes/:request/asignar-compras'],
+            ] as [$method, $route]) {
+                $cases[$role.' '.$route] = [$role, $method, $route];
+            }
+        }
+        return $cases;
     }
 
-    #[Test]
-    public function assign_and_list_team_endpoints_are_gone(): void
+    #[DataProvider('retiredAssignmentRoutes')]
+    public function test_retired_routes_cannot_transfer_ownership_or_regenerate_folios(string $role, string $method, string $route): void
     {
-        $compras = $this->demoUser('gerente_compras');
-        $ventas = $this->demoUser('ventas');
-        $quote = $this->createQuoteFor();
-
-        $this->actingAs($compras);
-        $this->postJson("/api/cotizaciones/{$quote->id}/asignar-ventas", [
-            'recipientId' => $ventas->id,
-        ])->assertNotFound();
-
-        $this->postJson("/api/cotizaciones/{$quote->id}/asignar-compras", [
-            'recipientId' => $compras->id,
-        ])->assertNotFound();
-
-        $this->getJson('/api/usuarios/ventas')->assertNotFound();
-        $this->getJson('/api/usuarios/compras')->assertNotFound();
-
-        $client = Client::query()->create([
-            'company' => 'Cliente Solicitud Gone',
-            'rfc' => 'CSG010101AAA',
-        ]);
+        $owner = $this->demoUser('ventas');
+        $recipient = $this->demoUser('gerente_compras');
+        $client = Client::query()->create(['company' => 'Contrato de asignación', 'rfc' => 'CAS010101AAA']);
         $request = QuoteRequest::query()->create([
-            'client_id' => $client->id,
-            'created_by' => $compras->id,
-            'source' => 'texto',
-            'status' => 'procesada',
-            'workflow_status' => 'en_elaboracion',
-            'raw_text' => 'demo',
+            'source' => 'text', 'status' => 'procesada', 'created_by' => $owner->id, 'client_id' => $client->id,
         ]);
-
-        $this->postJson("/api/solicitudes/{$request->id}/asignar-ventas", [
-            'recipientId' => $ventas->id,
+        $quote = Quote::query()->create([
+            'folio' => 'COT-CONTRATO-001', 'client_id' => $client->id, 'request_id' => $request->id,
+            'created_by' => $owner->id, 'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15, 'global_margin_percent' => 30, 'tax_percent' => 16,
+            'subtotal' => 0, 'tax_amount' => 0, 'total' => 0,
+        ]);
+        $requestFolio = $request->folio;
+        $this->actingAsDemoUser($role);
+        $this->json($method, str_replace([':quote', ':request'], [$quote->id, $request->id], $route), [
+            'recipientId' => $recipient->id, 'message' => 'Intento de transferencia por ruta retirada.',
         ])->assertNotFound();
-
-        $this->postJson("/api/solicitudes/{$request->id}/asignar-compras", [
-            'recipientId' => $compras->id,
-        ])->assertNotFound();
+        $this->assertSame($owner->id, $quote->fresh()->created_by);
+        $this->assertSame('COT-CONTRATO-001', $quote->fresh()->folio);
+        $this->assertSame($owner->id, $request->fresh()->created_by);
+        $this->assertSame($requestFolio, $request->fresh()->folio);
+        $this->assertDatabaseCount('quote_internal_notes', 0);
+        $this->assertDatabaseCount('sales_notifications', 0);
     }
 }

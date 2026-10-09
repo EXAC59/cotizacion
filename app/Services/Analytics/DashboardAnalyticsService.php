@@ -230,14 +230,22 @@ class DashboardAnalyticsService
         return [
             'lowStock' => $this->lowStockAlerts(),
             'pendingQuotes' => $this->pendingQuotes($viewer),
-            'purchaseRequestQuotes' => $this->purchaseRequestQuotes($viewer),
-            'unansweredQuotes' => $this->unansweredQuotes($viewer),
+            ...$this->quoteNotificationAlerts($viewer),
             'readyForSalesQuotes' => $this->readyForSalesQuotes($viewer),
             'integrationIssues' => $this->integrationIssues(),
             'expiringQuotes' => $this->expiringQuotes($viewer),
             'stuckProcessingRequests' => $this->stuckProcessingRequests(),
             'pendingReviewRequests' => $this->pendingReviewRequests($viewer),
             'unsentRequests' => $this->unsentRequests($viewer),
+        ];
+    }
+
+    /** Shared quotation source for Dashboard notifications and the messaging inbox. */
+    public function quoteNotificationAlerts(?User $viewer = null): array
+    {
+        return [
+            'purchaseRequestQuotes' => $this->purchaseRequestQuotes($viewer),
+            'unansweredQuotes' => $this->unansweredQuotes($viewer),
         ];
     }
 
@@ -640,13 +648,13 @@ class DashboardAnalyticsService
         return $this->constrainDashboardReminderMaker(Quote::query()->with(['client', 'creator']), $viewer)
             ->whereIn('status', ['en_elaboracion', 'pendiente_envio'])
             ->where(function ($query) use ($cutoff) {
-                $query->where('last_activity_at', '<', $cutoff)
+                $query->where('last_activity_at', '<=', $cutoff)
                     ->orWhere(function ($legacy) use ($cutoff) {
-                        $legacy->whereNull('last_activity_at')->where('updated_at', '<', $cutoff);
+                        $legacy->whereNull('last_activity_at')->where('updated_at', '<=', $cutoff);
                     });
             })
-            ->orderBy('updated_at')
-            ->limit(10)
+            ->orderByRaw('COALESCE(last_activity_at, updated_at) ASC')
+            ->orderBy('id')
             ->get()
             ->map(function (Quote $quote) {
                 $lastActivity = $quote->last_activity_at ?? $quote->updated_at;
@@ -654,6 +662,7 @@ class DashboardAnalyticsService
                 return [
                     'id' => $quote->id,
                     'folio' => $quote->folio,
+                    'status' => $quote->status,
                     'clientName' => $quote->client?->company ?? '',
                     'createdByName' => $quote->creator?->name,
                     'daysWaiting' => $lastActivity ? (int) $lastActivity->diffInDays(now()) : 0,
@@ -693,6 +702,7 @@ class DashboardAnalyticsService
             ->map(fn (Quote $quote) => [
                 'id' => $quote->id,
                 'folio' => $quote->folio,
+                    'status' => $quote->status,
                 'clientName' => $quote->client?->company ?? '',
                 'createdByName' => $quote->creator?->name,
                 'purchaseAttentionStatus' => $quote->purchase_assigned_to ? 'en_atencion' : 'disponible',

@@ -31,9 +31,9 @@ return [
     'lista_from_statuses' => ['en_elaboracion'],
     'enviada_from_statuses' => ['en_elaboracion', 'pendiente_envio'],
 
-    /** Prefijo base del folio autogenerado (ej. SOL-2026-0001). */
-    'folio_prefix' => env('SOLICITUD_FOLIO_PREFIX', 'SOL'),
+    /** Prefijo global del folio autogenerado de Solicitud de Cotización. */
+    'folio_prefix' => 'SC',
 
-    /** Dígitos del consecutivo anual (SOL-2026-0001 → 4). */
-    'folio_sequence_pad' => (int) env('SOLICITUD_FOLIO_SEQUENCE_PAD', 4),
+    /** Dígitos mínimos del consecutivo global (SC-0031 → 4). */
+    'folio_sequence_pad' => 4,
 ];

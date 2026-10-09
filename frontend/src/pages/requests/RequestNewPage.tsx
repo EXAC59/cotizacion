@@ -86,11 +86,18 @@ export function RequestNewPage() {
     return false
   }
 
-  const goToSolicitudHard = (requestId: string, options?: { quoteFolio?: string | null }) => {
+  const goToSolicitudHard = (requestId: string, options?: {
+    quoteFolio?: string | null
+    comprasNotificationMessage?: string | null
+  }) => {
+    const notificationMessage = options?.comprasNotificationMessage
     if (options?.quoteFolio) {
-      toast(`Solicitud guardada. Cotización ${options.quoteFolio} en Solicitud de cotizaciones.`, 'success')
+      toast(
+        `Solicitud guardada. Cotización ${options.quoteFolio} en Solicitud de cotizaciones.${notificationMessage ? ` ${notificationMessage}` : ''}`,
+        'success',
+      )
     } else {
-      toast('Solicitud guardada', 'success')
+      toast(`Solicitud guardada.${notificationMessage ? ` ${notificationMessage}` : ''}`, 'success')
     }
     // Redirect duro: el blocker de “cambios sin guardar” puede cancelar navigate().
     const base = getRouterBasename().replace(/\/$/, '')
@@ -104,11 +111,12 @@ export function RequestNewPage() {
       status?: string
       quoteId?: string | null
       quoteFolio?: string | null
+      comprasNotificationMessage?: string | null
       signal: AbortSignal
     },
   ) => {
     setAllowLeave(true)
-    const { modo, status, quoteFolio, signal } = options
+    const { modo, status, quoteFolio, comprasNotificationMessage, signal } = options
 
     // Tras guardar: siempre el detalle de la solicitud (la cotización queda en solicitud_cotizaciones).
     if (modo === 'n8n' && status === 'procesando') {
@@ -118,17 +126,23 @@ export function RequestNewPage() {
         if (solicitud.status === 'error') {
           toast('La solicitud tuvo un error al procesarse', 'warning')
         }
-        goToSolicitudHard(requestId, { quoteFolio: solicitud.quote_folio ?? quoteFolio })
+        goToSolicitudHard(requestId, {
+          quoteFolio: solicitud.quote_folio ?? quoteFolio,
+          comprasNotificationMessage: solicitud.compras_notification_message,
+        })
         return
       } catch {
         if (signal.aborted) return
-        goToSolicitudHard(requestId, { quoteFolio })
+        goToSolicitudHard(requestId, { quoteFolio, comprasNotificationMessage: null })
         return
       }
     }
 
     if (signal.aborted) return
-    goToSolicitudHard(requestId, { quoteFolio })
+    goToSolicitudHard(requestId, {
+      quoteFolio,
+      comprasNotificationMessage,
+    })
   }
 
   const applyExample = (key: RequestTextExampleKey) => {
@@ -233,6 +247,7 @@ export function RequestNewPage() {
         await navigateAfterAnalyze(result.request_id, {
           quoteId: result.quote_id,
           quoteFolio: result.quote_folio,
+          comprasNotificationMessage: result.compras_notification_message,
           signal: controller.signal,
         })
       })

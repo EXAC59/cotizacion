@@ -6,6 +6,7 @@ use App\Exceptions\QuoteLockedException;
 use App\Models\Quote;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class QuoteLockService
 {
@@ -89,26 +90,34 @@ class QuoteLockService
             );
         }
 
-        $this->clearExpiredLock($quote);
-        $quote->refresh();
+        DB::transaction(function () use ($quote, $user): void {
+            $locked = Quote::query()->lockForUpdate()->findOrFail($quote->id);
+            $this->clearExpiredLock($locked);
+            $locked->refresh();
 
-        if ($quote->locked_by === null) {
-            throw new QuoteLockedException(
-                lockedBy: new User(['name' => 'Reserva expirada', 'email' => '']),
-                message: 'Tu reserva de edición expiró. Vuelve a abrir la cotización.',
-            );
-        }
+            if ($locked->locked_by === null) {
+                // Renew an available reservation without forcing the editor to reload.
+                $locked->update([
+                    'locked_by' => $user->id,
+                    'locked_at' => now(),
+                    'last_opened_at' => now(),
+                ]);
 
-        if ((int) $quote->locked_by !== (int) $user->id) {
-            $holder = $quote->lockedByUser ?? User::query()->find($quote->locked_by);
+                return;
+            }
 
-            throw new QuoteLockedException(
-                lockedBy: $holder ?? new User(['name' => 'Otro usuario', 'email' => '']),
-                lockedAt: $quote->locked_at?->toIso8601String(),
-            );
-        }
+            if ((int) $locked->locked_by !== (int) $user->id) {
+                $locked->load('lockedByUser');
+                $holder = $locked->lockedByUser ?? User::query()->find($locked->locked_by);
 
-        $quote->update(['locked_at' => now()]);
+                throw new QuoteLockedException(
+                    lockedBy: $holder ?? new User(['name' => 'Otro usuario', 'email' => '']),
+                    lockedAt: $locked->locked_at?->toIso8601String(),
+                );
+            }
+
+            $locked->update(['locked_at' => now()]);
+        });
     }
 
     /**

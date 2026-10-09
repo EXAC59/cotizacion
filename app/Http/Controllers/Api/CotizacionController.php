@@ -29,6 +29,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use App\Models\AppSetting;
+use App\Services\WhatsApp\WhatsAppCloudService;
+use Illuminate\Support\Facades\Cache;
 
 class CotizacionController extends Controller
 {
@@ -51,6 +54,7 @@ class CotizacionController extends Controller
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
             'only_made_by' => ['nullable', 'boolean'],
             'recordatorios_pool' => ['nullable', 'boolean'],
+            'sort' => ['nullable', Rule::in(['oldest', 'newest'])],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
@@ -58,7 +62,8 @@ class CotizacionController extends Controller
         $query = Quote::query()
             ->with(['client', 'creator', 'lockedByUser', 'followUpAssignee', 'purchaseAssignee'])
             ->withCount('lines')
-            ->orderByDesc('created_at');
+            ->orderBy('created_at', ($validated['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
+            ->orderBy('id');
 
         $user = $request->user();
         $user?->loadMissing('role');
@@ -112,6 +117,7 @@ class CotizacionController extends Controller
         $quote = Quote::query()->with([
             'lines.offers.wholesaler',
             'client',
+            'request',
             'internalNotes.user',
             'purchaseAssignee',
         ])->findOrFail($id);
@@ -369,6 +375,54 @@ class CotizacionController extends Controller
         ], 202);
     }
 
+    public function enviarWhatsApp(string $id, Request $request, WhatsAppCloudService $whatsapp, QuotePdfService $pdfService): JsonResponse
+    {
+        abort_unless(Str::isUuid($id), 404);
+        $quote = Quote::query()->with(['client', 'lines'])->findOrFail($id);
+        $this->ensureVentasCanMutateQuote($request, $quote);
+        $this->ensureSalesClaimedReadyQuote($request, $quote);
+        $validated = $request->validate([
+            'template' => ['required', Rule::in(array_keys(config('whatsapp.templates')))],
+        ]);
+        if ($quote->lines->isEmpty() || ! in_array($quote->status, ['pendiente_envio', 'enviada', 'modificacion'], true)) {
+            throw ValidationException::withMessages(['quote' => 'Guarda la cotización como Lista / Terminada antes de enviarla.']);
+        }
+        $to = $whatsapp->normalizePhone((string) $quote->client?->whatsapp);
+        $lock = Cache::lock('quote-whatsapp:'.$id, 180);
+        if (! $lock->get()) {
+            return response()->json(['message' => 'Ya hay un envío de esta cotización en proceso.'], 409);
+        }
+        try {
+            $settings = AppSetting::current();
+            $filename = preg_replace('/[^A-Za-z0-9._-]+/', '_', $quote->folio).'.pdf';
+            $messageId = $whatsapp->sendPdf($to, $validated['template'], [
+                $quote->client?->contact_name ?: $quote->client?->company ?: 'Cliente',
+                $quote->folio,
+                $settings->company_name ?: config('app.name'),
+            ], $pdfService->render($id, $request->user())->output(), $filename);
+            // Solo marcar enviada después de recibir el ID del mensaje de Meta.
+            $previous = $quote->status;
+            $quote->update(['status' => 'enviada', 'sent_at' => now(), 'response_received_at' => null]);
+            $this->statusHistory->record($quote, $previous, 'enviada');
+            if ($previous === 'pendiente_envio') {
+                $this->salesNotifications->markQuoteReadyNotificationsRead($quote);
+            }
+            QuoteInternalNote::query()->create([
+                'quote_id' => $quote->id, 'user_id' => $request->user()?->id,
+                'body' => 'WhatsApp: Meta aceptó el envío de '.$validated['template'].'. Mensaje: '.$messageId.'.',
+                'created_at' => now(),
+            ]);
+            $this->activity->record($quote, $request->user());
+
+            return response()->json([
+                'message' => 'Meta aceptó la plantilla con el PDF para envío al cliente.',
+                'messageId' => $messageId, 'status' => $quote->status, 'sentAt' => $quote->sent_at?->toIso8601String(),
+            ]);
+        } finally {
+            $lock->release();
+        }
+    }
+
     public function agregarNotaInterna(string $id, Request $request): JsonResponse
     {
         if (! Str::isUuid($id)) {
@@ -503,6 +557,7 @@ class CotizacionController extends Controller
         $quote->loadMissing([
             'lines.offers.wholesaler',
             'client',
+            'request',
             'creator',
             'internalNotes.user',
             'followUpAssignee',
@@ -516,6 +571,7 @@ class CotizacionController extends Controller
             'clientId' => $quote->client_id,
             'clientName' => $quote->client?->company ?? '',
             'requestId' => $quote->request_id,
+            'requestFolio' => $quote->request?->folio,
             'status' => $quote->status,
             'validityDays' => (int) $quote->validity_days,
             'globalMarginPercent' => (float) $quote->global_margin_percent,

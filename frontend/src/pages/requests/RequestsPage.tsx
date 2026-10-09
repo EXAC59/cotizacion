@@ -7,15 +7,13 @@ import { Input, Label } from '@/components/ui/Input'
 import { LoadingState, TableSkeleton } from '@/components/ui/LoadingState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { ViewerListScopeTabs } from '@/components/ui/ViewerListScopeTabs'
-import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { formatDateTime } from '@/lib/format'
 import { listSolicitudes, mapSolicitudApiToQuoteRequest } from '@/lib/solicitudes-api'
-import { parseViewerListScope, type ViewerListScope } from '@/lib/viewer-list-scope'
+import type { ViewerListScope } from '@/lib/viewer-list-scope'
 import type { QuoteRequest } from '@/types'
 
 export function RequestsPage() {
-  const { user } = useAuth()
   const { can } = usePermission()
   const canCreateClient = can('clientes', 'create')
   const [requests, setRequests] = useState<QuoteRequest[]>([])
@@ -25,9 +23,7 @@ export function RequestsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [listScope, setListScope] = useState<ViewerListScope>(() =>
-    parseViewerListScope(null, user?.role),
-  )
+  const [listScope, setListScope] = useState<ViewerListScope>('all')
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -65,8 +61,7 @@ export function RequestsPage() {
   return (
     <div>
       <PageHeader
-        title="Solicitudes"
-        description="Recepción y lectura automática. Mías son las tuyas; Todas incluye las del equipo."
+        title="SOLICITUDES"
         actions={
           <Link to="/solicitudes/nueva">
             <Button size="sm">

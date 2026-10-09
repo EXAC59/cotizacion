@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
 import { listNotifications } from '@/lib/notifications-api'
+import { MESSAGING_UNREAD_CHANGED } from '@/lib/notifications-events'
 import {
   NOTIFICATIONS_BELL_ID,
   OPEN_NOTIFICATIONS_EVENT,
@@ -25,15 +26,18 @@ export function AppNotificationsBanner() {
     if (!canViewDashboard && !inboxEnabled) return
 
     let cancelled = false
+    let requestId = 0
 
     const load = async () => {
+      if (document.hidden) return
+      const currentRequest = ++requestId
       try {
         const parts: string[] = []
         let total = 0
 
         if (inboxEnabled) {
           const inbox = await listNotifications().catch(() => ({ data: [], unreadCount: 0 }))
-          if (cancelled) return
+          if (cancelled || currentRequest !== requestId) return
           const unread = inbox.unreadCount
           if (unread > 0) {
             total += unread
@@ -45,7 +49,7 @@ export function AppNotificationsBanner() {
 
         if (canViewDashboard) {
           const data = await fetchDashboard()
-          if (cancelled) return
+          if (cancelled || currentRequest !== requestId) return
           const unanswered = data.alerts.unansweredQuotes.length
           const stuck = isAdmin ? (data.alerts.stuckProcessingRequests?.length ?? 0) : 0
           if (unanswered > 0) {
@@ -62,7 +66,7 @@ export function AppNotificationsBanner() {
           }
         }
 
-        if (cancelled) return
+        if (cancelled || currentRequest !== requestId) return
         setPendingCount(total)
         setSummary(parts.join(' · '))
       } catch {
@@ -71,10 +75,19 @@ export function AppNotificationsBanner() {
     }
 
     void load()
+    const timer = window.setInterval(() => void load(), 15_000)
+    const refresh = () => void load()
+    window.addEventListener(MESSAGING_UNREAD_CHANGED, refresh)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
     return () => {
       cancelled = true
+      window.clearInterval(timer)
+      window.removeEventListener(MESSAGING_UNREAD_CHANGED, refresh)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
     }
-  }, [canViewDashboard, inboxEnabled, isAdmin])
+  }, [canViewDashboard, inboxEnabled, isAdmin, user?.id])
 
   if ((!canViewDashboard && !inboxEnabled) || pendingCount === 0) {
     return null
@@ -95,11 +108,11 @@ export function AppNotificationsBanner() {
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-5 text-amber-950">
-              Revisa el icono de notificaciones y recordatorios
+              <span className="hidden sm:inline">Revisa el icono de notificaciones y recordatorios</span>
+              <span className="sm:hidden">Pendientes por revisar</span>
             </p>
             <p className="truncate text-xs leading-4 text-amber-800 sm:text-sm">
               {summary || `${pendingCount} pendiente${pendingCount === 1 ? '' : 's'}`}
-              <span className="hidden sm:inline"> · está arriba a la derecha</span>
             </p>
           </div>
         </div>

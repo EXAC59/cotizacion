@@ -8,6 +8,12 @@ use Tests\AuthenticatedFeatureTestCase;
 
 class SolicitudLecturaValidationTest extends AuthenticatedFeatureTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['n8n.webhook_secret' => 'test-webhook-secret']);
+        $this->withHeader('X-N8N-Webhook-Secret', 'test-webhook-secret');
+    }
 
     #[Test]
     public function it_rejects_excel_template_missing_marca_column(): void

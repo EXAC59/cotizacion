@@ -67,8 +67,8 @@ class Quote extends Model
             'subtotal' => 'decimal:4',
             'tax_amount' => 'decimal:4',
             'total' => 'decimal:4',
-            'sent_at' => 'datetime',
             'elaboration_date' => 'date',
+            'sent_at' => 'datetime',
             'response_received_at' => 'datetime',
             'last_opened_at' => 'datetime',
             'last_activity_at' => 'datetime',
@@ -87,6 +87,11 @@ class Quote extends Model
     public function client(): BelongsTo
     {
         return $this->belongsTo(Client::class, 'client_id');
+    }
+
+    public function request(): BelongsTo
+    {
+        return $this->belongsTo(QuoteRequest::class, 'request_id');
     }
 
     public function creator(): BelongsTo
@@ -179,16 +184,11 @@ class Quote extends Model
                 ->orWhereHas('salesNotifications', function ($notification) use ($user) {
                     $notification->where('audience', 'ventas')
                         ->where('recipient_id', $user->id)
-                        ->where(function ($reason) {
-                            $reason->where('reason_code', 'lista_terminada')
-                                ->orWhere(function ($fromManager) {
-                                    $fromManager->whereNotNull('sender_id')
-                                        ->whereHas(
-                                            'sender.role',
-                                            fn ($role) => $role->whereIn('slug', ['gerente_compras', 'administrador']),
-                                        );
-                                });
-                        });
+                        ->whereNotNull('sender_id')
+                        ->whereHas(
+                            'sender.role',
+                            fn ($role) => $role->whereIn('slug', ['gerente_compras', 'administrador']),
+                        );
                 });
         });
     }

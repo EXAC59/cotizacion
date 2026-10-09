@@ -4,6 +4,16 @@ import { setAuthToken } from '@/lib/auth-token'
 import { getApiBase } from '@/lib/app-paths'
 import type { User, UserRole } from '@/types'
 
+let sessionEnding = false
+
+export function markSessionEnded(): void {
+  sessionEnding = true
+}
+
+export function isSessionEnding(): boolean {
+  return sessionEnding
+}
+
 type AuthUserPayload = {
   id: string
   name: string
@@ -31,7 +41,7 @@ function mapUser(payload: AuthUserPayload): User | null {
 }
 
 export async function fetchCurrentUser(): Promise<User | null> {
-  const response = await apiFetch(`${getApiBase()}/user`)
+  const response = await apiFetch(`${getApiBase()}/session`)
 
   if (response.status === 401) {
     return null
@@ -48,7 +58,7 @@ export async function fetchCurrentUser(): Promise<User | null> {
 export async function loginRequest(login: string, password: string): Promise<User | null> {
   const trimmed = login.trim()
   const payload: Record<string, string> = {
-    password: password.trim(),
+    password,
   }
   // Enviar ambos: el API acepta usuario o correo en cualquiera de los campos.
   if (trimmed.includes('@')) {
@@ -81,10 +91,14 @@ export async function loginRequest(login: string, password: string): Promise<Use
   // Sesión por cookie httpOnly; limpia tokens bearer viejos de localStorage.
   setAuthToken(null)
 
-  return data.user ? mapUser(data.user) : null
+  const user = data.user ? mapUser(data.user) : null
+  if (user) sessionEnding = false
+  return user
 }
 
 export async function logoutRequest(): Promise<void> {
+  // El servidor libera las reservas antes de invalidar la sesión.
+  markSessionEnded()
   try {
     await apiFetch(`${getApiBase()}/logout`, {
       method: 'POST',

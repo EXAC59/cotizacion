@@ -90,12 +90,13 @@ function loadStore(): RbacStore {
 }
 
 export function RbacProvider({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const [store, setStore] = useState<RbacStore>(loadStore)
   const [permissionsLoading, setPermissionsLoading] = useState(true)
   const [permissionsSource, setPermissionsSource] = useState<'api' | 'local'>('local')
   const [usersSource, setUsersSource] = useState<'api' | 'local'>('local')
   const [usersLoading, setUsersLoading] = useState(false)
+  const canManageUsers = userHasPermission(store.rolePermissions, user, 'admin', 'manage')
 
   const persist = useCallback((next: RbacStore) => {
     setStore(next)
@@ -175,12 +176,15 @@ export function RbacProvider({ children }: { children: ReactNode }) {
         }
       })
 
-    void refreshUsers()
-
     return () => {
       cancelled = true
     }
   }, [isAuthenticated, refreshUsers])
+
+  useEffect(() => {
+    if (!isAuthenticated || permissionsLoading || !canManageUsers) return
+    void refreshUsers()
+  }, [isAuthenticated, permissionsLoading, canManageUsers, refreshUsers])
 
   const saveUser = useCallback(
     async (user: StoredUser) => {

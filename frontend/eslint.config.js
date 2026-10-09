@@ -17,6 +17,7 @@ export default defineConfig([
     ],
     languageOptions: {
       globals: globals.browser,
+      parserOptions: { tsconfigRootDir: import.meta.dirname },
     },
     rules: {
       // Patrón habitual en carga de datos; evita bloquear lint en todo el proyecto.

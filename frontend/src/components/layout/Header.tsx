@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertCircle, LogOut, Search } from 'lucide-react'
+import { AlertCircle, LogOut, Menu, Search } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { NotificationsBell } from '@/components/layout/NotificationsBell'
@@ -13,7 +13,9 @@ import {
 import { useAuth } from '@/hooks/useAuth'
 import { buildQuoteSearchParams, isQuotesListPath } from '@/lib/quote-search-params'
 
-export function Header({ title }: { title?: string }) {
+export function Header({ title, onMenuToggle, sharedPendingCount, onPendingCountChange }: {
+  title?: string; onMenuToggle?: () => void; sharedPendingCount?: number; onPendingCountChange?: (count: number) => void
+}) {
   const { logout, user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -134,8 +136,9 @@ export function Header({ title }: { title?: string }) {
 
   return (
     <>
-      <header className="app-header-glass sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-4 px-4 sm:px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-4">
+      <header className="app-header-glass sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-2 px-3 sm:gap-4 sm:px-6">
+        {onMenuToggle && <Button variant="ghost" className="h-11 w-11 shrink-0 p-0 md:hidden" aria-label="Abrir menú" aria-haspopup="dialog" aria-controls="mobile-navigation" onClick={onMenuToggle}><Menu className="h-5 w-5" aria-hidden /></Button>}
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
           {title && (
             <span className="shrink-0 text-sm font-medium text-slate-600 lg:hidden">{title}</span>
           )}
@@ -163,15 +166,15 @@ export function Header({ title }: { title?: string }) {
           </form>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-          <NotificationsBell />
+          <NotificationsBell sharedPendingCount={sharedPendingCount} onPendingCountChange={onPendingCountChange} />
           {user?.email && (
             <div className="hidden max-w-[14rem] truncate rounded-xl border border-slate-200/80 bg-white/70 px-3 py-1.5 text-sm text-slate-600 shadow-sm md:block">
               {user.email}
             </div>
           )}
-          <Button variant="ghost" size="sm" onClick={() => setLogoutOpen(true)}>
+          <Button variant="ghost" size="sm" className="min-h-11" aria-label="Salir" onClick={() => setLogoutOpen(true)}>
             <LogOut className="h-4 w-4" />
-            Salir
+            <span className="hidden sm:inline">Salir</span>
           </Button>
         </div>
       </header>

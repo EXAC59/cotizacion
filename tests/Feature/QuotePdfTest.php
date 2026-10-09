@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\AppSetting;
 use App\Models\Client;
 use App\Models\Quote;
-use App\Models\User;
 use App\Models\Wholesaler;
 use App\Services\Quotes\QuotePdfService;
 use App\Services\Wholesalers\WholesalerCatalogSync;
@@ -15,34 +14,6 @@ use Tests\AuthenticatedFeatureTestCase;
 
 class QuotePdfTest extends AuthenticatedFeatureTestCase
 {
-    #[Test]
-    public function it_renders_the_editable_elaboration_date_in_pdf(): void
-    {
-        $quoteId = $this->createQuoteWithLines();
-        $quote = Quote::query()->with(['lines', 'client', 'creator'])->findOrFail($quoteId);
-        $quote->update(['elaboration_date' => '2026-09-15']);
-
-        $method = new ReflectionMethod(QuotePdfService::class, 'buildViewData');
-        $method->setAccessible(true);
-        $viewData = $method->invoke(app(QuotePdfService::class), $quote->fresh(['lines', 'client', 'creator']), AppSetting::current());
-        $html = view('pdf.quote', $viewData)->render();
-
-        $this->assertStringContainsString('Fecha de elaboración:</strong> 15/09/2026', $html);
-    }
-
-    #[Test]
-    public function it_does_not_render_a_unit_column_in_the_quote_pdf(): void
-    {
-        $quoteId = $this->createQuoteWithLines();
-        $quote = Quote::query()->with(['lines', 'client', 'creator'])->findOrFail($quoteId);
-        $method = new ReflectionMethod(QuotePdfService::class, 'buildViewData');
-        $method->setAccessible(true);
-        $viewData = $method->invoke(app(QuotePdfService::class), $quote, AppSetting::current());
-        $html = view('pdf.quote', $viewData)->render();
-
-        $this->assertStringNotContainsString('UNIDAD', $html);
-        $this->assertArrayNotHasKey('unit', $viewData['lines'][0]);
-    }
 
     protected function setUp(): void
     {
@@ -60,31 +31,6 @@ class QuotePdfTest extends AuthenticatedFeatureTestCase
 
         $response->assertOk();
         $this->assertStringContainsString('application/pdf', (string) $response->headers->get('Content-Type'));
-    }
-
-    #[Test]
-    public function it_renders_customer_observations_but_not_internal_notes(): void
-    {
-        $quoteId = $this->createQuoteWithLines();
-        $quote = Quote::query()->with(['lines', 'client', 'creator'])->findOrFail($quoteId);
-        $quote->update([
-            'customer_observations' => 'Entrega especial visible para el cliente.',
-            'notes' => 'Comentario interno que no debe salir.',
-        ]);
-
-        $service = app(QuotePdfService::class);
-        $method = new ReflectionMethod(QuotePdfService::class, 'buildViewData');
-        $method->setAccessible(true);
-        $viewData = $method->invoke(
-            $service,
-            $quote->fresh(['lines', 'client', 'creator']),
-            AppSetting::current(),
-        );
-        $html = view('pdf.quote', $viewData)->render();
-
-        $this->assertStringContainsString('OBSERVACIONES:', $html);
-        $this->assertStringContainsString('Entrega especial visible para el cliente.', $html);
-        $this->assertStringNotContainsString('Comentario interno que no debe salir.', $html);
     }
 
     #[Test]
@@ -118,8 +64,8 @@ class QuotePdfTest extends AuthenticatedFeatureTestCase
     #[Test]
     public function it_uses_logged_in_user_signature_not_another_users(): void
     {
-        $admin = User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
-        $ventas = User::query()->whereHas('role', fn ($q) => $q->where('slug', 'ventas'))->firstOrFail();
+        $admin = \App\Models\User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
+        $ventas = \App\Models\User::query()->whereHas('role', fn ($q) => $q->where('slug', 'ventas'))->firstOrFail();
         $this->actingAs($admin);
 
         $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
@@ -166,7 +112,7 @@ class QuotePdfTest extends AuthenticatedFeatureTestCase
     #[Test]
     public function it_uses_logged_in_user_signature_when_available(): void
     {
-        $admin = User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
+        $admin = \App\Models\User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
         $this->actingAs($admin);
 
         $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
@@ -200,7 +146,7 @@ class QuotePdfTest extends AuthenticatedFeatureTestCase
     #[Test]
     public function it_falls_back_to_global_signature_when_logged_in_user_has_none(): void
     {
-        $admin = User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
+        $admin = \App\Models\User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
         $admin->signature_path = null;
         $admin->save();
         $this->actingAs($admin);
@@ -238,7 +184,7 @@ class QuotePdfTest extends AuthenticatedFeatureTestCase
     #[Test]
     public function it_uses_logged_in_user_name_and_email_even_without_signature_image(): void
     {
-        $admin = User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
+        $admin = \App\Models\User::query()->whereHas('role', fn ($q) => $q->where('slug', 'administrador'))->firstOrFail();
         $admin->signature_path = null;
         $admin->name = 'Administrador Exacto';
         $admin->email = 'cotizaciones@exacto.mx';

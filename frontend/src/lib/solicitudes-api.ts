@@ -52,6 +52,8 @@ export type SolicitudApi = {
   lectura_at?: string | null
   quote_id?: string | null
   quote_folio?: string | null
+  compras_notification_count?: number
+  compras_notification_message?: string | null
   lineas: Array<{
     id: string
     quantity: number
@@ -299,6 +301,8 @@ export type LecturaDoclingResponse = {
   quote_id?: string
   quote_folio?: string
   quote_created?: boolean
+  compras_notification_count?: number
+  compras_notification_message?: string | null
 }
 
 export type LecturaN8nResponse = {
@@ -532,6 +536,8 @@ export type UpdateSolicitudLineasResult = SolicitudApi & {
   quote_id?: string
   quote_folio?: string
   quote_created?: boolean
+  compras_notification_count?: number
+  compras_notification_message?: string | null
 }
 
 export async function updateSolicitudLineas(

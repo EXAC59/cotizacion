@@ -72,6 +72,7 @@ class ClienteController extends Controller
 
         $validated = $request->validate([
             'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'page' => ['nullable', 'integer', 'min:1'],
             'status' => ['nullable', 'string', 'max:30'],
             'scope' => ['nullable', 'string', Rule::in(ViewerListScope::values())],
         ]);
@@ -82,7 +83,8 @@ class ClienteController extends Controller
             ->with('creator')
             ->withCount('lines')
             ->where('client_id', $id)
-            ->orderByDesc('created_at');
+            ->orderByDesc('created_at')
+            ->orderBy('id');
 
         $user = $request->user();
         $user?->loadMissing('role');
@@ -94,8 +96,12 @@ class ClienteController extends Controller
             $query->where('status', $validated['status']);
         }
 
-        return response()->json([
-            'data' => $query->limit($limit)->get()->map(fn (Quote $quote) => [
+        $page = isset($validated['page'])
+            ? $query->paginate($limit, ['quotes.*'], 'page', $validated['page'])
+            : null;
+        $quotes = $page ? $page->getCollection() : $query->limit($limit)->get();
+        $payload = [
+            'data' => $quotes->map(fn (Quote $quote) => [
                 'id' => $quote->id,
                 'folio' => $quote->folio,
                 'clientId' => $quote->client_id,
@@ -107,7 +113,18 @@ class ClienteController extends Controller
                 'createdAt' => $quote->created_at?->toIso8601String(),
                 'sentAt' => $quote->sent_at?->toIso8601String(),
             ])->values(),
-        ]);
+        ];
+        if ($page) {
+            $payload['meta'] = [
+                'page' => $page->currentPage(),
+                'lastPage' => $page->lastPage(),
+                'total' => $page->total(),
+                'from' => $page->firstItem(),
+                'to' => $page->lastItem(),
+            ];
+        }
+
+        return response()->json($payload);
     }
 
     public function store(Request $request): JsonResponse

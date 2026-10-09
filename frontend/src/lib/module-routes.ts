@@ -8,6 +8,7 @@ import {
   Building2,
   FileText,
   LayoutDashboard,
+  MessageSquareText,
   Package,
   Settings,
   Shield,
@@ -24,16 +25,20 @@ export const MODULE_ROUTES: {
   roles?: UserRole[]
 }[] = [
   { module: 'dashboard', path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { module: 'solicitudes', path: '/solicitudes', label: 'Solicitudes', icon: Upload },
-  { module: 'cotizaciones', path: '/cotizaciones', label: 'Cotizaciones', icon: FileText },
-  {
-    module: 'cotizaciones',
+  { module: 'solicitudes', path: '/solicitudes', label: 'SOLICITUDES', icon: Upload },
+  { module: 'cotizaciones', path: '/cotizaciones', label: 'COTIZACIONES', icon: FileText },
+  ...(import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? [{
+    module: 'cotizaciones' as const, path: '/mensajeria', label: 'Mensajería', icon: MessageSquareText,
+    roles: ['ventas', 'gerente_compras', 'administrador'] as UserRole[],
+  }] : []),
+  ...(import.meta.env.VITE_MENSAJERIA_LIVE !== 'true' ? [{
+    module: 'cotizaciones' as const,
     path: '/recordatorios',
     label: 'Recordatorios',
     icon: Bell,
     end: true,
-    roles: ['ventas', 'gerente_compras', 'administrador'],
-  },
+    roles: ['ventas', 'gerente_compras', 'administrador'] as UserRole[],
+  }] : []),
   { module: 'clientes', path: '/clientes', label: 'Clientes', icon: Building2 },
   { module: 'mayoristas', path: '/mayoristas', label: 'Mayoristas', icon: Package },
   { module: 'reportes', path: '/reportes', label: 'Reportes', icon: BarChart3 },

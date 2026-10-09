@@ -1,8 +1,8 @@
 import type { ViewerListScope } from '@/lib/viewer-list-scope'
 
 const OPTIONS: { value: ViewerListScope; label: string; hint: string }[] = [
+  { value: 'all', label: 'Todas', hint: '' },
   { value: 'mine', label: 'Mías', hint: 'Solo las que hiciste tú (o que compras te asignó)' },
-  { value: 'all', label: 'Todas', hint: 'Las tuyas y las del resto del equipo' },
 ]
 
 export function ViewerListScopeTabs({
@@ -12,6 +12,8 @@ export function ViewerListScopeTabs({
   value: ViewerListScope
   onChange: (scope: ViewerListScope) => void
 }) {
+  const hint = OPTIONS.find((option) => option.value === value)?.hint
+
   return (
     <div className="mb-4">
       <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
@@ -21,7 +23,7 @@ export function ViewerListScopeTabs({
             <button
               key={option.value}
               type="button"
-              title={option.hint}
+              title={option.hint || undefined}
               onClick={() => onChange(option.value)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                 active
@@ -34,9 +36,7 @@ export function ViewerListScopeTabs({
           )
         })}
       </div>
-      <p className="mt-2 text-xs text-slate-500">
-        {OPTIONS.find((option) => option.value === value)?.hint}
-      </p>
+      {hint && <p className="mt-2 text-xs text-slate-500">{hint}</p>}
     </div>
   )
 }

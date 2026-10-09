@@ -30,6 +30,7 @@ import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { QuoteFormPage } from '@/pages/quotes/QuoteFormPage'
 import { QuotesPage } from '@/pages/quotes/QuotesPage'
 import { RecordatoriosPage } from '@/pages/recordatorios/RecordatoriosPage'
+import { MessagingEntryPage, MessagingReminderRedirect } from '@/pages/messaging/MessagingEntryPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
 import { RequestDetailPage } from '@/pages/requests/RequestDetailPage'
 import { RequestNewPage } from '@/pages/requests/RequestNewPage'
@@ -125,14 +126,18 @@ const router = createBrowserRouter(
             path="recordatorios"
             element={
               <ModuleRoute module="cotizaciones">
-                <RecordatoriosPage />
+                {import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? <MessagingReminderRedirect /> : <RecordatoriosPage />}
               </ModuleRoute>
             }
           />
           <Route
             path="recordatorios-ventas"
-            element={<Navigate to="/recordatorios" replace />}
+            element={import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? <MessagingReminderRedirect /> : <Navigate to="/recordatorios" replace />}
           />
+          {import.meta.env.VITE_MENSAJERIA_LIVE === 'true' && <Route
+            path="mensajeria"
+            element={<ModuleRoute module="cotizaciones"><MessagingEntryPage /></ModuleRoute>}
+          />}
           <Route
             path="clientes"
             element={

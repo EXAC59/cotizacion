@@ -10,6 +10,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useData } from '@/hooks/useData'
 import { usePermission } from '@/hooks/usePermission'
 import { useBranding } from '@/hooks/useBranding'
+import { WhatsAppTemplatesPanel } from '@/components/settings/WhatsAppTemplatesPanel'
 import {
   brandingLogoSrc,
   DEFAULT_APP_BRANDING,
@@ -49,6 +50,7 @@ import type { Wholesaler } from '@/types'
 export function SettingsPage() {
   const { user } = useAuth()
   const {
+    can,
     canModule,
     rolePermissions,
     canConfigIntegrations,
@@ -889,10 +891,7 @@ export function SettingsPage() {
                 procesar los envíos en cola.
               </p>
             </div>
-            <div className="rounded-lg border border-slate-200 p-3">
-              <p className="font-medium">WhatsApp Business</p>
-              <p className="text-slate-500">Fase 2 — API Meta</p>
-            </div>
+            {can('cotizaciones', 'send') && <WhatsAppTemplatesPanel canManage={can('admin', 'manage')} />}
           </CardBody>
         </Card>
         )}

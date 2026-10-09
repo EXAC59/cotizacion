@@ -10,9 +10,18 @@ use App\Services\Wholesalers\WholesalerCatalogSync;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\AuthenticatedFeatureTestCase;
+use Tests\Concerns\RestoresWholesalerEnvironment;
 
 class CtInternacionalConnectorTest extends AuthenticatedFeatureTestCase
 {
+    use RestoresWholesalerEnvironment;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->saveWholesalerEnvironment();
+    }
+
     #[Test]
     public function it_rejects_stock_from_a_different_api_product(): void
     {
@@ -32,7 +41,7 @@ class CtInternacionalConnectorTest extends AuthenticatedFeatureTestCase
         $this->setEnvVar('WHOLESALER_CT_LOOKUP_PATH', '/existencia/promociones/{part_number}');
         $this->setEnvVar('WHOLESALER_CT_SOURCE_IP', '');
 
-        $catalog = $this->createMock(CtCatalogIndex::class);
+        $catalog = $this->createStub(CtCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn([]);
 
         $wholesaler = Wholesaler::query()->where('code', 'CT')->firstOrFail();
@@ -69,7 +78,7 @@ class CtInternacionalConnectorTest extends AuthenticatedFeatureTestCase
         $this->setEnvVar('WHOLESALER_CT_LOOKUP_PATH', '/existencia/promociones/{part_number}');
         $this->setEnvVar('WHOLESALER_CT_SOURCE_IP', '');
 
-        $catalog = $this->createMock(CtCatalogIndex::class);
+        $catalog = $this->createStub(CtCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn([]);
         $catalog->method('productName')->willReturn('Cable HDMI demo');
 
@@ -162,7 +171,7 @@ class CtInternacionalConnectorTest extends AuthenticatedFeatureTestCase
         $this->setEnvVar('WHOLESALER_CT_LOOKUP_PATH', '/existencia/promociones/{part_number}');
         $this->setEnvVar('WHOLESALER_CT_SOURCE_IP', '');
 
-        $catalog = $this->createMock(CtCatalogIndex::class);
+        $catalog = $this->createStub(CtCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn(['CARHPP2110']);
         $catalog->method('productName')->willReturn('Tinta HP 662, CZ103AL, Negro');
 
@@ -216,7 +225,7 @@ class CtInternacionalConnectorTest extends AuthenticatedFeatureTestCase
         $this->setEnvVar('WHOLESALER_CT_LOOKUP_PATH', '/existencia/promociones/{part_number}');
         $this->setEnvVar('WHOLESALER_CT_SOURCE_IP', '');
 
-        $catalog = $this->createMock(CtCatalogIndex::class);
+        $catalog = $this->createStub(CtCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn(['CTAAA001', 'CTBBB002', 'CTCCC003']);
         $catalog->method('productName')->willReturnCallback(function (string $key): ?string {
             return match ($key) {
@@ -274,7 +283,7 @@ class CtInternacionalConnectorTest extends AuthenticatedFeatureTestCase
         $this->setEnvVar('WHOLESALER_CT_LOOKUP_PATH', '/existencia/promociones/{part_number}');
         $this->setEnvVar('WHOLESALER_CT_SOURCE_IP', '');
 
-        $catalog = $this->createMock(CtCatalogIndex::class);
+        $catalog = $this->createStub(CtCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn(['CTAAA001', 'CTBBB002']);
         $catalog->method('productName')->willReturn('Solo primero');
 

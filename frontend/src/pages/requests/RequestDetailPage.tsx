@@ -359,7 +359,6 @@ export function RequestDetailPage() {
       }
       const saved = await persistQuote(draft)
       saveQuote(saved)
-      window.dispatchEvent(new Event('cotizacion:data-changed'))
       try {
         const [updatedRequest, linkedQuotes] = await Promise.all([
           getSolicitud(request.id),
@@ -528,14 +527,6 @@ export function RequestDetailPage() {
         </Card>
       )}
 
-      {request.status === 'procesada' && canEditLines && !linesDirty && (
-        <Card className="mb-6 border-amber-200 bg-amber-50/50">
-          <CardBody className="text-sm text-amber-900">
-            Revisa las líneas detectadas. Haz clic en cualquier celda para corregir cantidades, SKU o
-            descripción y luego pulsa <strong>Guardar cambios</strong>.
-          </CardBody>
-        </Card>
-      )}
 
       {request.status === 'procesada' && canEditLines && linesDirty && (
         <Card className="mb-6 border-indigo-200 bg-indigo-50/40">
@@ -590,7 +581,7 @@ export function RequestDetailPage() {
       {(canEditLines ? editLines : request.lines)?.length ? (
         <Card className="mb-6">
           <CardHeader
-            title="Líneas detectadas"
+            title="Productos de la solicitud"
             subtitle={
               canEditLines
                 ? 'Haz clic en la tabla para editar al instante'
@@ -612,11 +603,6 @@ export function RequestDetailPage() {
                       setPreferredWarehouse(next.join(','))
                     }}
                   />
-                </div>
-                <div className="flex items-end">
-                  <p className="text-xs text-slate-600">
-                    Selección manual: elige la oferta en el inventario. No se aplica sola.
-                  </p>
                 </div>
               </div>
             </CardBody>

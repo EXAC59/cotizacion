@@ -12,6 +12,13 @@ class N8nMayoristasInternalRoutesTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['n8n.webhook_secret' => 'test-webhook-secret']);
+        $this->withHeader('X-N8N-Webhook-Secret', 'test-webhook-secret');
+    }
+
     #[Test]
     public function it_lists_mayoristas_without_sanctum_via_n8n_route(): void
     {

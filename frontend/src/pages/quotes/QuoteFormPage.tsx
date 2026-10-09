@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
+  Maximize2,
+  Minimize2,
   Download,
   Lock,
   Mail,
@@ -25,6 +27,7 @@ import {
 import { PageHeader } from '@/components/ui/PageHeader'
 import { QuoteStatusBadge, QUOTE_STATUS_STEP_TONE } from '@/components/ui/QuoteStatusBadge'
 import { QuoteLinesEditor } from '@/components/quotes/QuoteLinesEditor'
+import { WhatsAppQuoteModal } from '@/components/quotes/WhatsAppQuoteModal'
 import { QuoteTotalsPanel } from '@/components/quotes/QuoteTotals'
 import { useData } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
@@ -48,6 +51,7 @@ import {
   claimPurchaseRequest,
   claimQuoteFollowUp,
   getQuoteById,
+  markQuoteViewed,
   isPersistedQuoteId,
   openQuotePdf,
   persistQuote,
@@ -118,6 +122,38 @@ function QuoteFormEditor({
   const viewingOthers = ownedByViewer === false
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [loadedRequest, setLoadedRequest] = useState<QuoteRequest | null>(null)
+  const [partidasExpanded, setPartidasExpanded] = useState(false)
+  const partidasPanelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const onFullscreenChange = () => setPartidasExpanded(document.fullscreenElement === partidasPanelRef.current)
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.fullscreenElement) setPartidasExpanded(false)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    window.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange)
+      window.removeEventListener('keydown', onEscape)
+    }
+  }, [])
+
+  const togglePartidasSize = async () => {
+    if (partidasExpanded) {
+      if (document.fullscreenElement === partidasPanelRef.current) await document.exitFullscreen()
+      setPartidasExpanded(false)
+      return
+    }
+    if (document.fullscreenEnabled && partidasPanelRef.current) {
+      try {
+        await partidasPanelRef.current.requestFullscreen()
+      } catch {
+        // Browsers without fullscreen support still expand the panel across the page.
+      }
+    }
+    setPartidasExpanded(true)
+  }
+
   const [loadingQuote, setLoadingQuote] = useState(!isNew)
   const [loadError, setLoadError] = useState<string | null>(null)
   const commercialSettingsLoaded = useRef(false)
@@ -127,6 +163,12 @@ function QuoteFormEditor({
   const tempLocalIdRef = useRef(newLocalId('q'))
 
   const [folio, setFolio] = useState(() => localExisting?.folio ?? '')
+  const [linkedRequestId, setLinkedRequestId] = useState<string | null>(
+    () => requestId ?? localExisting?.requestId ?? null,
+  )
+  const [linkedRequestFolio, setLinkedRequestFolio] = useState(
+    () => localExisting?.requestFolio ?? '',
+  )
   const [folioLoading, setFolioLoading] = useState(isNew && !localExisting?.folio)
   const [clientId, setClientId] = useState(() => localExisting?.clientId ?? clientIdParam ?? '')
   const [status, setStatus] = useState<QuoteStatus>(() => {
@@ -207,6 +249,7 @@ function QuoteFormEditor({
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [sendReadyModalOpen, setSendReadyModalOpen] = useState(false)
   const [emailModalOpen, setEmailModalOpen] = useState(false)
+  const [whatsAppModalOpen, setWhatsAppModalOpen] = useState(false)
   const [emailTo, setEmailTo] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailMessage, setEmailMessage] = useState('')
@@ -356,6 +399,8 @@ function QuoteFormEditor({
       .then((api) => {
         const mapped = mapSolicitudApiToQuoteRequest(api)
         setLoadedRequest(mapped)
+        setLinkedRequestId(mapped.id)
+        setLinkedRequestFolio(mapped.folio ?? '')
         setClientId((prev) => prev || mapped.clientId || '')
         setLines((prev) => {
           if (prev.length > 0 || !(mapped.lines?.length ?? 0)) return prev
@@ -369,11 +414,16 @@ function QuoteFormEditor({
   useEffect(() => {
     if (isNew || !quoteId) return
 
+    let active = true
     setLoadingQuote(true)
     getQuoteById(quoteId)
       .then((quote) => {
+        if (!active) return
+        void markQuoteViewed(quote.id).catch(() => undefined)
         setServerQuoteId(quote.id)
         setFolio(quote.folio)
+        setLinkedRequestId(quote.requestId ?? null)
+        setLinkedRequestFolio(quote.requestFolio ?? '')
         setClientId(quote.clientId)
         setStatus(quote.status)
         setSavedStatus(quote.status)
@@ -403,6 +453,7 @@ function QuoteFormEditor({
         saveQuote(quote)
       })
       .catch(() => {
+        if (!active) return
         if (localExisting) {
           setServerQuoteId(localExisting.id)
           setLines(localExisting.lines)
@@ -410,7 +461,8 @@ function QuoteFormEditor({
           setLoadError('No se pudo cargar la cotización.')
         }
       })
-      .finally(() => setLoadingQuote(false))
+      .finally(() => { if (active) setLoadingQuote(false) })
+    return () => { active = false }
   }, [quoteId, isNew])
 
   useEffect(() => {
@@ -757,7 +809,7 @@ function QuoteFormEditor({
     setEmailModalOpen(true)
   }
 
-  const handleSendWhatsApp = () => {
+  const handleManualWhatsApp = () => {
     if (!canWhatsApp) return
     const id = serverQuoteId ?? quoteId
     if (!id || !isPersistedQuoteId(id)) return
@@ -913,15 +965,30 @@ function QuoteFormEditor({
     return <LoadingState label="Cargando cotización…" variant="page" />
   }
 
+  const quoteDescription = fromPricing
+    ? `${client?.company ?? ''} — precios de compras precargados (editable)`
+    : client?.company
+
   return (
     <div id="quote-detail-panel" className="relative">
       {unsavedDialog}
       <PageHeader
         title={isNew ? 'Nueva cotización' : folio}
         description={
-          fromPricing
-            ? `${client?.company ?? ''} — precios de compras precargados (editable)`
-            : client?.company
+          linkedRequestId ? (
+            <>
+              {quoteDescription && <span className="block">{quoteDescription}</span>}
+              <span className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-slate-700">
+                <span>Solicitud de Cotización:</span>
+                <Link
+                  to={`/solicitudes/${linkedRequestId}`}
+                  className="rounded-sm font-mono font-semibold text-indigo-700 underline underline-offset-4 hover:text-indigo-900 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-600"
+                >
+                  {linkedRequestFolio || 'Ver solicitud vinculada'}
+                </Link>
+              </span>
+            </>
+          ) : quoteDescription
         }
         actions={
           <>
@@ -985,9 +1052,9 @@ function QuoteFormEditor({
                   ? 'Toma la cotización antes de enviarla'
                   : whatsappDigits.length < 10
                     ? 'Agrega un WhatsApp válido al cliente'
-                    : 'Abrir WhatsApp y descargar el PDF para adjuntarlo'
+                    : 'Elegir plantilla y enviar el PDF por WhatsApp Business'
               }
-              onClick={handleSendWhatsApp}
+              onClick={() => setWhatsAppModalOpen(true)}
             >
               <MessageCircle className="h-4 w-4" />
               WhatsApp
@@ -1251,9 +1318,9 @@ function QuoteFormEditor({
                         ? 'Toma la cotización antes de enviarla'
                         : whatsappDigits.length < 10
                           ? 'Agrega un WhatsApp válido al cliente'
-                          : 'Abrir WhatsApp y descargar el PDF para adjuntarlo'
+                          : 'Elegir plantilla y enviar el PDF por WhatsApp Business'
                     }
-                    onClick={handleSendWhatsApp}
+                    onClick={() => { setSendReadyModalOpen(false); setWhatsAppModalOpen(true) }}
                   >
                     <MessageCircle className="h-4 w-4" />
                     Enviar por WhatsApp
@@ -1265,7 +1332,7 @@ function QuoteFormEditor({
                     <p className="text-xs text-indigo-700">Toma la cotización antes de enviarla por cualquier canal.</p>
                   )}
                   {canWhatsApp && (
-                    <p className="text-xs text-slate-500">Se abrirá el chat y se descargará el PDF para que lo adjuntes.</p>
+                    <p className="text-xs text-slate-500">Selecciona una plantilla aprobada para enviar el PDF desde la cuenta emisora.</p>
                   )}
                   {editDirty && (
                     <Button
@@ -1294,6 +1361,22 @@ function QuoteFormEditor({
         </div>
       )}
 
+      {whatsAppModalOpen && (serverQuoteId ?? quoteId) && (
+        <WhatsAppQuoteModal
+          quoteId={(serverQuoteId ?? quoteId)!}
+          recipient={client?.whatsapp ?? ''}
+          contact={client?.contact || client?.company || 'Cliente'}
+          folio={folio}
+          modified={savedStatus === 'modificacion'}
+          onClose={() => setWhatsAppModalOpen(false)}
+          onManual={() => { setWhatsAppModalOpen(false); handleManualWhatsApp() }}
+          onSent={(message) => {
+            setWhatsAppModalOpen(false)
+            setEmailFeedback(message)
+            void refreshQuoteAfterSend(serverQuoteId ?? quoteId)
+          }}
+        />
+      )}
       {emailModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 px-4 pb-4 pt-4 sm:pt-[3vh]"
@@ -1379,11 +1462,12 @@ function QuoteFormEditor({
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(300px,0.85fr)_minmax(0,2.15fr)]">
-        <div className="order-2 min-w-0 space-y-6 xl:col-start-2 xl:row-start-1">
+      <div className={`grid gap-6 ${partidasExpanded ? 'grid-cols-1' : 'xl:grid-cols-[minmax(300px,0.85fr)_minmax(0,2.15fr)]'}`}>
+        <div ref={partidasPanelRef} className={partidasExpanded ? 'order-1 h-full min-w-0 overflow-y-auto bg-white p-4 sm:p-6' : 'order-2 min-w-0 space-y-6 xl:col-start-2 xl:row-start-1'}>
           <Card>
             <CardHeader
               title="Partidas"
+              action={<Button variant="secondary" className="min-h-11" aria-label={partidasExpanded ? 'Minimizar partidas' : 'Maximizar partidas'} aria-expanded={partidasExpanded} onClick={() => void togglePartidasSize()}>{partidasExpanded ? <Minimize2 className="h-4 w-4" aria-hidden /> : <Maximize2 className="h-4 w-4" aria-hidden />}{partidasExpanded ? 'Minimizar' : 'Maximizar'}</Button>}
               subtitle={
                 canUseComparator
                   ? 'Escribe un SKU para comparar precios automáticamente'
@@ -1401,13 +1485,25 @@ function QuoteFormEditor({
                 showComparator={canUseComparator}
                 readOnly={quoteFieldsReadOnly}
                 showProfit={canEditMarginFields}
+                totalsSection={
+                  <Card>
+                    <CardHeader title="Totales" />
+                    <CardBody>
+                      <QuoteTotalsPanel
+                        lines={lines}
+                        taxPercent={taxPercent}
+                        showProfit={canEditMarginFields}
+                      />
+                    </CardBody>
+                  </Card>
+                }
                 onChange={setLines}
               />
             </CardBody>
           </Card>
         </div>
 
-        <div className="order-1 min-w-0 space-y-6 xl:col-start-1 xl:row-start-1">
+        <div className={partidasExpanded ? 'order-2 min-w-0 space-y-6' : 'order-1 min-w-0 space-y-6 xl:col-start-1 xl:row-start-1'}>
           <Card>
             <CardHeader title="Datos generales" />
             <CardBody className="space-y-4">
@@ -1427,6 +1523,17 @@ function QuoteFormEditor({
                   </p>
                 )}
               </div>
+              {linkedRequestId && (
+                <div>
+                  <Label>Solicitud de Cotización</Label>
+                  <Link
+                    to={`/solicitudes/${linkedRequestId}`}
+                    className="mt-1 block font-mono text-sm font-semibold text-indigo-700 underline"
+                  >
+                    {linkedRequestFolio || 'Ver solicitud vinculada'}
+                  </Link>
+                </div>
+              )}
               <div>
                 <ClientSearchSelect
                   label="Cliente"
@@ -1539,11 +1646,6 @@ function QuoteFormEditor({
                       }}
                     />
                   </div>
-                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    Selección manual: después de comparar, elige la oferta en{' '}
-                    <strong className="font-medium text-slate-700">Inventario de los mayoristas</strong>.
-                    No se aplica sola la mejor opción.
-                  </p>
                 </>
               ) : null}
               <div>
@@ -1600,16 +1702,6 @@ function QuoteFormEditor({
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader title="Totales" />
-            <CardBody>
-              <QuoteTotalsPanel
-                lines={lines}
-                taxPercent={taxPercent}
-                showProfit={canEditMarginFields}
-              />
-            </CardBody>
-          </Card>
         </div>
       </div>
     </div>

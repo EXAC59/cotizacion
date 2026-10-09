@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -68,6 +69,9 @@ class AdminUserController extends Controller
         }
 
         $user->update($payload);
+        if (! $user->active || ! empty($validated['password'])) {
+            $this->revokeAccess($user);
+        }
         $this->applySignatureUpload($request, $user->fresh() ?? $user);
 
         return response()->json($this->toApiArray($user->fresh()->load('role')));
@@ -83,6 +87,7 @@ class AdminUserController extends Controller
         }
 
         $this->deleteSignatureFile($user);
+        $this->revokeAccess($user);
         $user->delete();
 
         return response()->json(['message' => 'Usuario eliminado.']);
@@ -253,6 +258,17 @@ class AdminUserController extends Controller
             if (Storage::disk($disk)->exists($relative)) {
                 Storage::disk($disk)->delete($relative);
             }
+        }
+    }
+
+    private function revokeAccess(User $user): void
+    {
+        $user->tokens()->delete();
+        if (config('session.driver') === 'database') {
+            DB::connection(config('session.connection'))
+                ->table(config('session.table', 'sessions'))
+                ->where('user_id', $user->getKey())
+                ->delete();
         }
     }
 

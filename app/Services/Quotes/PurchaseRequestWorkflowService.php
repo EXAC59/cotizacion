@@ -34,6 +34,7 @@ class PurchaseRequestWorkflowService
 
             if ($locked->purchase_assigned_to !== null) {
                 if ((int) $locked->purchase_assigned_to === (int) $actor->id) {
+                    if (config('messaging.enabled')) app(QuoteMessagingService::class)->open($locked, $actor);
                     return $locked;
                 }
 
@@ -58,6 +59,7 @@ class PurchaseRequestWorkflowService
             ]);
 
             $this->activity->recordPurchaseParticipant($locked, $actor);
+            if (config('messaging.enabled')) app(QuoteMessagingService::class)->open($locked->fresh(['purchaseAssignee']), $actor);
 
             SalesNotification::query()
                 ->where('quote_id', $locked->id)

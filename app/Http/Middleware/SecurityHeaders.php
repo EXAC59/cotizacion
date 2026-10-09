@@ -19,14 +19,17 @@ class SecurityHeaders
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
         $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin');
 
-        $isHttps = $request->secure()
-            || strtolower((string) $request->header('X-Forwarded-Proto')) === 'https';
+        $isHttps = $request->secure();
 
         if ($isHttps) {
             $response->headers->set(
                 'Strict-Transport-Security',
                 'max-age=31536000; includeSubDomains'
             );
+        }
+
+        if ($request->is('api/*', 'sanctum/*')) {
+            $response->headers->set('Cache-Control', 'private, no-store');
         }
 
         // CSP orientada a la SPA + API same-origin (fuentes Google Fonts).

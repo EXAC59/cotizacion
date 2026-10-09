@@ -205,17 +205,19 @@ class ConfiguracionController extends Controller
     public function uploadLogo(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'logo' => ['required', 'file', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
+            'logo' => ['required', 'file', 'image', 'mimes:png,jpg,jpeg,webp', 'extensions:png,jpg,jpeg,webp', 'max:2048'],
         ]);
 
         $settings = AppSetting::current();
         $file = $validated['logo'];
 
+        $extension = $file->extension();
+        if (! in_array($extension, ['png', 'jpg', 'jpeg', 'webp'], true)) {
+            abort(422, 'Formato de imagen no permitido.');
+        }
         if ($settings->logo_path) {
             Storage::disk('public')->delete($settings->logo_path);
         }
-
-        $extension = $file->getClientOriginalExtension() ?: 'png';
         $storedPath = $file->storeAs('company', 'logo.'.$extension, 'public');
 
         $settings->update([

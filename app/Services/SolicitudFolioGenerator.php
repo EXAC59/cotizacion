@@ -3,24 +3,24 @@
 namespace App\Services;
 
 use App\Models\QuoteRequest;
-use App\Models\User;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class SolicitudFolioGenerator
 {
-    public function generate(?User $user = null): string
+    public function generate(): string
     {
-        $basePrefix = $this->resolveBasePrefix();
-        $code = $this->resolveUserCode($user ?? Auth::user());
-        $pad = max(1, (int) config('solicitudes.folio_sequence_pad', 4));
-        $folioPrefix = $code !== null
-            ? "{$basePrefix}-{$code}"
-            : "{$basePrefix}-".now()->format('Y');
-        $maxSeq = $this->maxSequenceForPrefix($folioPrefix);
+        // Serializa la lectura del consecutivo hasta que la solicitud se inserta
+        // dentro de la misma transacción (PostgreSQL).
+        if (DB::transactionLevel() > 0 && DB::getDriverName() === 'pgsql') {
+            DB::select('SELECT pg_advisory_xact_lock(?)', [7319042601]);
+        }
+
+        $prefix = 'SC';
+        $pad = max(4, (int) config('solicitudes.folio_sequence_pad', 4));
+        $maxSeq = $this->maxSequenceForPrefix($prefix);
 
         for ($offset = 1; $offset <= 50; $offset++) {
-            $folio = sprintf('%s-%0'.$pad.'d', $folioPrefix, $maxSeq + $offset);
+            $folio = sprintf('%s-%0'.$pad.'d', $prefix, $maxSeq + $offset);
             if (! QuoteRequest::query()->where('folio', '=', $folio, 'and')->exists()) {
                 return $folio;
             }
@@ -46,29 +46,4 @@ class SolicitudFolioGenerator
         return $max;
     }
 
-    private function resolveBasePrefix(): string
-    {
-        $prefix = Str::upper(trim((string) config('solicitudes.folio_prefix', 'SOL')) ?: 'SOL');
-
-        return $prefix;
-    }
-
-    private function resolveUserCode(mixed $user): ?string
-    {
-        if (! $user instanceof User) {
-            return null;
-        }
-
-        $explicit = $user->resolveQuoteFolioCode();
-        if ($explicit !== null) {
-            return $explicit;
-        }
-
-        $first = trim(Str::of((string) $user->name)->squish()->explode(' ')->first() ?? '');
-        if ($first === '') {
-            return null;
-        }
-
-        return Str::upper(Str::ascii((string) preg_replace('/[^A-Z0-9]+/i', '', $first))) ?: null;
-    }
 }

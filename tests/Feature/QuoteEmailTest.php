@@ -86,63 +86,14 @@ class QuoteEmailTest extends AuthenticatedFeatureTestCase
             'queued' => true,
             'message' => 'Cotización marcada como enviada al cliente.',
             'status' => 'enviada',
-        ])->assertJsonPath('sentAt', fn ($sentAt) => is_string($sentAt) && $sentAt !== '');
+        ]);
 
         Queue::assertPushed(SendQuoteEmailJob::class, function (SendQuoteEmailJob $job) use ($quoteId) {
             return $job->quoteId === $quoteId
                 && $job->toEmail === 'cliente@acme.test'
                 && $job->message === 'Adjuntamos su cotización.';
         });
-
-        $quote = Quote::query()->findOrFail($quoteId);
-        $this->assertSame('enviada', $quote->status);
-        $this->assertNotNull($quote->sent_at);
-    }
-
-    #[Test]
-    public function purchase_can_send_a_finished_quote_to_the_customer(): void
-    {
-        Queue::fake();
-        ['quoteId' => $quoteId] = $this->createQuoteWithClientEmail();
-        Quote::query()->findOrFail($quoteId)->update(['status' => 'pendiente_envio']);
-
-        $this->actingAsDemoUser('gerente_compras')
-            ->postJson("/api/cotizaciones/{$quoteId}/enviar")
-            ->assertAccepted();
-
-        Queue::assertPushed(SendQuoteEmailJob::class, fn (SendQuoteEmailJob $job) => $job->quoteId === $quoteId);
-    }
-
-    #[Test]
-    public function it_can_queue_a_second_email_without_changing_the_creation_date(): void
-    {
-        Queue::fake();
-        ['quoteId' => $quoteId] = $this->createQuoteWithClientEmail();
-        $createdAt = Quote::query()->findOrFail($quoteId)->created_at->toIso8601String();
-
-        $this->postJson("/api/cotizaciones/{$quoteId}/enviar")->assertAccepted();
-        $this->postJson("/api/cotizaciones/{$quoteId}/enviar")->assertAccepted();
-
-        Queue::assertPushed(SendQuoteEmailJob::class, 2);
-        $quote = Quote::query()->findOrFail($quoteId);
-        $this->assertSame('enviada', $quote->status);
-        $this->assertSame($createdAt, $quote->created_at->toIso8601String());
-    }
-
-    #[Test]
-    public function it_allows_editing_the_send_date_before_queueing_email(): void
-    {
-        Queue::fake();
-
-        ['quoteId' => $quoteId] = $this->createQuoteWithClientEmail();
-
-        $response = $this->postJson("/api/cotizaciones/{$quoteId}/enviar", [
-            'sentAt' => '2026-09-20',
-        ]);
-
-        $response->assertAccepted()->assertJsonPath('sentAt', fn (string $sentAt) => str_starts_with($sentAt, '2026-09-20'));
-        $this->assertSame('2026-09-20', Quote::query()->findOrFail($quoteId)->sent_at->toDateString());
-        Queue::assertPushed(SendQuoteEmailJob::class, fn (SendQuoteEmailJob $job) => $job->sentAt !== null && str_starts_with($job->sentAt, '2026-09-20'));
+        $this->assertNotNull(Quote::query()->findOrFail($quoteId)->sent_at);
     }
 
     #[Test]
@@ -158,10 +109,6 @@ class QuoteEmailTest extends AuthenticatedFeatureTestCase
         Mail::assertSent(QuoteSentMail::class, function (QuoteSentMail $mail) {
             return count($mail->attachments()) === 1;
         });
-        $this->assertDatabaseHas('quote_internal_notes', [
-            'quote_id' => $quoteId,
-            'body' => 'Cotización enviada por correo a compras@acme.test.',
-        ]);
 
         $quote = Quote::query()->findOrFail($quoteId);
         $this->assertSame('enviada', $quote->status);

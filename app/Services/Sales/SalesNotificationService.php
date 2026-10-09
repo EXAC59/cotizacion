@@ -146,6 +146,7 @@ class SalesNotificationService
             self::REASON_SOLICITUD_COMPRAS => 'Nueva solicitud de cotización',
             self::REASON_SOLICITUD_COMPRAS_URGENTE => 'Solicitud urgente sin atender',
             self::REASON_COMENTARIO => 'Comentario de compras',
+            'mensaje_chat' => 'Mensaje de cotización',
             default => 'Aviso',
         };
     }
@@ -520,6 +521,7 @@ class SalesNotificationService
             ->where('quote_id', $quote->id)
             ->where('audience', self::AUDIENCE_VENTAS)
             ->where('recipient_id', $recipient->id)
+            ->where('reason_code', $reasonCode)
             ->whereNull('read_at')
             ->orderByDesc('created_at')
             ->first();
@@ -530,6 +532,7 @@ class SalesNotificationService
                 'recipient_id' => $recipient->id,
                 'reason_code' => $reasonCode,
                 'message' => $text,
+                'created_at' => now(),
             ]);
 
             return $existing->fresh(['quote.client', 'sender', 'recipient']);
@@ -585,17 +588,9 @@ class SalesNotificationService
         ]);
     }
 
-    /**
-     * @return array{data: list<array<string, mixed>>, unreadCount: int}
-     */
-    public function listForUser(User $user, int $limit = 40, int $page = 1): array
+    /** Shared recipient visibility; chat history also retains past ready/request notices. */
+    public function visibleForUser(User $user, bool $currentOnly = true): \Illuminate\Database\Eloquent\Builder
     {
-        // Recupera avisos que pudieron faltar por solicitudes creadas antes de
-        // habilitar las notificaciones, sin alterar los ya leídos.
-        if (in_array($user->role_slug, ['gerente_compras', 'administrador'], true)) {
-            $this->syncComprasRequestNotifications(0);
-        }
-
         $query = SalesNotification::query()
             ->with(['quote.client', 'sender', 'recipient'])
             ->orderByDesc('created_at');
@@ -604,17 +599,29 @@ class SalesNotificationService
         if ($role === 'ventas') {
             $query->where('audience', self::AUDIENCE_VENTAS)
                 ->where('recipient_id', $user->id)
-                ->where(function ($visibility) use ($user) {
-                    $visibility->where(function ($ready) {
+                ->where(function ($visibility) use ($user, $currentOnly) {
+                    $visibility->where(function ($ready) use ($currentOnly) {
                         $ready->where('reason_code', self::REASON_LISTA)
-                            ->whereHas('quote', fn ($quote) => $quote->where('status', 'pendiente_envio'));
+                            ->when($currentOnly, fn ($current) => $current->whereHas('quote', fn ($quote) => $quote->where('status', 'pendiente_envio')));
+                    })->orWhere(function ($chat) use ($user) {
+                        $chat->where('reason_code', 'mensaje_chat')
+                            ->whereHas('quote', function ($quote) use ($user) {
+                                $quote->where('follow_up_assigned_to', $user->id)->orWhere(function ($fallback) use ($user) {
+                                    $fallback->where('created_by', $user->id)->whereDoesntHave('followUpAssignee', function ($assignee) {
+                                        $assignee->where('active', true)->whereHas('role', fn ($role) => $role->where('slug', 'ventas'));
+                                    });
+                                });
+                            });
+                    })->orWhere(function ($direct) {
+                        // A direct comment belongs to its recipient, regardless of the creator's role.
+                        $direct->where('reason_code', self::REASON_COMENTARIO);
                     })->orWhere(function ($regular) use ($user) {
-                        $regular->where('reason_code', '!=', self::REASON_LISTA)
+                        $regular->whereNotIn('reason_code', [self::REASON_LISTA, 'mensaje_chat', self::REASON_COMENTARIO])
                             ->whereHas('quote', function ($quoteQuery) use ($user) {
-                                $quoteQuery->whereHas('creator.role', fn ($role) => $role->where('slug', 'ventas'))
-                                    ->where(function ($responsible) use ($user) {
-                                        $responsible->whereNull('follow_up_assigned_to')
-                                            ->orWhere('follow_up_assigned_to', $user->id);
+                                $quoteQuery->where('follow_up_assigned_to', $user->id)
+                                    ->orWhere(function ($unassigned) {
+                                        $unassigned->whereDoesntHave('followUpAssignee', fn ($assignee) => $assignee->where('active', true)
+                                            ->whereHas('role', fn ($role) => $role->where('slug', 'ventas')));
                                     });
                             });
                     });
@@ -625,7 +632,7 @@ class SalesNotificationService
                     $recipient->whereNull('recipient_id')
                         ->orWhere('recipient_id', $user->id);
                 })
-                ->where(function ($notification) {
+                ->when($currentOnly, fn ($current) => $current->where(function ($notification) {
                     $notification->whereNotIn('reason_code', [
                         self::REASON_SOLICITUD_COMPRAS,
                         self::REASON_SOLICITUD_COMPRAS_URGENTE,
@@ -633,10 +640,25 @@ class SalesNotificationService
                         $quote->where('status', 'solicitud_cotizaciones')
                             ->whereNull('purchase_assigned_to');
                     });
-                });
+                }));
         } else {
-            return ['data' => [], 'unreadCount' => 0, 'total' => 0];
+            return $query->whereRaw('1 = 0');
         }
+
+        return $query;
+    }
+
+    /** @return array{data: list<array<string, mixed>>, unreadCount: int, total: int} */
+    public function listForUser(User $user, int $limit = 40, int $page = 1): array
+    {
+        // Recupera avisos que pudieron faltar por solicitudes creadas antes de
+        // habilitar las notificaciones, sin alterar los ya leídos.
+        if (in_array($user->role_slug, ['gerente_compras', 'administrador'], true)) {
+            $this->syncComprasRequestNotifications(0);
+        }
+
+        $query = $this->visibleForUser($user);
+        $role = $user->role_slug;
 
         $total = (clone $query)->count();
         $unreadCount = (clone $query)->whereNull('read_at')->count();
@@ -802,10 +824,13 @@ class SalesNotificationService
             $samePerson = Quote::normalizeDisplayName($quote?->creator?->name)
                 === Quote::normalizeDisplayName($user->name);
             $sameCreator = (int) ($quote?->created_by ?? 0) === (int) $user->id;
+            $chatAssignee = $notification->reason_code === 'mensaje_chat' && $quote !== null
+                && (int) $this->resolveVentasRecipient($quote)?->id === (int) $user->id;
             $allowed = $role === 'administrador'
                 || ($role === 'ventas'
                     && (int) $notification->recipient_id === (int) $user->id
-                    && ($notification->reason_code === self::REASON_LISTA || $sameCreator || $samePerson));
+                    && ($notification->reason_code === self::REASON_LISTA || $sameCreator || $samePerson || $chatAssignee
+                        || $this->visibleForUser($user, false)->whereKey($notification->id)->exists()));
         }
 
         if ($notification->audience === self::AUDIENCE_COMPRAS) {
@@ -880,7 +905,11 @@ class SalesNotificationService
             return $quote->creator;
         }
 
-        return null;
+        // Legacy quotes may have been explicitly routed to Sales by a purchasing notice.
+        return $quote->salesNotifications()->where('audience', self::AUDIENCE_VENTAS)->whereNotNull('sender_id')
+            ->whereHas('recipient', fn ($recipient) => $recipient->where('active', true)
+                ->whereHas('role', fn ($role) => $role->where('slug', 'ventas')))
+            ->orderByDesc('id')->first()?->recipient;
     }
 
     private function isActiveVentas(?User $user): bool

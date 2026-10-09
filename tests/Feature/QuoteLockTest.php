@@ -47,7 +47,7 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_releases_lock_and_allows_save_only_while_held(): void
+    public function it_renews_available_lock_on_save_and_releases_it(): void
     {
         $client = Client::query()->create([
             'company' => 'Save Lock SA',
@@ -77,7 +77,7 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
             'clientId' => $client->id,
             'status' => 'pendiente_envio',
             'lines' => [$line],
-        ])->assertStatus(423);
+        ])->assertCreated();
 
         $this->postJson("/api/cotizaciones/{$quoteId}/bloqueo")->assertOk();
 
@@ -153,7 +153,7 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function it_keeps_lista_terminada_on_lock(): void
+    public function it_preserves_lista_terminada_when_taking_an_edit_lock(): void
     {
         $client = Client::query()->create([
             'company' => 'Lista Elab SA',
@@ -251,6 +251,55 @@ class QuoteLockTest extends AuthenticatedFeatureTestCase
         $this->postJson("/api/cotizaciones/{$quoteId}/bloqueo")
             ->assertOk()
             ->assertJsonPath('locked', true);
+    }
+
+    #[Test]
+    public function assigned_compras_user_can_save_after_its_edit_lock_expires(): void
+    {
+        config(['quotes.lock_ttl_seconds' => 120]);
+
+        $client = Client::query()->create([
+            'company' => 'Compras Lock Expired SA',
+            'rfc' => 'CLE020202ABC',
+        ]);
+        $sales = $this->demoUser('ventas');
+        $purchaser = $this->demoUser('gerente_compras');
+        $quote = Quote::query()->create([
+            'folio' => 'COT-COMPRAS-LOCK-EXPIRED-001',
+            'client_id' => $client->id,
+            'created_by' => $sales->id,
+            'status' => 'solicitud_cotizaciones',
+            'validity_days' => 15,
+            'global_margin_percent' => 30,
+            'tax_percent' => 16,
+            'subtotal' => 100,
+            'tax_amount' => 16,
+            'total' => 116,
+            'purchase_assigned_to' => $purchaser->id,
+            'purchase_assigned_by' => $purchaser->id,
+            'purchase_assigned_at' => now()->subDays(3),
+            'locked_by' => $purchaser->id,
+            'locked_at' => now()->subDays(3),
+        ]);
+
+        $this->actingAs($purchaser);
+        $this->postJson('/api/cotizaciones', [
+            'id' => $quote->id,
+            'folio' => $quote->folio,
+            'clientId' => $client->id,
+            'status' => 'solicitud_cotizaciones',
+            'lines' => [[
+                'quantity' => 1,
+                'product' => 'Producto para Compras',
+                'partNumber' => 'SKU-COMPRAS-1',
+                'cost' => 100,
+                'marginPercent' => 30,
+            ]],
+        ])->assertCreated();
+
+        $fresh = $quote->fresh();
+        $this->assertSame($purchaser->id, $fresh->locked_by);
+        $this->assertTrue($fresh->locked_at->greaterThan(now()->subMinute()));
     }
 
     #[Test]

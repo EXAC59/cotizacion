@@ -88,6 +88,10 @@ function UserFormEditor({ userId }: { userId: string | undefined }) {
   const existing = !isNew && userId ? users.find((u) => u.id === userId) : undefined
 
   const [name, setName] = useState(() => existing?.name ?? '')
+  const [folioCode, setFolioCode] = useState(() =>
+    existing?.folioCode ?? deriveFolioCodeFromName(existing?.name ?? ''),
+  )
+  const [folioCodeCustomized, setFolioCodeCustomized] = useState(() => Boolean(existing?.folioCode))
   const [username, setUsername] = useState(() => existing?.username ?? '')
   const [email, setEmail] = useState(() => existing?.email ?? '')
   const [password, setPassword] = useState('')
@@ -103,6 +107,8 @@ function UserFormEditor({ userId }: { userId: string | undefined }) {
   useEffect(() => {
     if (!existing || hydratedId === existing.id) return
     setName(existing.name ?? '')
+    setFolioCode(existing.folioCode ?? deriveFolioCodeFromName(existing.name ?? ''))
+    setFolioCodeCustomized(Boolean(existing.folioCode))
     setUsername(existing.username ?? '')
     setEmail(existing.email ?? '')
     setRole(existing.role ?? 'ventas')
@@ -156,8 +162,6 @@ function UserFormEditor({ userId }: { userId: string | undefined }) {
     }
   }, [existing?.signatureUrl, signatureFile, removeSignature])
 
-  // Solo primer nombre → código de folio (no editable).
-  const folioCode = deriveFolioCodeFromName(name)
   const folioPreview = folioCode ? `COT-${folioCode}-0001` : ''
 
   const handleSignatureChange = (file: File | null) => {
@@ -205,16 +209,16 @@ function UserFormEditor({ userId }: { userId: string | undefined }) {
       alert('La contraseña y su confirmación no coinciden')
       return
     }
-    const finalFolioCode = folioCode
+    const finalFolioCode = normalizeFolioCode(folioCode)
     if (finalFolioCode.length < 2) {
-      alert('El primer nombre debe tener al menos 2 letras o números para el folio.')
+      alert('El código de folio debe tener entre 2 y 12 letras o números.')
       return
     }
     const duplicateFolio = users.find(
       (u) => (u.folioCode ?? '').toUpperCase() === finalFolioCode && u.id !== existing?.id,
     )
     if (duplicateFolio) {
-      alert('Ya existe un usuario con ese código de folio (mismo primer nombre). Cambia el nombre completo.')
+      alert('Ya existe un usuario con ese código de folio. Elige otro código.')
       return
     }
     const duplicateUsername = users.find(
@@ -321,11 +325,32 @@ function UserFormEditor({ userId }: { userId: string | undefined }) {
             <Input
               id="user-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value
+                setName(value)
+                if (!folioCodeCustomized) {
+                  setFolioCode(deriveFolioCodeFromName(value))
+                }
+              }}
               placeholder="Nombre completo"
             />
-            <p className="mt-2 text-xs text-slate-500">
-              Folio que usarán sus cotizaciones (primer nombre):
+          </div>
+          <div>
+            <Label htmlFor="user-folio-code">Código único para sus folios</Label>
+            <Input
+              id="user-folio-code"
+              value={folioCode}
+              onChange={(e) => {
+                setFolioCode(normalizeFolioCode(e.target.value))
+                setFolioCodeCustomized(true)
+              }}
+              placeholder="Ej. ERICKA o MARTINEZ"
+              maxLength={12}
+              autoComplete="off"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Se propone el primer nombre, pero puedes cambiarlo por el segundo nombre u otro código
+              único. Solo letras y números, de 2 a 12 caracteres.
             </p>
             <p
               id="user-folio"

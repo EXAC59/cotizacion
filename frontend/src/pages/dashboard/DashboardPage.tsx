@@ -1,26 +1,22 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  Bell,
-  FileCheck2,
-  FileX2,
+  Plus, Bell, Clock3, ArrowRight,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
-import { LoadingState, StatGridSkeleton } from '@/components/ui/LoadingState'
-import { PageHeader } from '@/components/ui/PageHeader'
-import { QuoteSentFilterTabs, type QuoteSentFilter } from '@/components/ui/QuoteSentFilterTabs'
-import { QuoteStatusBadge } from '@/components/ui/QuoteStatusBadge'
-import { StatCard } from '@/components/ui/StatCard'
+import { TableSkeleton } from '@/components/ui/LoadingState'
+import { DashboardWorkspace } from '@/pages/dashboard/DashboardWorkspace'
+import { DashboardPendingQuotes, DashboardRecentQuotes } from '@/pages/dashboard/DashboardQuoteSections'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
 import { fetchDashboard } from '@/lib/dashboard-api'
 import { useNotificationFocus } from '@/lib/notification-focus'
-import { formatCurrency, formatDateTime } from '@/lib/format'
 import {
+  type QuoteStatus,
   type DashboardAlerts,
   type DashboardAnalytics,
-  type DashboardQuoteSummary,
 } from '@/types'
 
 const EMPTY_ALERTS: DashboardAlerts = {
@@ -41,50 +37,41 @@ type NotificationKind = 'purchase-request' | 'unanswered' | 'stuck' | 'integrati
 type NotificationRow = {
   key: string
   kind: NotificationKind
+  quoteStatus?: QuoteStatus
   typeLabel: string
+  category: 'Notificación' | 'Recordatorio'
+  actionLabel: string
   href?: string
   reference: string
   clientName: string
   createdByName?: string | null
   detail: string
   elementId?: string
+  severity: 'green' | 'yellow' | 'orange' | 'red'
 }
 
-const KIND_BADGE: Record<NotificationKind, 'brand' | 'warning' | 'danger'> = {
-  'purchase-request': 'brand',
-  unanswered: 'warning',
-  stuck: 'warning',
-  integration: 'danger',
-}
-
-function SectionTitle({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-      {children}
-    </h2>
-  )
-}
+const ALERT_COLORS = {
+  green: { row: 'bg-emerald-50/50', border: 'border-emerald-500', badge: 'bg-emerald-100 text-emerald-900', detail: 'text-emerald-800' },
+  yellow: { row: 'bg-yellow-50/60', border: 'border-yellow-400', badge: 'bg-yellow-100 text-yellow-900', detail: 'text-yellow-900' },
+  orange: { row: 'bg-orange-50/60', border: 'border-orange-500', badge: 'bg-orange-100 text-orange-900', detail: 'text-orange-800' },
+  red: { row: 'bg-red-50/70', border: 'border-red-500', badge: 'bg-red-100 text-red-900', detail: 'font-semibold text-red-700' },
+} as const
 
 export function DashboardPage() {
-  const navigate = useNavigate()
   const { user } = useAuth()
-  const { canViewDashboardExecutive, canViewWholesalerIntegrationAlerts, isAdmin } = usePermission()
-  const canViewExecutive = canViewDashboardExecutive()
+  const { canViewWholesalerIntegrationAlerts, canCreateQuotes, isAdmin } = usePermission()
   const canViewIntegrationAlerts = canViewWholesalerIntegrationAlerts()
   const canViewStuckReadings = isAdmin
-  const isVentas = user?.role === 'ventas'
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [sentFilter, setSentFilter] = useState<QuoteSentFilter>('unsent')
-  const [resumenFocus, setResumenFocus] = useState<'unsent' | 'sent' | 'notifications' | null>(null)
 
   useNotificationFocus(!loading)
 
   useEffect(() => {
     const refreshDashboard = () => {
       fetchDashboard()
-        .then(setAnalytics)
+        .then((next) => { setAnalytics(next); setError(null) })
         .catch((err) =>
           setError(
             err instanceof Error
@@ -105,62 +92,27 @@ export function DashboardPage() {
     }
   }, [])
 
-  const recentQuotes = analytics?.recentQuotes ?? []
   const alerts = analytics?.alerts ?? EMPTY_ALERTS
-
-  const quotesSent = analytics?.quotesSent ?? 0
-  const quotesUnsent = analytics?.quotesUnsent ?? 0
-  const sentQuotes = analytics?.sentQuotes ?? []
-  const unsentQuotes = analytics?.unsentQuotes ?? []
-  const filteredQuotes = sentFilter === 'sent' ? sentQuotes : unsentQuotes
-
-  const selectSentFilter = (next: QuoteSentFilter) => {
-    setSentFilter(next)
-    setResumenFocus(next)
-    window.requestAnimationFrame(() => {
-      document.getElementById('operativa')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  }
-
-  const selectNotifications = () => {
-    setResumenFocus('notifications')
-    if (isVentas) {
-      navigate('/recordatorios')
-      return
-    }
-    window.requestAnimationFrame(() => {
-      document.getElementById('alertas')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  }
 
   const notificationRows = useMemo(
     () => buildNotificationRows(alerts, canViewIntegrationAlerts, canViewStuckReadings),
     [alerts, canViewIntegrationAlerts, canViewStuckReadings],
   )
 
-  const remindersCount = isVentas
-    ? (alerts.readyForSalesQuotes?.length ?? 0) + (alerts.unansweredQuotes?.length ?? 0)
-    : (alerts.readyForSalesQuotes?.length ?? 0)
-  const thirdCardCount = isVentas ? remindersCount : notificationRows.length
-  const thirdCardLabel = isVentas ? 'Recordatorios' : 'Notificaciones y recordatorios'
-  const thirdCardHint = isVentas
-    ? remindersCount === 0
-      ? 'Sin cotizaciones pendientes de seguimiento'
-      : 'Cotizaciones propias o compartidas pendientes de seguimiento'
-    : notificationRows.length === 0
-      ? 'Sin pendientes por revisar'
-      : 'Revisa alertas y recordatorios pendientes'
+  const reminderQuoteIds = useMemo(() => new Set(alerts.unansweredQuotes.map((quote) => quote.id)), [alerts.unansweredQuotes])
 
   return (
     <div>
-      <PageHeader
-        title="Dashboard"
-        description={
-          canViewExecutive
-            ? 'Resumen ejecutivo de cotizaciones, utilidad y solicitudes'
-            : 'Resumen operativo de cotizaciones y solicitudes'
-        }
-      />
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
+            {import.meta.env.VITE_DASHBOARD_PREVIEW === 'true' && <Badge variant="brand">Pruebas</Badge>}
+          </div>
+          <p className="mt-1 text-sm text-slate-600">Cotizaciones y seguimiento · {user?.role === 'administrador' ? 'Administración' : user?.role === 'gerente_compras' ? 'Compras' : 'Ventas'}</p>
+        </div>
+        {canCreateQuotes() && <Link to="/cotizaciones/nueva" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white transition hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"><Plus className="h-4 w-4" aria-hidden />Nueva cotización</Link>}
+      </header>
 
       {error && (
         <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -168,140 +120,32 @@ export function DashboardPage() {
         </p>
       )}
 
-      {loading && (
-        <div className="mb-6 space-y-4">
-          <LoadingState label="Cargando métricas…" variant="inline" className="py-6" />
-          <StatGridSkeleton count={3} />
-        </div>
-      )}
-
-      <SectionTitle>Resumen</SectionTitle>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard
-          label="Cotizaciones no enviadas"
-          value={String(quotesUnsent)}
-          hint="Sin evidencia de envío al cliente"
-          icon={FileX2}
-          selected={resumenFocus === 'unsent'}
-          onClick={() => selectSentFilter('unsent')}
-        />
-        <StatCard
-          label="Cotizaciones enviadas"
-          value={String(quotesSent)}
-          hint="Enviadas al cliente"
-          icon={FileCheck2}
-          selected={resumenFocus === 'sent'}
-          onClick={() => selectSentFilter('sent')}
-        />
-        <StatCard
-          label={thirdCardLabel}
-          value={String(thirdCardCount)}
-          hint={thirdCardHint}
-          icon={Bell}
-          selected={resumenFocus === 'notifications'}
-          onClick={selectNotifications}
-        />
-      </div>
-
-      <div className="mt-8 space-y-6">
+      <div className="space-y-5">
+        <DashboardPendingQuotes reminderQuoteIds={reminderQuoteIds} />
           <Card id="alertas" className="relative min-w-0 scroll-mt-28">
-            <span id="cotizaciones-sin-avance" className="absolute top-0 left-0 h-px w-px overflow-hidden" />
-            {canViewStuckReadings && (
-              <span id="lecturas-atascadas" className="absolute top-0 left-0 h-px w-px overflow-hidden" />
-            )}
-            <span id="errores-integracion" className="absolute top-0 left-0 h-px w-px overflow-hidden" />
             <CardHeader
-              title="Notificaciones y recordatorios"
-              subtitle={notificationsSubtitle(
-                analytics?.unansweredQuoteDays,
-                canViewIntegrationAlerts,
-                canViewStuckReadings,
-              )}
+              title="NOTIFICACIONES Y RECORDATORIOS"
+              subtitle="Solicitudes de cotización y seguimiento."
               action={
                 notificationRows.length > 0 ? (
-                  <Badge variant={notificationRows.some((row) => row.kind === 'integration') ? 'danger' : 'warning'}>
+                  <Badge variant={notificationRows.some((row) => row.severity === 'red') ? 'danger' : 'warning'}>
                     {notificationRows.length}
                   </Badge>
                 ) : undefined
               }
             />
-            <CardBody className="p-0">
-              <DashboardNotificationsTable rows={notificationRows} />
+            <CardBody className="p-0!">
+              {loading ? <TableSkeleton rows={3} cols={6} /> : <DashboardNotificationsTable rows={notificationRows} isSales={user?.role === 'ventas'} />}
             </CardBody>
           </Card>
 
-          <Card className="min-w-0">
-            <CardHeader
-              title="Cotizaciones recientes"
-              subtitle="Últimas cotizaciones de tu alcance"
-              action={
-                <Link to="/cotizaciones" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-                  Ver todas
-                </Link>
-              }
-            />
-            <CardBody className="p-0">
-              <DashboardQuotesTable
-                quotes={recentQuotes}
-                emptyLabel="No hay cotizaciones recientes."
-              />
-            </CardBody>
-          </Card>
+          <DashboardWorkspace reminderQuoteIds={reminderQuoteIds} />
+          <DashboardRecentQuotes reminderQuoteIds={reminderQuoteIds} />
 
-        <Card id="operativa" className="scroll-mt-28">
-          <CardHeader
-            title="Operativa"
-            subtitle="Cotizaciones enviadas y no enviadas al cliente"
-            action={
-              <div className="flex flex-wrap items-center gap-3">
-                <QuoteSentFilterTabs
-                  value={sentFilter}
-                  onChange={selectSentFilter}
-                  unsentCount={quotesUnsent}
-                  sentCount={quotesSent}
-                />
-                <Link to="/cotizaciones" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-                  Ver todas
-                </Link>
-              </div>
-            }
-          />
-          <CardBody className="p-0">
-            <DashboardQuotesTable
-              quotes={filteredQuotes}
-              emptyLabel={
-                sentFilter === 'sent'
-                  ? 'No hay cotizaciones enviadas.'
-                  : 'No hay cotizaciones pendientes de envío.'
-              }
-              showSentAt={sentFilter === 'sent'}
-            />
-          </CardBody>
-        </Card>
+
       </div>
     </div>
   )
-}
-
-function notificationsSubtitle(
-  unansweredQuoteDays: number | undefined,
-  canViewIntegrationAlerts: boolean,
-  canViewStuckReadings: boolean,
-): string {
-  const topics = ['Solicitudes de cotización', 'sin avance']
-  if (canViewStuckReadings) topics.push('lecturas atascadas')
-  if (canViewIntegrationAlerts) topics.push('integración')
-
-  const joined =
-    topics.length === 1
-      ? topics[0]
-      : `${topics.slice(0, -1).join(', ')} y ${topics[topics.length - 1]}`
-
-  if (unansweredQuoteDays) {
-    return `${joined}. Cotizaciones detenidas a partir de ${unansweredQuoteDays} día${unansweredQuoteDays === 1 ? '' : 's'}.`
-  }
-
-  return joined
 }
 
 function buildNotificationRows(
@@ -311,11 +155,21 @@ function buildNotificationRows(
 ): NotificationRow[] {
   const rows: NotificationRow[] = []
 
-  for (const quote of alerts.purchaseRequestQuotes ?? []) {
+  const purchaseQuotes = [...(alerts.purchaseRequestQuotes ?? [])].sort((a, b) => {
+    const priority = (quote: typeof a) => quote.purchaseAttentionStatus === 'en_atencion' ? 2 : quote.purchaseEscalatedAt ? 0 : 1
+    return priority(a) - priority(b)
+      || (Date.parse(a.requestCreatedAt ?? '') || 0) - (Date.parse(b.requestCreatedAt ?? '') || 0)
+      || a.folio.localeCompare(b.folio)
+  })
+  for (const quote of purchaseQuotes) {
     rows.push({
       key: `purchase-request-${quote.id}`,
       kind: 'purchase-request',
-      typeLabel: quote.purchaseAttentionStatus === 'en_atencion' ? 'En atención' : 'Solicitud de cotización',
+      quoteStatus: quote.status,
+      category: 'Notificación',
+      actionLabel: 'Abrir cotización',
+      severity: quote.purchaseAttentionStatus === 'en_atencion' ? 'green' : quote.purchaseEscalatedAt ? 'red' : 'yellow',
+      typeLabel: quote.purchaseAttentionStatus === 'en_atencion' ? 'En atención' : quote.purchaseEscalatedAt ? 'Urgente · sin responsable' : 'Pendiente de Compras',
       href: `/cotizaciones/${quote.id}`,
       reference: quote.folio,
       clientName: quote.clientName || '—',
@@ -329,12 +183,21 @@ function buildNotificationRows(
     })
   }
 
-  for (const quote of alerts.unansweredQuotes) {
+  const idleQuotes = [...alerts.unansweredQuotes].sort((a, b) =>
+    (b.daysWaiting ?? 0) - (a.daysWaiting ?? 0)
+      || (Date.parse(a.lastActivityAt ?? '') || 0) - (Date.parse(b.lastActivityAt ?? '') || 0)
+      || a.folio.localeCompare(b.folio),
+  )
+  for (const quote of idleQuotes) {
     rows.push({
       key: `unanswered-${quote.id}`,
       kind: 'unanswered',
-      typeLabel: 'Sin avance',
-      href: `/cotizaciones/${quote.id}`,
+      quoteStatus: quote.status,
+      category: 'Recordatorio',
+      actionLabel: 'Abrir recordatorio',
+      severity: (quote.daysWaiting ?? 0) >= 7 ? 'red' : 'orange',
+      typeLabel: (quote.daysWaiting ?? 0) >= 7 ? 'Urgente · sin avance' : 'Sin avance',
+      href: `/recordatorios?quote=${encodeURIComponent(quote.id)}`,
       reference: quote.folio,
       clientName: quote.clientName || '—',
       createdByName: quote.createdByName,
@@ -348,6 +211,9 @@ function buildNotificationRows(
       rows.push({
         key: `stuck-${req.id}`,
         kind: 'stuck',
+        category: 'Notificación',
+        actionLabel: 'Abrir solicitud',
+        severity: 'orange',
         typeLabel: 'Lectura atascada',
         href: `/solicitudes/${req.id}`,
         reference: req.fileName || 'Solicitud',
@@ -363,6 +229,9 @@ function buildNotificationRows(
       rows.push({
         key: `integration-${issue.type}-${issue.label}-${index}`,
         kind: 'integration',
+        category: 'Notificación',
+        actionLabel: 'Ver mayoristas',
+        severity: 'red',
         typeLabel: 'Integración',
         href: '/mayoristas',
         reference: issue.label,
@@ -375,166 +244,61 @@ function buildNotificationRows(
   return rows
 }
 
-function DashboardQuotesTable({
-  quotes,
-  emptyLabel,
-  showSentAt = false,
-}: {
-  quotes: DashboardQuoteSummary[]
-  emptyLabel: string
-  showSentAt?: boolean
-}) {
-  if (quotes.length === 0) {
-    return <p className="px-5 py-8 text-center text-sm text-slate-500">{emptyLabel}</p>
+function DashboardNotificationsTable({ rows, isSales }: { rows: NotificationRow[]; isSales: boolean }) {
+  const [filter, setFilter] = useState<'all' | NotificationRow['severity']>('all')
+  const matchesFilter = (row: NotificationRow, value: typeof filter): boolean => {
+    if (value === 'all') return true
+    if (value === 'orange') return row.kind === 'unanswered' && row.severity === 'orange'
+    if (value === 'red') return (row.kind === 'purchase-request' || row.kind === 'unanswered') && row.severity === 'red'
+    return row.kind === 'purchase-request' && row.severity === value
   }
-
-  const cell = 'px-4 py-2.5 align-middle'
-
-  return (
+  const visibleRows = rows.filter((row) => matchesFilter(row, filter))
+  const groups: { kind: NotificationKind; label: string; id?: string }[] = [
+    { kind: 'purchase-request', label: 'Notificaciones · solicitudes de Compras' },
+    { kind: 'unanswered', label: 'Recordatorios · cotizaciones sin avance, de más antiguas a más recientes', id: 'cotizaciones-sin-avance' },
+    { kind: 'stuck', label: 'Notificaciones · lecturas de archivos atascadas', id: 'lecturas-atascadas' },
+    { kind: 'integration', label: 'Notificaciones · problemas de integración', id: 'errores-integracion' },
+  ]
+  const filters = isSales
+    ? ([['all', 'Todos'], ['orange', '3–6 días'], ['red', 'Urgente / 7+ días']] as const)
+    : ([
+        ['all', 'Todos'], ['green', 'En atención'], ['yellow', 'Pendiente de Compras'],
+        ['orange', '3–6 días'], ['red', 'Urgente / 7+ días'],
+      ] as const)
+  return <>
+    <div role="group" aria-label="Filtrar notificaciones y recordatorios" className="flex flex-wrap gap-2 border-b border-slate-200 px-5 py-3">
+      {filters.map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)} className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${value === 'all' ? 'bg-slate-100 text-slate-800' : ALERT_COLORS[value].badge} ${filter === value ? 'border-slate-700 ring-2 ring-slate-500/25' : 'border-transparent hover:border-slate-400'}`}>
+        <span>{label}</span><span className="rounded bg-white/70 px-1.5 py-0.5 text-xs tabular-nums">{rows.filter((row) => matchesFilter(row, value)).length}</span>
+      </button>)}
+    </div>
+    <p role="status" className="border-b border-slate-100 px-5 py-2 text-xs text-slate-600">Mostrando {visibleRows.length} de {rows.length} avisos</p>
+    {visibleRows.length === 0 ? <p className="px-5 py-8 text-center text-sm text-slate-600">{rows.length === 0 ? 'No hay notificaciones ni recordatorios.' : 'No hay avisos para este filtro.'}</p> :
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead className="border-b border-slate-100 bg-slate-50 text-slate-500">
-          <tr>
-            <th className={`${cell} font-medium`}>Folio</th>
-            <th className={`${cell} font-medium`}>Cliente</th>
-            <th className={`${cell} font-medium`}>Hecha por</th>
-            <th className={`${cell} font-medium`}>Estado</th>
-            <th className={`${cell} font-medium`}>Envío</th>
-            {showSentAt && <th className={`${cell} font-medium`}>Enviada</th>}
-            <th className={`${cell} text-right font-medium`}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {quotes.map((q) => {
-            const sent = Boolean(q.sentAt)
-            return (
-              <tr
-                key={q.id}
-                className={`border-b border-slate-50 last:border-0 hover:bg-slate-50/80 ${
-                  sent ? '' : 'bg-slate-50/60'
-                }`}
-              >
-                <td className={`${cell} whitespace-nowrap font-medium`}>
-                  <Link
-                    to={`/cotizaciones/${q.id}`}
-                    className="text-indigo-600 hover:underline"
-                    title={q.folio}
-                  >
-                    {q.folio}
-                  </Link>
-                </td>
-                <td className={`${cell} text-slate-600`} title={q.clientName || undefined}>
-                  {q.clientName || '—'}
-                </td>
-                <td
-                  className={`${cell} font-medium text-slate-800`}
-                  title={q.createdByName?.trim() || undefined}
-                >
-                  {q.createdByName?.trim() || 'Sin asignar'}
-                </td>
-                <td className={`${cell} whitespace-nowrap`}>
-                  <QuoteStatusBadge status={q.status} />
-                </td>
-                <td className={`${cell} whitespace-nowrap`}>
-                  <Badge variant={sent ? 'success' : 'muted'}>
-                    {sent ? 'Enviada al cliente' : 'No enviada'}
-                  </Badge>
-                </td>
-                {showSentAt && (
-                  <td className={`${cell} whitespace-nowrap text-slate-600`}>
-                    {q.sentAt ? formatDateTime(q.sentAt) : '—'}
-                  </td>
-                )}
-                <td className={`${cell} whitespace-nowrap text-right font-medium`}>
-                  {formatCurrency(q.total)}
-                </td>
+      <table className="w-full min-w-[800px] text-left text-sm" aria-label="Notificaciones y recordatorios">
+        <thead className="border-b border-slate-200 bg-slate-50 text-slate-600"><tr>
+          {['Tipo de aviso / Prioridad', 'Folio', 'Estatus de cotización', 'Cliente', 'Hecha por', 'Detalle'].map((label) => <th key={label} className="px-4 py-3 font-medium">{label}</th>)}
+        </tr></thead>
+        {groups.map((group) => {
+          const groupRows = visibleRows.filter((row) => row.kind === group.kind)
+          if (groupRows.length === 0) return null
+          return <tbody key={group.kind}>
+            <tr id={group.id} className="scroll-mt-28 border-y border-slate-200 bg-slate-100"><th colSpan={6} scope="colgroup" className="px-4 py-3 text-sm font-semibold text-slate-800">{group.label}<span className="ml-2 font-normal text-slate-600">({groupRows.length})</span></th></tr>
+            {groupRows.map((row) => {
+              const colors = ALERT_COLORS[row.severity]
+              const CategoryIcon = row.category === 'Recordatorio' ? Clock3 : Bell
+              return <tr id={row.elementId} key={row.key} className={`relative border-b border-slate-100 ${colors.row}`}>
+                <td className={`border-l-4 px-4 py-3 ${colors.border}`}><span className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-900"><CategoryIcon className="h-4 w-4 shrink-0" aria-hidden="true" />{row.category}</span><span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-semibold ${colors.badge}`}>{row.typeLabel}</span></td>
+                <td className="whitespace-nowrap px-4 py-3">{row.href ? <Link to={row.href} className="font-medium text-indigo-700 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-600" title={row.reference}>{row.reference}</Link> : <span className="font-medium text-slate-800">{row.reference}</span>}                <div className="mt-2">{row.href && <Link to={row.href} aria-label={`${row.actionLabel}: ${row.reference}`} className="inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:border-indigo-400 hover:text-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">{row.actionLabel}<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link>}</div></td>
+                <td className="px-4 py-3">{row.quoteStatus ? <QuoteStatusBadge status={row.quoteStatus} /> : <span className="text-slate-500">No aplica</span>}</td>
+                <td className="px-4 py-3 text-slate-700" title={row.clientName}>{row.clientName}</td>
+                <td className="px-4 py-3 text-slate-700" title={row.createdByName?.trim() || undefined}>{row.createdByName?.trim() || (row.kind === 'integration' ? '—' : 'Sin asignar')}</td>
+                <td className={`min-w-52 px-4 py-3 ${colors.detail}`} title={row.detail}>{row.detail}</td>
+
               </tr>
-            )
-          })}
-        </tbody>
+            })}
+          </tbody>
+        })}
       </table>
-    </div>
-  )
-}
-
-function DashboardNotificationsTable({ rows }: { rows: NotificationRow[] }) {
-  if (rows.length === 0) {
-    return (
-      <p className="px-5 py-8 text-center text-sm text-slate-500">
-        No hay notificaciones ni recordatorios.
-      </p>
-    )
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full table-fixed text-left text-sm">
-        <colgroup>
-          <col className="w-[22%]" />
-          <col className="w-[18%]" />
-          <col className="w-[20%]" />
-          <col className="w-[18%]" />
-          <col className="w-[22%]" />
-        </colgroup>
-        <thead className="border-b border-slate-100 bg-slate-50 text-slate-500">
-          <tr>
-            <th className="px-3 py-2.5 font-medium">Tipo</th>
-            <th className="px-3 py-2.5 font-medium">Referencia</th>
-            <th className="px-3 py-2.5 font-medium">Cliente</th>
-            <th className="px-3 py-2.5 font-medium">Hecha por</th>
-            <th className="px-3 py-2.5 font-medium">Detalle</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              id={row.elementId}
-              key={row.key}
-              className={`relative border-b border-slate-50 last:border-0 hover:bg-slate-50/80 ${
-                row.kind === 'integration'
-                  ? 'bg-red-50/30'
-                  : row.kind === 'purchase-request'
-                    ? 'bg-indigo-50/20'
-                    : 'bg-amber-50/20'
-              }`}
-            >
-              <td className="px-3 py-2.5">
-                <Badge variant={KIND_BADGE[row.kind]}>{row.typeLabel}</Badge>
-              </td>
-              <td className="px-3 py-2.5">
-                {row.href ? (
-                  <Link to={row.href} className="font-medium text-indigo-600 hover:underline" title={row.reference}>
-                    {row.reference}
-                  </Link>
-                ) : (
-                  <span className="font-medium text-slate-800">{row.reference}</span>
-                )}
-              </td>
-              <td className="px-3 py-2.5 text-slate-600 break-words" title={row.clientName}>
-                {row.clientName}
-              </td>
-              <td
-                className="px-3 py-2.5 font-medium text-slate-800 break-words"
-                title={row.createdByName?.trim() || undefined}
-              >
-                {row.createdByName?.trim() || (row.kind === 'integration' ? '—' : 'Sin asignar')}
-              </td>
-              <td
-                className={`px-3 py-2.5 break-words ${
-                  row.kind === 'integration'
-                    ? 'text-red-700'
-                    : row.kind === 'purchase-request'
-                      ? 'text-indigo-700'
-                      : 'text-amber-800'
-                }`}
-                title={row.detail}
-              >
-                {row.detail}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
+    </div>}
+  </>
 }

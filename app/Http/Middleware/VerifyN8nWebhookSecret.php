@@ -12,8 +12,8 @@ class VerifyN8nWebhookSecret
     {
         $secret = config('n8n.webhook_secret');
 
-        if (! $secret) {
-            return $next($request);
+        if (! is_string($secret) || trim($secret) === '') {
+            return response()->json(['message' => 'Webhook no disponible.'], 503);
         }
 
         $provided = $request->header('X-N8N-Webhook-Secret')

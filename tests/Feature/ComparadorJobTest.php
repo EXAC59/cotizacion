@@ -14,6 +14,8 @@ class ComparadorJobTest extends AuthenticatedFeatureTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config(['n8n.webhook_secret' => 'test-webhook-secret']);
+        $this->withHeader('X-N8N-Webhook-Secret', 'test-webhook-secret');
         app(WholesalerCatalogSync::class)->sync();
         Wholesaler::query()->update(['active' => true]);
     }

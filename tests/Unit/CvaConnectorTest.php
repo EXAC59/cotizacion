@@ -12,9 +12,12 @@ use Tests\TestCase;
 
 class CvaConnectorTest extends TestCase
 {
+    use \Tests\Concerns\RestoresWholesalerEnvironment;
+
     protected function setUp(): void
     {
         parent::setUp();
+        $this->saveWholesalerEnvironment();
         Cache::flush();
     }
 
@@ -175,7 +178,7 @@ class CvaConnectorTest extends TestCase
         putenv('WHOLESALER_CVA_USER=admin37274');
         putenv('WHOLESALER_CVA_PASSWORD=secret');
 
-        $catalog = $this->createMock(CvaCatalogIndex::class);
+        $catalog = $this->createStub(CvaCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn([]);
         $offer = (new CvaConnector($catalog))->lookup($wholesaler, 'CZ103AL')[0];
 
@@ -238,7 +241,7 @@ class CvaConnectorTest extends TestCase
         putenv('WHOLESALER_CVA_USER=admin37274');
         putenv('WHOLESALER_CVA_PASSWORD=secret');
 
-        $catalog = $this->createMock(CvaCatalogIndex::class);
+        $catalog = $this->createStub(CvaCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn([]);
 
         $offer = (new CvaConnector($catalog))->lookup($wholesaler, 'sku-abc')[0];
@@ -287,7 +290,7 @@ class CvaConnectorTest extends TestCase
         putenv('WHOLESALER_CVA_USER=admin37274');
         putenv('WHOLESALER_CVA_PASSWORD=secret');
 
-        $catalog = $this->createMock(CvaCatalogIndex::class);
+        $catalog = $this->createStub(CvaCatalogIndex::class);
         $catalog->method('candidateClaves')->willReturn([]);
 
         $offer = (new CvaConnector($catalog))->lookup($wholesaler, 'SKU-ABC')[0];

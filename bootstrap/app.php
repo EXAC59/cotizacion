@@ -16,17 +16,18 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->trustProxies(at: '*', headers: Request::HEADER_X_FORWARDED_FOR
-            | Request::HEADER_X_FORWARDED_HOST
-            | Request::HEADER_X_FORWARDED_PORT
-            | Request::HEADER_X_FORWARDED_PROTO);
+        $middleware->replace(
+            \Illuminate\Http\Middleware\TrustProxies::class,
+            \App\Http\Middleware\TrustInternalProxies::class,
+        );
 
         $middleware->statefulApi();
 
         $middleware->validateCsrfTokens(except: [
-            'api/login',
             'api/n8n/*',
-            'api/whatsapp/*',
+            'api/whatsapp/webhook',
+            'api/solicitudes/interpretar',
+            'api/marcas/resolver',
         ]);
 
         $middleware->replaceInGroup(

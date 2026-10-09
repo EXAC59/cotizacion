@@ -13,31 +13,46 @@ class CsvWholesalerConnectorTest extends TestCase
     {
         Cache::flush();
 
-        $example = storage_path('app/wholesalers/exel.example.csv');
-        $this->assertFileExists($example);
+        $example = tempnam(sys_get_temp_dir(), 'cotizacion-csv-');
+        file_put_contents($example, "sku,cost,stock,warehouse\nDEMO-SKU-001,1250.50,12,CDMX\n");
+        $key = 'TEST_CSV_FIXTURE_CSV_PATH';
+        $oldEnv = $_ENV[$key] ?? null;
+        $oldServer = $_SERVER[$key] ?? null;
+        $oldProcess = getenv($key);
+        putenv($key.'='.$example);
+        $_ENV[$key] = $_SERVER[$key] = $example;
 
-        config()->set('app.env', 'testing');
-        putenv('WHOLESALER_EXEL_CSV_PATH=wholesalers/exel.example.csv');
-        $_ENV['WHOLESALER_EXEL_CSV_PATH'] = 'wholesalers/exel.example.csv';
-        $_SERVER['WHOLESALER_EXEL_CSV_PATH'] = 'wholesalers/exel.example.csv';
+        try {
+            $wholesaler = new Wholesaler;
+            $wholesaler->forceFill([
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'code' => 'EXEL',
+                'name' => 'Exel del Norte',
+                'integration' => 'csv',
+                'active' => true,
+                'config_json' => ['env_prefix' => 'TEST_CSV_FIXTURE'],
+            ]);
+            $wholesaler->syncOriginal();
 
-        $wholesaler = new Wholesaler;
-        $wholesaler->forceFill([
-            'id' => (string) \Illuminate\Support\Str::uuid(),
-            'code' => 'EXEL',
-            'name' => 'Exel del Norte',
-            'integration' => 'csv',
-            'active' => true,
-            'config_json' => ['env_prefix' => 'WHOLESALER_EXEL'],
-        ]);
-        $wholesaler->syncOriginal();
+            $connector = new CsvWholesalerConnector;
+            $offers = $connector->lookup($wholesaler, 'DEMO-SKU-001');
 
-        $connector = new CsvWholesalerConnector;
-        $offers = $connector->lookup($wholesaler, 'DEMO-SKU-001');
-
-        $this->assertCount(1, $offers);
-        $this->assertNull($offers[0]->error);
-        $this->assertSame(1250.5, $offers[0]->cost);
-        $this->assertSame(12, $offers[0]->stock);
+            $this->assertCount(1, $offers);
+            $this->assertNull($offers[0]->error);
+            $this->assertSame(1250.5, $offers[0]->cost);
+            $this->assertSame(12, $offers[0]->stock);
+            $this->assertSame('CDMX', $offers[0]->warehouse);
+        } finally {
+            putenv($oldProcess === false ? $key : $key.'='.$oldProcess);
+            unset($_ENV[$key], $_SERVER[$key]);
+            if ($oldEnv !== null) {
+                $_ENV[$key] = $oldEnv;
+            }
+            if ($oldServer !== null) {
+                $_SERVER[$key] = $oldServer;
+            }
+            unlink($example);
+            Cache::flush();
+        }
     }
 }

@@ -5,9 +5,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
+import { MESSAGING_UNREAD_CHANGED } from '@/hooks/useMessagingUnreadCount'
 import {
   listNotifications,
   markNotificationRead,
+  type NotificationOperationalAlert,
 } from '@/lib/notifications-api'
 import { goToDashboardAlerts } from '@/lib/dashboard-alerts-nav'
 import {
@@ -18,9 +20,8 @@ import {
   recordatorioQuoteFocus,
   requestDetailFocus,
 } from '@/lib/notification-focus'
-import { fetchDashboard } from '@/lib/dashboard-api'
 import { formatDateTime } from '@/lib/format'
-import type { DashboardAlertQuote, SalesNotificationItem } from '@/types'
+import type { SalesNotificationItem } from '@/types'
 
 export const OPEN_NOTIFICATIONS_EVENT = 'cotizacion:open-notifications'
 export const NOTIFICATIONS_BELL_ID = 'app-notifications-bell'
@@ -29,39 +30,11 @@ function canUseInbox(role: string | undefined): boolean {
   return role === 'ventas' || role === 'gerente_compras' || role === 'administrador'
 }
 
-type OperationalAlert = {
-  id: string
-  quoteId: string
-  folio: string
-  label: string
-  detail: string
-  createdAt?: string | null
-}
+type OperationalAlert = NotificationOperationalAlert
 
-function mapOperationalAlerts(unanswered: DashboardAlertQuote[]): OperationalAlert[] {
-  return unanswered.map((quote) => ({
-    id: `unanswered-${quote.id}`,
-    quoteId: quote.id,
-    folio: quote.folio,
-    label: 'Sin avance',
-    detail: `${quote.clientName || 'Sin cliente'} · ${quote.daysWaiting ?? 0} días sin actividad`,
-  }))
-}
-
-function mapPurchaseRequestAlerts(quotes: DashboardAlertQuote[]): OperationalAlert[] {
-  return quotes.filter((quote) => quote.purchaseAttentionStatus !== 'en_atencion').map((quote) => ({
-    id: `purchase-request-${quote.id}`,
-    quoteId: quote.id,
-    folio: quote.folio,
-    label: 'Solicitud de cotización',
-    createdAt: quote.requestCreatedAt,
-    detail: quote.purchaseAttentionStatus === 'en_atencion'
-      ? `En atención por ${quote.purchaseAssigneeName ?? 'Compras'}`
-      : 'Pendiente de revisión por Compras',
-  }))
-}
-
-export function NotificationsBell() {
+export function NotificationsBell({ sharedPendingCount, onPendingCountChange }: {
+  sharedPendingCount?: number; onPendingCountChange?: (count: number) => void
+}) {
   const { user } = useAuth()
   const { can } = usePermission()
   const navigate = useNavigate()
@@ -71,77 +44,55 @@ export function NotificationsBell() {
   const [operational, setOperational] = useState<OperationalAlert[]>([])
   const [purchaseRequests, setPurchaseRequests] = useState<OperationalAlert[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
-  const [notificationTotal, setNotificationTotal] = useState(0)
-  const [notificationPage, setNotificationPage] = useState(1)
+  const [serverBadgeCount, setBadgeCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [bannerPulse, setBannerPulse] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const refreshRequestRef = useRef({ id: 0 })
   const [panelStyle, setPanelStyle] = useState<{ top: number; left: number; width: number } | null>(
     null,
   )
 
   const enabled = Boolean(user && can('cotizaciones', 'view') && canUseInbox(user.role))
   const canViewDashboard = can('dashboard', 'view')
-  const showOperational = canViewDashboard && user?.role !== 'ventas'
 
   const refresh = useCallback(async () => {
-    if (!enabled) return
+    if (!enabled || !user?.id || document.hidden) return
+    const requests = refreshRequestRef.current
+    const requestId = ++requests.id
     setLoading(true)
     try {
-      const tasks: [
-        Promise<{ data: SalesNotificationItem[]; unreadCount: number; total: number }>,
-        Promise<{ operational: OperationalAlert[]; purchaseRequests: OperationalAlert[] }>,
-      ] = [
-        listNotifications(),
-        showOperational
-          ? fetchDashboard()
-              .then((data) => ({
-                operational: mapOperationalAlerts(data.alerts.unansweredQuotes),
-                purchaseRequests: mapPurchaseRequestAlerts(data.alerts.purchaseRequestQuotes ?? []),
-              }))
-              .catch(() => ({ operational: [], purchaseRequests: [] }))
-          : Promise.resolve({ operational: [], purchaseRequests: [] }),
-      ]
-      const [inbox, dashboardAlerts] = await Promise.all(tasks)
+      const inbox = await listNotifications()
+      if (requestId !== requests.id) return
       setItems(inbox.data)
       setUnreadCount(inbox.unreadCount)
-      setNotificationTotal(inbox.total)
-      setNotificationPage(1)
-      setOperational(dashboardAlerts.operational)
-      setPurchaseRequests(dashboardAlerts.purchaseRequests)
+      setBadgeCount(inbox.pendingCount)
+      onPendingCountChange?.(inbox.pendingCount)
+      setOperational(inbox.operational)
+      setPurchaseRequests(inbox.purchaseRequests)
     } catch {
       // Silencioso: la campana no debe romper el layout
     } finally {
-      setLoading(false)
+      if (requestId === requests.id) setLoading(false)
     }
-  }, [enabled, showOperational])
-
-  const loadMore = async () => {
-    if (loading) return
-    setLoading(true)
-    try {
-      const nextPage = notificationPage + 1
-      const next = await listNotifications(nextPage)
-      setItems((previous) => [...previous, ...next.data])
-      setNotificationPage(nextPage)
-      setNotificationTotal(next.total)
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [enabled, user?.id, onPendingCountChange])
 
   useEffect(() => {
     void refresh()
     if (!enabled) return
+    const requests = refreshRequestRef.current
     const timer = window.setInterval(() => void refresh(), 15_000)
-    const onFocus = () => void refresh()
-    window.addEventListener('focus', onFocus)
-    window.addEventListener('cotizacion:data-changed', onFocus)
+    const onMessagesRead = () => void refresh()
+    window.addEventListener(MESSAGING_UNREAD_CHANGED, onMessagesRead)
+    window.addEventListener('focus', onMessagesRead)
+    document.addEventListener('visibilitychange', onMessagesRead)
     return () => {
+      ++requests.id
       window.clearInterval(timer)
-      window.removeEventListener('focus', onFocus)
-      window.removeEventListener('cotizacion:data-changed', onFocus)
+      window.removeEventListener(MESSAGING_UNREAD_CHANGED, onMessagesRead)
+      window.removeEventListener('focus', onMessagesRead)
+      document.removeEventListener('visibilitychange', onMessagesRead)
     }
   }, [enabled, refresh])
 
@@ -206,6 +157,10 @@ export function NotificationsBell() {
 
   const openOperationalAlert = (alert: OperationalAlert) => {
     setOpen(false)
+    if (import.meta.env.VITE_MENSAJERIA_LIVE === 'true') {
+      navigate({ pathname: '/mensajeria', search: `?quote=${encodeURIComponent(alert.quoteId)}` })
+      return
+    }
     navigateWithNotificationFocus(
       navigate,
       location,
@@ -222,6 +177,7 @@ export function NotificationsBell() {
           prev.map((n) => (n.id === item.id ? { ...n, read: true, readAt: new Date().toISOString() } : n)),
         )
         setUnreadCount((c) => Math.max(0, c - 1))
+        void refresh()
       } catch {
         // Continuar al detalle aunque falle marcar leída
       }
@@ -238,17 +194,12 @@ export function NotificationsBell() {
       return
     }
 
-    if (item.quoteId && item.kind === 'pipeline') {
-      navigateWithNotificationFocus(
-        navigate,
-        location,
-        { pathname: `/cotizaciones/${item.quoteId}` },
-        quoteDetailFocus(item.folio ?? 'Cotización', item.reasonLabel),
-      )
+    if (item.quoteId && import.meta.env.VITE_MENSAJERIA_LIVE === 'true') {
+      navigate({ pathname: '/mensajeria', search: `?quote=${encodeURIComponent(item.quoteId)}` })
       return
     }
 
-    if (item.quoteId && ['solicitud_recibida', 'solicitud_compras_urgente'].includes(item.reasonCode)) {
+    if (item.quoteId && item.kind === 'pipeline') {
       navigateWithNotificationFocus(
         navigate,
         location,
@@ -268,7 +219,7 @@ export function NotificationsBell() {
       return
     }
 
-    navigate('/recordatorios')
+    navigate(import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? '/mensajeria?filter=reminders' : '/recordatorios')
   }
 
   const pipelineQuoteItems = items.filter((item) => item.kind === 'pipeline')
@@ -276,10 +227,9 @@ export function NotificationsBell() {
   const inboxItems = items.filter(
     (item) => item.kind !== 'pipeline' && item.kind !== 'pipeline_request',
   )
-  const inboxQuoteIds = new Set(inboxItems.map((item) => item.quoteId).filter(Boolean))
-  const purchaseRequestFallback = purchaseRequests.filter((alert) => !inboxQuoteIds.has(alert.quoteId))
+  const purchaseRequestFallback = purchaseRequests
   const pipelineTotal = pipelineQuoteItems.length + pipelineRequestItems.length
-  const badgeCount = unreadCount + purchaseRequestFallback.length + operational.length
+  const badgeCount = sharedPendingCount ?? serverBadgeCount
 
   const panel =
     open && panelStyle && typeof document !== 'undefined'
@@ -297,10 +247,37 @@ export function NotificationsBell() {
                   ? 'Actualizando…'
                   : user?.role === 'ventas'
                     ? `${pipelineTotal} pendientes · ${inboxItems.filter((i) => !i.read).length} avisos`
-                    : `${unreadCount} en bandeja · ${purchaseRequestFallback.length} solicitudes · ${operational.length} operativas`}
+                    : `${unreadCount} avisos sin leer · ${purchaseRequestFallback.length} solicitudes nuevas · ${operational.length} pendientes por atender`}
               </p>
             </div>
             <ul className="max-h-80 overflow-y-auto">
+              {inboxItems.length > 0 && (
+                <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Avisos de cotizaciones
+                </li>
+              )}
+              {inboxItems.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={`w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 ${
+                      item.read ? 'opacity-70' : 'bg-indigo-50/40'
+                    }`}
+                    onClick={() => void openQuote(item)}
+                  >
+                    <span className="block font-medium text-slate-900">
+                      {item.folio ?? 'Cotización'} · {item.reasonLabel}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">
+                      {item.message}
+                    </span>
+                    <span className="mt-1 block text-[11px] text-slate-400">
+                      {item.createdAt ? formatDateTime(item.createdAt) : ''}
+                      {item.senderName ? ` · ${item.senderName}` : ''}
+                    </span>
+                  </button>
+                </li>
+              ))}
               {purchaseRequestFallback.length > 0 && (
                 <>
                   <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
@@ -317,11 +294,6 @@ export function NotificationsBell() {
                           {alert.folio} · {alert.label}
                         </span>
                         <span className="mt-0.5 block text-xs text-slate-600">{alert.detail}</span>
-                        {alert.createdAt && (
-                          <span className="mt-1 block text-[11px] text-slate-400">
-                            Recibida: {formatDateTime(alert.createdAt)}
-                          </span>
-                        )}
                       </button>
                     </li>
                   ))}
@@ -373,44 +345,10 @@ export function NotificationsBell() {
                   ))}
                 </>
               )}
-              {inboxItems.length > 0 && (
-                <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                  Bandeja
-                </li>
-              )}
-              {inboxItems.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    className={`w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 ${
-                      item.read ? 'opacity-70' : 'bg-indigo-50/40'
-                    }`}
-                    onClick={() => void openQuote(item)}
-                  >
-                    <span className="block font-medium text-slate-900">
-                      {item.folio ?? 'Cotización'} · {item.reasonLabel}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">
-                      {item.message}
-                    </span>
-                    <span className="mt-1 block text-[11px] text-slate-400">
-                      {item.createdAt ? formatDateTime(item.createdAt) : ''}
-                      {item.senderName ? ` · ${item.senderName}` : ''}
-                    </span>
-                  </button>
-                </li>
-              ))}
-              {notificationTotal > items.length && (
-                <li className="px-3 py-2 text-center">
-                  <Button type="button" variant="secondary" size="sm" disabled={loading} onClick={() => void loadMore()}>
-                    {loading ? 'Cargando…' : 'Cargar más notificaciones'}
-                  </Button>
-                </li>
-              )}
               {operational.length > 0 && (
                 <>
                   <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    Operativas
+                    Pendientes por atender
                   </li>
                   {operational.map((alert) => (
                     <li key={alert.id}>
@@ -433,11 +371,11 @@ export function NotificationsBell() {
                   Sin notificaciones ni recordatorios.
                   {user?.role === 'ventas' ? (
                     <Link
-                      to="/recordatorios"
+                      to={import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? '/mensajeria?filter=reminders' : '/recordatorios'}
                       className="mt-2 block font-medium text-indigo-600 hover:text-indigo-700"
                       onClick={() => setOpen(false)}
                     >
-                      Ir a Recordatorios
+                      {import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? 'Ir a Mensajería' : 'Ir a Recordatorios'}
                     </Link>
                   ) : canViewDashboard ? (
                     <button
@@ -475,12 +413,14 @@ export function NotificationsBell() {
           if (!open) void refresh()
         }}
       >
-        <Bell className="h-7 w-7" strokeWidth={2.35} aria-hidden="true" />
-        {badgeCount > 0 && (
-          <span className="absolute right-0 top-0 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-white">
-            {badgeCount}
-          </span>
-        )}
+        <span className="relative inline-flex h-8 w-8 items-center justify-center">
+          <Bell className="h-7 w-7" strokeWidth={2.35} aria-hidden="true" />
+          {badgeCount > 0 && (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold leading-none whitespace-nowrap text-white shadow-sm ring-2 ring-white">
+              {badgeCount.toLocaleString('es-MX')}
+            </span>
+          )}
+        </span>
       </Button>
       {panel}
     </div>

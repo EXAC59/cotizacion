@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Client;
+use App\Models\Quote;
 use App\Models\Wholesaler;
 use App\Services\Clients\ClientImportService;
 use App\Services\Wholesalers\WholesalerCatalogSync;
@@ -98,6 +99,43 @@ class ClienteCrmTest extends AuthenticatedFeatureTestCase
         $response->assertOk()->assertJsonCount(1, 'data');
         $response->assertJsonPath('data.0.folio', $betaQuote->json('folio'));
         $response->assertJsonPath('data.0.createdByName', auth()->user()?->name);
+    }
+
+    #[Test]
+    public function client_history_can_include_all_authors_and_paginate_past_fifty_quotes(): void
+    {
+        $client = Client::create(['company' => 'Historial completo', 'rfc' => 'HIS010101ABC']);
+        $other = Client::create(['company' => 'Otro cliente', 'rfc' => 'OTR010101ABC']);
+        $admin = auth()->user();
+        $sales = $this->demoUser('ventas');
+        for ($i = 0; $i < 55; $i++) {
+            Quote::create([
+                'folio' => 'COT-HISTORY-'.$i,
+                'client_id' => $client->id,
+                'created_by' => $i % 2 === 0 ? $admin->id : $sales->id,
+                'status' => $i % 2 === 0 ? 'en_elaboracion' : 'enviada',
+                'total' => 100,
+            ])->forceFill(['created_at' => now()->subMinutes($i)])->save();
+        }
+        Quote::create(['folio' => 'COT-OTHER-CLIENT', 'client_id' => $other->id,
+            'created_by' => $sales->id, 'status' => 'en_elaboracion']);
+        $this->actingAs($sales);
+        $first = $this->getJson("/api/clientes/{$client->id}/cotizaciones?scope=all&page=1")
+            ->assertOk()->assertJsonCount(50, 'data')
+            ->assertJsonPath('meta.total', 55)->assertJsonPath('meta.lastPage', 2)
+            ->assertJsonPath('data.0.folio', 'COT-HISTORY-0')
+            ->assertJsonPath('data.0.createdByName', $admin->name);
+        $second = $this->getJson("/api/clientes/{$client->id}/cotizaciones?scope=all&page=2")
+            ->assertOk()->assertJsonCount(5, 'data')
+            ->assertJsonPath('data.0.folio', 'COT-HISTORY-50');
+        $ids = array_column(array_merge($first->json('data'), $second->json('data')), 'id');
+        $this->assertCount(55, array_unique($ids));
+        $this->getJson("/api/clientes/{$client->id}/cotizaciones?scope=mine&page=1")
+            ->assertOk()->assertJsonPath('meta.total', 27);
+        $this->getJson("/api/clientes/{$client->id}/cotizaciones?scope=all&page=1&status=enviada")
+            ->assertOk()->assertJsonPath('meta.total', 27);
+        $this->getJson("/api/clientes/{$client->id}/cotizaciones?page=0")
+            ->assertUnprocessable()->assertJsonValidationErrors(['page']);
     }
 
     #[Test]

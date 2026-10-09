@@ -10,6 +10,13 @@ class N8nInternalRoutesTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['n8n.webhook_secret' => 'test-webhook-secret']);
+        $this->withHeader('X-N8N-Webhook-Secret', 'test-webhook-secret');
+    }
+
     #[Test]
     public function n8n_can_call_interpretar_without_user_session(): void
     {

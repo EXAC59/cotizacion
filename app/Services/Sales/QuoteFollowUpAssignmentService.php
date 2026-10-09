@@ -35,17 +35,9 @@ class QuoteFollowUpAssignmentService
                 ->lockForUpdate()
                 ->findOrFail($quote->id);
 
-            $isReadyQuote = $locked->status === 'pendiente_envio';
-            $hasReadyNotification = $isReadyQuote && \App\Models\SalesNotification::query()
-                ->where('quote_id', $locked->id)
-                ->where('recipient_id', $actor->id)
-                ->where('audience', SalesNotificationService::AUDIENCE_VENTAS)
-                ->where('reason_code', SalesNotificationService::REASON_LISTA)
-                ->exists();
-
-            if ($locked->creator?->role_slug !== 'ventas' && ! $hasReadyNotification) {
+            if ($locked->creator?->role_slug !== 'ventas') {
                 throw ValidationException::withMessages([
-                    'quoteId' => 'Solo puedes tomar cotizaciones de Ventas o solicitudes listas que te fueron notificadas.',
+                    'quoteId' => 'Solo se pueden tomar cotizaciones creadas por Ventas.',
                 ]);
             }
 

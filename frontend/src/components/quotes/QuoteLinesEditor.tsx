@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ChevronDown, ChevronUp, Trash2, Wand2 } from 'lucide-react'
 import { CtSkuAutocompleteInput } from '@/components/quotes/CtSkuAutocompleteInput'
 import { ProductLineComparator } from '@/components/quotes/ProductLineComparator'
@@ -29,6 +30,7 @@ export function QuoteLinesEditor({
   readOnly = false,
   readOnlyMargins: _readOnlyMargins = false,
   showProfit = true,
+  totalsSection,
   onChange,
 }: {
   lines: QuoteLine[]
@@ -45,6 +47,7 @@ export function QuoteLinesEditor({
   readOnlyMargins?: boolean
   /** Si false, oculta la columna Utilidad (p. ej. rol ventas). */
   showProfit?: boolean
+  totalsSection?: ReactNode
   onChange: (lines: QuoteLine[]) => void
 }) {
   void autoApplyBest
@@ -570,19 +573,19 @@ export function QuoteLinesEditor({
             })}
           </tbody>
         </table>
-        <div className="border-t border-slate-100 bg-slate-50/50 px-3 py-2">
-          {!readOnly && (
-            <Button variant="secondary" size="sm" onClick={() => addLine()}>
-              + Agregar partida
-            </Button>
-          )}
-          {!readOnly && (
-            <Button variant="secondary" size="sm" className="ml-2" onClick={() => addLine(true)}>
-              + Agregar partida personalizada
-            </Button>
-          )}
-        </div>
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="sm" disabled={readOnly} title={readOnly ? 'Cotización en modo de consulta; no permite agregar partidas.' : undefined} onClick={() => addLine()}>
+          + Agregar partida
+        </Button>
+        <Button variant="secondary" size="sm" disabled={readOnly} title={readOnly ? 'Cotización en modo de consulta; no permite agregar partidas.' : undefined} onClick={() => addLine(true)}>
+          + Agregar partida personalizada
+        </Button>
+        {readOnly && <p className="text-xs text-slate-500">Modo de consulta: no se pueden agregar partidas.</p>}
+      </div>
+
+      {totalsSection ? <div className="mt-3">{totalsSection}</div> : null}
 
       {showComparator ? (
       <div className="mt-2 rounded-lg border border-slate-200 bg-white">

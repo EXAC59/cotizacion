@@ -19,12 +19,10 @@ class NotificacionController extends Controller
         private readonly QuoteFollowUpAssignmentService $assignments,
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(Request $request, \App\Services\Sales\NotificationInboxService $inbox): JsonResponse
     {
-        $validated = $request->validate([
-            'page' => ['nullable', 'integer', 'min:1'],
-        ]);
-        $payload = $this->notifications->listForUser($request->user(), 40, (int) ($validated['page'] ?? 1));
+        $validated = $request->validate(['page' => ['nullable', 'integer', 'min:1']]);
+        $payload = $inbox->forUser($request->user(), (int) ($validated['page'] ?? 1));
 
         return response()->json($payload);
     }

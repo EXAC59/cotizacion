@@ -192,6 +192,7 @@ export function ClientsPage() {
                     <th className="px-5 py-3 font-medium">Correo</th>
                     <th className="px-5 py-3 font-medium">Pago</th>
                     <th className="px-5 py-3 font-medium">Alta</th>
+                    <th className="px-5 py-3 font-medium">Cotizaciones</th>
                     {showActions && (
                       <th className="px-5 py-3 font-medium text-right">Acciones</th>
                     )}
@@ -213,6 +214,11 @@ export function ClientsPage() {
                       <td className="px-5 py-3 text-slate-600">{c.email || '—'}</td>
                       <td className="px-5 py-3">{c.paymentTerms || '—'}</td>
                       <td className="px-5 py-3 text-slate-500">{formatDate(c.createdAt)}</td>
+                      <td className="px-5 py-3">
+                        <Link to={`/clientes/${c.id}#historial-cotizaciones`} className="whitespace-nowrap font-medium text-indigo-600 hover:underline">
+                          Ver historial ({c.quotesCount ?? 0})
+                        </Link>
+                      </td>
                       {showActions && (
                         <td className="px-5 py-3">
                           <div className="flex justify-end gap-1">

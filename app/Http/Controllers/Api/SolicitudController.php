@@ -67,6 +67,7 @@ class SolicitudController extends Controller
             $query->where(function ($builder) use ($term) {
                 $builder
                     ->where('id', 'like', $term)
+                    ->orWhere('folio', 'like', $term)
                     ->orWhereHas('client', fn ($client) => $client->where('company', 'like', $term));
             });
         }
@@ -187,6 +188,10 @@ class SolicitudController extends Controller
             'quote_folio' => $ensured['quote']?->folio,
             'quote_created' => $ensured['created'],
             'quote_skipped_reason' => $ensured['skippedReason'],
+            'compras_notification_count' => $ensured['comprasNotificationCount'],
+            'compras_notification_message' => $ensured['comprasNotificationCount'] > 0
+                ? "Aviso enviado a {$ensured['comprasNotificationCount']} usuario(s) de Compras."
+                : null,
         ], 201);
     }
 
@@ -274,6 +279,10 @@ class SolicitudController extends Controller
                 $payload['quote_folio'] = $ensured['quote']?->folio;
                 $payload['quote_created'] = $ensured['created'];
                 $payload['quote_skipped_reason'] = $ensured['skippedReason'];
+                $payload['compras_notification_count'] = $ensured['comprasNotificationCount'];
+                $payload['compras_notification_message'] = $ensured['comprasNotificationCount'] > 0
+                    ? "Aviso enviado a {$ensured['comprasNotificationCount']} usuario(s) de Compras."
+                    : null;
             }
             $payload['request_id'] = $requestId;
         }
@@ -331,15 +340,10 @@ class SolicitudController extends Controller
         ])->all();
 
         try {
-            $quoteRequest = $this->lecturaService->reemplazarLineas($id, $lineas);
+            $ensured = $this->solicitudToQuote->replaceRequestLinesAndSync($id, $lineas, $request->user());
         } catch (HttpException $e) {
             return response()->json(['message' => $e->getMessage()], $e->getStatusCode());
         }
-
-        $ensured = $this->solicitudToQuote->syncQuoteFromRequest(
-            $quoteRequest->fresh(['lines', 'client']),
-            $request->user(),
-        );
 
         return response()->json([
             ...$this->lecturaService->toApiArray($quoteRequest->fresh(['lines', 'client', 'creator.role', 'reviewer'])),
@@ -348,6 +352,10 @@ class SolicitudController extends Controller
             'quote_folio' => $ensured['quote']?->folio,
             'quote_created' => $ensured['created'],
             'quote_skipped_reason' => $ensured['skippedReason'],
+            'compras_notification_count' => $ensured['comprasNotificationCount'],
+            'compras_notification_message' => $ensured['comprasNotificationCount'] > 0
+                ? "Aviso enviado a {$ensured['comprasNotificationCount']} usuario(s) de Compras."
+                : null,
         ]);
     }
 

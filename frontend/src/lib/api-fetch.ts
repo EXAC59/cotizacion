@@ -46,7 +46,14 @@ export async function ensureCsrfCookie(): Promise<void> {
     csrfCookiePromise = fetch(`${sanctumBase()}/sanctum/csrf-cookie`, {
       credentials: 'include',
       headers: { Accept: 'application/json' },
-    }).then(() => undefined)
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error('No se pudo preparar la sesión segura. Intenta de nuevo.')
+      }
+    }).catch((error) => {
+      csrfCookiePromise = null
+      throw error
+    })
   }
 
   await csrfCookiePromise
@@ -56,8 +63,7 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   clearLegacyBearerOnce()
 
   const method = (init.method ?? 'GET').toUpperCase()
-  const isLogin = String(input).includes('/login')
-  const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method) && !isLogin
+  const needsCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method)
 
   if (needsCsrf) {
     await ensureCsrfCookie()
@@ -87,7 +93,7 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   if (response.status === 419 && needsCsrf) {
     csrfCookiePromise = null
     await ensureCsrfCookie()
-    const retryHeaders = new Headers(init.headers)
+    const retryHeaders = new Headers(headers)
     if (!retryHeaders.has('Accept')) {
       retryHeaders.set('Accept', 'application/json')
     }
