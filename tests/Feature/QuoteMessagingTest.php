@@ -152,10 +152,11 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
             }
             $this->assertNotContains($foreign->id, $expectedIds);
         }
-        $this->getJson('/api/mensajeria?section=quote_notices')->assertOk()->assertJsonPath('total', 2);
+        $this->getJson('/api/mensajeria?section=quote_notices')->assertOk()->assertJsonPath('total', 1);
         $this->getJson('/api/mensajeria?section=quote_notices&search='.$waiting->folio)->assertOk()->assertJsonPath('total', 1)->assertJsonCount(2, 'data.0.notices');
-        // The unclaimed request already has a bell notice, so it is not duplicated in Solicitudes nuevas.
-        $this->getJson('/api/mensajeria?section=new_requests')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $attention->id);
+        // Persistent new-request notices and operational fallbacks share Solicitudes nuevas without duplicates.
+        $newRequests = $this->getJson('/api/mensajeria?section=new_requests')->assertOk()->assertJsonPath('total', 2);
+        $this->assertEqualsCanonicalizing([$pending->id, $attention->id], collect($newRequests->json('data'))->pluck('id')->all());
         $this->getJson('/api/mensajeria?section=pending')->assertOk()->assertJsonPath('total', 2);
         $this->getJson('/api/mensajeria?section=history')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $sent->id);
         $this->getJson('/api/mensajeria?section=quote_notices&filter=unread&search='.$waiting->folio)->assertOk()->assertJsonCount(2, 'data.0.notices');
@@ -178,8 +179,9 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         DB::table('role_permissions')->where('role_id', $buyer->role_id)->whereIn('permission_id', $permissionIds)->delete();
         $this->actingAs($buyer);
         $bell = $this->getJson('/api/notificaciones')->assertOk();
-        $bell->assertJsonCount(0, 'groups.new_requests')->assertJsonCount(0, 'groups.pending');
-        $this->getJson('/api/mensajeria')->assertOk()->assertJsonPath('sections.new_requests', 0)->assertJsonPath('sections.pending', 0);
+        // Removing Dashboard permission suppresses operational alerts, but retains recipient notices.
+        $bell->assertJsonCount(1, 'groups.new_requests')->assertJsonCount(0, 'groups.quote_notices')->assertJsonCount(0, 'groups.pending');
+        $this->getJson('/api/mensajeria')->assertOk()->assertJsonPath('sections.new_requests', 1)->assertJsonPath('sections.pending', 0);
     }
 
     #[Test]

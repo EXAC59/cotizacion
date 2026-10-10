@@ -100,6 +100,7 @@ class MensajeriaController extends Controller
             } else {
                 if (! isset($quotes[$entry['id']])) return null;
                 $summary = $this->chat->summary($quotes[$entry['id']], $user);
+                if (in_array('new_requests', $entry['sections'], true)) $summary['folio'] = $entry['folio'];
             }
             return [...$summary, 'requestId' => $entry['requestId'], 'sections' => $entry['sections'], 'notices' => $entry['notices'],
                 'section' => $section === 'all' ? $entry['sections'][0] : $section,

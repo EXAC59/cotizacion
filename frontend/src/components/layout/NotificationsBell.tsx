@@ -32,6 +32,10 @@ function canUseInbox(role: string | undefined): boolean {
 
 type OperationalAlert = NotificationOperationalAlert
 
+function isNewPurchaseRequest(item: SalesNotificationItem): boolean {
+  return item.reasonCode === 'solicitud_recibida' || item.reasonCode === 'solicitud_compras_urgente'
+}
+
 export function NotificationsBell({ sharedPendingCount, onPendingCountChange }: {
   sharedPendingCount?: number; onPendingCountChange?: (count: number) => void
 }) {
@@ -184,6 +188,19 @@ export function NotificationsBell({ sharedPendingCount, onPendingCountChange }: 
     }
     setOpen(false)
 
+    if (isNewPurchaseRequest(item)) {
+      if (item.quoteId && import.meta.env.VITE_MENSAJERIA_LIVE === 'true') {
+        navigate({ pathname: '/mensajeria', search: `?section=new_requests&quote=${encodeURIComponent(item.quoteId)}` })
+      } else if (item.requestId) {
+        navigateWithNotificationFocus(navigate, location, { pathname: `/solicitudes/${item.requestId}` },
+          requestDetailFocus(item.folio ?? 'Solicitud', item.reasonLabel))
+      } else if (item.quoteId) {
+        navigateWithNotificationFocus(navigate, location, { pathname: `/cotizaciones/${item.quoteId}` },
+          quoteDetailFocus(item.folio ?? 'Solicitud', item.reasonLabel))
+      }
+      return
+    }
+
     if (item.requestId && item.kind === 'pipeline_request') {
       navigateWithNotificationFocus(
         navigate,
@@ -224,8 +241,9 @@ export function NotificationsBell({ sharedPendingCount, onPendingCountChange }: 
 
   const pipelineQuoteItems = items.filter((item) => item.kind === 'pipeline')
   const pipelineRequestItems = items.filter((item) => item.kind === 'pipeline_request')
+  const newRequestItems = items.filter(isNewPurchaseRequest)
   const inboxItems = items.filter(
-    (item) => item.kind !== 'pipeline' && item.kind !== 'pipeline_request',
+    (item) => item.kind !== 'pipeline' && item.kind !== 'pipeline_request' && !isNewPurchaseRequest(item),
   )
   const purchaseRequestFallback = purchaseRequests
   const pipelineTotal = pipelineQuoteItems.length + pipelineRequestItems.length
@@ -247,7 +265,7 @@ export function NotificationsBell({ sharedPendingCount, onPendingCountChange }: 
                   ? 'Actualizando…'
                   : user?.role === 'ventas'
                     ? `${pipelineTotal} pendientes · ${inboxItems.filter((i) => !i.read).length} avisos`
-                    : `${unreadCount} avisos sin leer · ${purchaseRequestFallback.length} solicitudes nuevas · ${operational.length} pendientes por atender`}
+                    : `${Math.max(0, unreadCount - newRequestItems.filter((item) => !item.read).length)} avisos sin leer · ${newRequestItems.length + purchaseRequestFallback.length} solicitudes nuevas · ${operational.length} pendientes por atender`}
               </p>
             </div>
             <ul className="max-h-80 overflow-y-auto">
@@ -278,11 +296,26 @@ export function NotificationsBell({ sharedPendingCount, onPendingCountChange }: 
                   </button>
                 </li>
               ))}
-              {purchaseRequestFallback.length > 0 && (
+              {newRequestItems.length + purchaseRequestFallback.length > 0 && (
                 <>
                   <li className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     Solicitudes nuevas
                   </li>
+                  {newRequestItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className={`w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 ${item.read ? 'opacity-70' : 'bg-indigo-50/40'}`}
+                        onClick={() => void openQuote(item)}
+                      >
+                        <span className="block font-medium text-slate-900">{item.folio ?? 'Solicitud'} · {item.reasonLabel}</span>
+                        <span className="mt-0.5 block text-xs text-slate-600 line-clamp-2">{item.message}</span>
+                        <span className="mt-1 block text-[11px] text-slate-400">
+                          {item.createdAt ? formatDateTime(item.createdAt) : ''}{item.senderName ? ` · ${item.senderName}` : ''}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
                   {purchaseRequestFallback.map((alert) => (
                     <li key={alert.id}>
                       <button

@@ -49,6 +49,44 @@ class SalesNotificationsTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function compras_new_request_uses_sc_folio_in_bell_and_messaging_including_legacy_notices(): void
+    {
+        config(['messaging.enabled' => true]);
+        $quote = $this->createQuote(['status' => 'solicitud_cotizaciones']);
+        $request = QuoteRequest::query()->create([
+            'client_id' => $quote->client_id, 'created_by' => $quote->created_by,
+            'folio' => 'SC-0091', 'source' => 'texto', 'status' => 'procesada',
+        ]);
+        $quote->update(['request_id' => $request->id]);
+        $buyer = $this->demoUser('gerente_compras');
+        $notice = SalesNotification::query()->create([
+            'quote_id' => $quote->id, 'recipient_id' => $buyer->id, 'audience' => 'compras',
+            'reason_code' => 'solicitud_recibida', 'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
+        ]);
+        $this->actingAs($buyer);
+        $this->getJson('/api/notificaciones')->assertOk()
+            ->assertJsonPath('data.0.folio', 'SC-0091')->assertJsonPath('data.0.requestId', $request->id)
+            ->assertJsonPath('data.0.message', 'Nueva solicitud de cotización SC-0091 disponible para Compras.')
+            ->assertJsonPath('groups.new_requests.0.id', $notice->id)->assertJsonCount(0, 'groups.quote_notices')
+            ->assertJsonCount(0, 'purchaseRequests')->assertJsonPath('pendingCount', 1);
+        $this->getJson('/api/mensajeria?section=new_requests&search=SC-0091')->assertOk()
+            ->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $quote->id)
+            ->assertJsonPath('data.0.folio', 'SC-0091')->assertJsonPath('data.0.canTake', true);
+        $this->patchJson("/api/notificaciones/{$notice->id}/leer")->assertOk()
+            ->assertJsonPath('folio', 'SC-0091')->assertJsonPath('read', true);
+        $this->getJson('/api/notificaciones')->assertOk()->assertJsonCount(1, 'groups.new_requests')
+            ->assertJsonPath('groups.new_requests.0.read', true)->assertJsonPath('pendingCount', 0);
+        $this->assertSame($quote->folio, $quote->fresh()->folio);
+
+        $otherBuyer = User::factory()->create(['role_id' => $buyer->role_id, 'active' => true]);
+        $service = app(\App\Services\Sales\SalesNotificationService::class);
+        $service->notifyComprasNewRequest($quote);
+        $this->assertDatabaseHas('sales_notifications', ['quote_id' => $quote->id, 'recipient_id' => $otherBuyer->id,
+            'message' => 'Nueva solicitud de cotización SC-0091 disponible para Compras.']);
+        $this->assertSame(0, $service->notifyComprasNewRequest($quote));
+    }
+
+    #[Test]
     public function compras_can_notify_eligible_lista_terminada(): void
     {
         $this->actingAsDemoUser('gerente_compras');

@@ -173,7 +173,7 @@ class SalesNotificationService
                 ],
                 [
                     'sender_id' => $sender?->id,
-                    'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
+                    'message' => $this->newRequestMessage($quote),
                     'read_at' => null,
                 ],
             );
@@ -246,7 +246,7 @@ class SalesNotificationService
         foreach ($recipients as $recipient) {
             $recipientReviewed = 0;
             Quote::query()
-                ->with('creator')
+                ->with(['creator', 'request'])
                 ->where('status', 'solicitud_cotizaciones')
                 ->whereNull('purchase_assigned_to')
                 ->whereDoesntHave('salesNotifications', function ($notification) use ($recipient) {
@@ -268,7 +268,7 @@ class SalesNotificationService
                             ],
                             [
                                 'sender_id' => $quote->creator?->id,
-                                'message' => "Nueva solicitud de cotización {$quote->folio} disponible para Compras.",
+                                'message' => $this->newRequestMessage($quote),
                                 'read_at' => null,
                             ],
                         );
@@ -592,7 +592,7 @@ class SalesNotificationService
     public function visibleForUser(User $user, bool $currentOnly = true): \Illuminate\Database\Eloquent\Builder
     {
         $query = SalesNotification::query()
-            ->with(['quote.client', 'sender', 'recipient'])
+            ->with(['quote.client', 'quote.request', 'sender', 'recipient'])
             ->orderByDesc('created_at');
 
         $role = $user->role_slug;
@@ -857,15 +857,26 @@ class SalesNotificationService
      */
     public function toApiArray(SalesNotification $n): array
     {
+        $isRequest = in_array($n->reason_code, [self::REASON_SOLICITUD_COMPRAS, self::REASON_SOLICITUD_COMPRAS_URGENTE], true);
+        $request = $isRequest ? $n->quote?->request : null;
+        $folio = $request?->folio ?: $n->quote?->folio;
+        // Resolve stored notices against the linked request so legacy COT text also displays SC.
+        $message = $isRequest && $n->quote
+            ? ($n->reason_code === self::REASON_SOLICITUD_COMPRAS
+                ? $this->newRequestMessage($n->quote)
+                : str_replace($n->quote->folio, (string) $folio, $n->message))
+            : $n->message;
+
         return [
             'id' => $n->id,
             'quoteId' => $n->quote_id,
-            'folio' => $n->quote?->folio,
+            'requestId' => $request?->id,
+            'folio' => $folio,
             'clientName' => $n->quote?->client?->company ?? '',
             'audience' => $n->audience,
             'reasonCode' => $n->reason_code,
             'reasonLabel' => $this->reasonLabel($n->reason_code),
-            'message' => $n->message,
+            'message' => $message,
             'senderName' => $n->sender?->name ?? (
                 $n->reason_code === self::REASON_SIN_AVANCE && $n->sender_id === null
                     ? 'Automático'
@@ -878,6 +889,13 @@ class SalesNotificationService
             'read' => $n->read_at !== null,
             'kind' => 'inbox',
         ];
+    }
+
+    private function newRequestMessage(Quote $quote): string
+    {
+        $folio = $quote->request?->folio ?: $quote->folio;
+
+        return "Nueva solicitud de cotización {$folio} disponible para Compras.";
     }
 
     private function hasUnreadDedupe(string $quoteId, string $reasonCode, string $audience): bool

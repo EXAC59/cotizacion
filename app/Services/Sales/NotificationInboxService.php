@@ -49,6 +49,10 @@ class NotificationInboxService
         $payload = $this->notifications->listForUser($user, 40, $page);
         $items = collect($payload['data']);
         $notices = $items->filter(fn ($item) => ! in_array($item['kind'] ?? 'inbox', ['pipeline', 'pipeline_request'], true));
+        $newRequests = $notices->filter(fn ($item) => in_array($item['reasonCode'], [
+            SalesNotificationService::REASON_SOLICITUD_COMPRAS,
+            SalesNotificationService::REASON_SOLICITUD_COMPRAS_URGENTE,
+        ], true));
         $notifiedIds = $notices->pluck('quoteId')->filter()->all();
         $alerts = $user->role_slug !== 'ventas' && $this->rbac->userCan($user, 'dashboard', 'view')
             ? $this->analytics->quoteNotificationAlerts($user) : ['purchaseRequestQuotes' => [], 'unansweredQuotes' => []];
@@ -63,7 +67,8 @@ class NotificationInboxService
             'label' => 'Sin avance', 'detail' => ($quote['clientName'] ?: 'Sin cliente').' · '.$quote['daysWaiting'].' días sin actividad',
         ])->values()->all();
         $notificationItem = fn ($item) => [
-            'id' => $item['id'], 'quoteId' => $item['quoteId'] ?? null, 'requestId' => $item['requestId'] ?? null,
+            // Quote-backed requests retain the existing claim/chat workflow in messaging.
+            'id' => $item['id'], 'quoteId' => $item['quoteId'] ?? null, 'requestId' => empty($item['quoteId']) ? ($item['requestId'] ?? null) : null,
             'folio' => $item['folio'] ?? 'Cotización', 'clientName' => $item['clientName'],
             'label' => $item['reasonLabel'], 'detail' => $item['message'], 'read' => $item['read'], 'createdAt' => $item['createdAt'] ?? null,
             'messageNotice' => $item['reasonCode'] === 'mensaje_chat',
@@ -80,10 +85,11 @@ class NotificationInboxService
         return [...$payload, 'pendingCount' => $pendingCount, 'unreadMessageCount' => array_sum($messageCounts),
             'purchaseRequests' => $purchaseRequests, 'operational' => $operational,
             'groups' => [
-                'new_requests' => array_map(fn ($item) => [...$item, 'requestId' => null, 'read' => false, 'reminder' => false], $purchaseRequests),
+                'new_requests' => [...$newRequests->map($notificationItem)->values()->all(),
+                    ...array_map(fn ($item) => [...$item, 'requestId' => null, 'read' => false, 'reminder' => false], $purchaseRequests)],
                 'own_requests' => $items->where('kind', 'pipeline_request')->map($notificationItem)->values()->all(),
                 'own_quotes' => $items->where('kind', 'pipeline')->map($notificationItem)->values()->all(),
-                'quote_notices' => $notices->map($notificationItem)->values()->all(),
+                'quote_notices' => $notices->reject(fn ($item) => $newRequests->contains('id', $item['id']))->map($notificationItem)->values()->all(),
                 'pending' => array_map(fn ($item) => [...$item, 'requestId' => null, 'read' => false, 'reminder' => true], $operational),
             ],
         ];

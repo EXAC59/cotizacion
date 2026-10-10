@@ -85,6 +85,7 @@ export function LiveMessaging({ user, canEditFollowUp = false }: { user: User; c
     const params = new URLSearchParams(location.search)
     const id = params.get('quote')
     if (id) { activeRef.current = id; setActiveId(id); setMobileView('chat') }
+    if (params.get('section') === 'new_requests') { setSection('new_requests'); setFilter('all'); setSearch(''); setPage(1) }
     if (params.get('filter') === 'reminders') { setFilter('reminders'); setSection('all'); setPage(1) }
     if (id && params.get('reminder') === '1') openReminder(id)
   }, [location.search, openReminder])
@@ -284,6 +285,11 @@ export function LiveMessaging({ user, canEditFollowUp = false }: { user: User; c
                 const nextSection = event.target.value as LiveSection | 'all'
                 setSection(nextSection); setPage(1)
                 if (nextSection === 'history') setFilter('all')
+                const params = new URLSearchParams(location.search)
+                if (params.has('section')) {
+                  params.delete('section')
+                  navigate({ pathname: location.pathname, search: params.toString() }, { replace: true })
+                }
               }}>
                 <option value="all">Todos los apartados ({allQuoteCount})</option>
                 {availableSections.map((key) => <option key={key} value={key}>{SECTION_LABELS[key]} ({sectionCounts[key]})</option>)}
