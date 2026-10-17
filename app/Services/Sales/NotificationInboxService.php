@@ -76,7 +76,7 @@ class NotificationInboxService
         ];
         $messageCounts = config('messaging.enabled') && $user->active && in_array($user->role_slug, ['ventas', 'gerente_compras', 'administrador'], true)
             ? app(\App\Services\Quotes\QuoteMessagingService::class)->unreadMessageCounts($user) : [];
-        $chatNoticeCounts = $messageCounts ? $this->notifications->visibleForUser($user)->where('reason_code', 'mensaje_chat')
+        $chatNoticeCounts = $messageCounts ? $this->notifications->visibleForUser($user)->whereIn('reason_code', ['mensaje_chat', 'cierre_cotizacion'])
             ->whereNull('read_at')->reorder()->select('quote_id')->selectRaw('COUNT(*) as notice_total')
             ->groupBy('quote_id')->pluck('notice_total', 'quote_id')->all() : [];
         // One bell notice may represent several messages: add only the messages it does not already count.

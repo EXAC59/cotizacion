@@ -4,6 +4,7 @@ import { canAccessModule, canAccessDashboard } from '@/lib/permissions'
 import type { RolePermissionMap } from '@/types/rbac'
 import {
   BarChart3,
+  BookOpen,
   Bell,
   Building2,
   FileText,
@@ -27,6 +28,7 @@ export const MODULE_ROUTES: {
   { module: 'dashboard', path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { module: 'solicitudes', path: '/solicitudes', label: 'SOLICITUDES', icon: Upload },
   { module: 'cotizaciones', path: '/cotizaciones', label: 'COTIZACIONES', icon: FileText },
+  { module: 'cotizaciones', path: '/cierre-cotizaciones', label: 'Cierre de cotizaciones', icon: BookOpen },
   ...(import.meta.env.VITE_MENSAJERIA_LIVE === 'true' ? [{
     module: 'cotizaciones' as const, path: '/mensajeria', label: 'Mensajería', icon: MessageSquareText,
     roles: ['ventas', 'gerente_compras', 'administrador'] as UserRole[],

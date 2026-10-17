@@ -169,6 +169,7 @@ type QuoteApiResponse = {
 
 
 type QuoteSummaryApi = {
+  closingStatus?: Quote['closingStatus']
 
   id: string
 
@@ -629,6 +630,7 @@ export async function listQuotes(params?: {
     lastActivityById: row.lastActivityById ?? undefined,
 
     followUp: row.followUp ?? null,
+    closingStatus: row.closingStatus ?? null,
 
     eligibility: row.eligibility ?? undefined,
 

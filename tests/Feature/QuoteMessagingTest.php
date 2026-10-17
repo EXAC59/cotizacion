@@ -34,6 +34,69 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
+    public function saving_a_new_quote_creates_its_chat_before_purchasing_claims_it(): void
+    {
+        $client = Client::firstOrCreate(['company' => 'Chat automático']);
+        $this->actingAsDemoUser('ventas');
+        $saved = $this->postJson('/api/cotizaciones', ['clientId' => $client->id, 'status' => 'en_elaboracion',
+            'customerObservations' => 'Confirmar entrega.', 'lines' => []])->assertCreated();
+        $id = $saved->json('id');
+        $this->assertDatabaseHas('quote_conversations', ['quote_id' => $id, 'purchasing_user_id' => null]);
+        $this->postJson("/api/mensajeria/{$id}/abrir")->assertOk();
+        $this->postJson("/api/mensajeria/{$id}/abrir")->assertOk();
+        $this->assertDatabaseCount('quote_conversations', 1);
+        $this->assertDatabaseCount('quote_chat_messages', 1);
+        $this->postJson("/api/mensajeria/{$id}/mensajes", ['text' => 'Mensaje inicial de Ventas', 'clientId' => (string) Str::uuid()])->assertCreated();
+        $this->assertDatabaseHas('sales_notifications', ['quote_id' => $id, 'recipient_id' => $this->demoUser('gerente_compras')->id, 'reason_code' => 'mensaje_chat']);
+    }
+
+    #[Test]
+    public function conversation_mode_shares_quotes_with_sales_and_keeps_notices_unread_until_opened(): void
+    {
+        $quote = $this->quote(); $this->claim($quote);
+        $sales = $this->demoUser('ventas'); $buyer = $this->demoUser('gerente_compras');
+        $foreignSeller = User::factory()->create(['role_id' => $sales->role_id, 'active' => true]);
+        $foreign = $this->quote(); $foreign->update(['created_by' => $foreignSeller->id, 'status' => 'en_elaboracion']);
+        $notice = SalesNotification::create(['quote_id' => $quote->id, 'recipient_id' => $sales->id,
+            'audience' => 'ventas', 'reason_code' => 'sin_avance', 'message' => 'Aviso solo de la campana']);
+        $this->actingAs($buyer);
+        $response = $this->getJson('/api/mensajeria?mode=conversations')->assertOk()->assertJsonPath('total', 2);
+        foreach ($response->json('data') as $row) { $this->assertEmpty($row['notices']); $this->assertFalse($row['hasNotifications']); }
+        $this->getJson('/api/mensajeria?mode=conversations&search='.$foreign->folio)->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $foreign->id);
+        $this->actingAs($sales);
+        $this->getJson('/api/mensajeria?mode=conversations')->assertOk()->assertJsonPath('total', 2);
+        $this->getJson('/api/mensajeria?mode=conversations&search='.$quote->folio)->assertOk()
+            ->assertJsonPath('data.0.notificationCount', 1)->assertJsonPath('data.0.hasNotifications', true);
+        $detail = $this->getJson('/api/mensajeria/'.$quote->id)->assertOk();
+        $this->postJson('/api/mensajeria/'.$quote->id.'/leer', ['lastId' => (int) $detail->json('messages.0.id')])->assertOk();
+        $this->assertDatabaseHas('sales_notifications', ['id' => $notice->id, 'read_at' => null]);
+    }
+
+    #[Test]
+    public function shared_buyer_reading_is_personal_and_does_not_reassign_completed_quotes(): void
+    {
+        $quote = $this->quote(); $this->claim($quote);
+        $buyer = $this->demoUser('gerente_compras');
+        $second = User::factory()->create(['role_id' => $buyer->role_id, 'active' => true]);
+        $quote->update(['status' => 'pendiente_envio', 'purchase_assigned_to' => null]);
+        $this->actingAsDemoUser('ventas');
+        $message = $this->postJson("/api/mensajeria/{$quote->id}/mensajes", ['text' => 'Consultar entrega', 'clientId' => (string) Str::uuid()])->assertCreated()->json('id');
+        $this->actingAs($second);
+        $this->postJson("/api/mensajeria/{$quote->id}/abrir")->assertOk();
+        $this->postJson("/api/mensajeria/{$quote->id}/leer", ['lastId' => (int) $message])->assertOk();
+        $this->getJson("/api/mensajeria/{$quote->id}")->assertOk()->assertJsonPath('quote.unreadCount', 0);
+        $this->postJson("/api/mensajeria/{$quote->id}/mensajes", ['text' => 'Otra persona de Compras confirma la entrega.', 'clientId' => (string) Str::uuid()])->assertCreated();
+        $this->assertDatabaseHas('quote_conversations', ['quote_id' => $quote->id, 'purchasing_user_id' => $buyer->id]);
+        $this->assertNull($quote->fresh()->purchase_assigned_to);
+        $this->assertDatabaseHas('sales_notifications', ['quote_id' => $quote->id, 'recipient_id' => $buyer->id, 'reason_code' => 'mensaje_chat', 'read_at' => null]);
+        $this->actingAs($buyer);
+        $this->getJson("/api/mensajeria/{$quote->id}")->assertOk()->assertJsonPath('quote.unreadCount', 2);
+        $second->update(['active' => false]); $this->actingAs($second);
+        $this->getJson("/api/mensajeria/{$quote->id}")->assertUnauthorized();
+        $this->postJson("/api/mensajeria/{$quote->id}/mensajes", ['text' => 'Bloqueado', 'clientId' => (string) Str::uuid()])->assertUnauthorized();
+    }
+
+    #[Test]
     public function disabled_and_unauthenticated_access_cannot_read_messages(): void
     {
         config(['messaging.enabled' => false]);
@@ -44,7 +107,7 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function claim_opens_one_chat_and_a_second_buyer_cannot_take_or_read_it(): void
+    public function claim_opens_one_shared_chat_and_a_second_buyer_can_reply_without_taking_it(): void
     {
         $quote = $this->quote();
         $this->claim($quote);
@@ -53,10 +116,13 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         $buyer = $this->demoUser('gerente_compras');
         $other = User::factory()->create(['role_id' => $buyer->role_id, 'active' => true]);
         $this->actingAs($other);
-        $this->postJson("/api/mensajeria/{$quote->id}/tomar")->assertUnprocessable();
-        $this->getJson("/api/mensajeria/{$quote->id}")->assertForbidden();
+        $this->postJson("/api/mensajeria/{$quote->id}/tomar")->assertStatus(423);
+        $this->getJson("/api/mensajeria/{$quote->id}")->assertOk()->assertJsonPath('quote.canChat', true)
+            ->assertJsonPath('quote.canManageWorkflow', false);
+        $this->postJson("/api/mensajeria/{$quote->id}/mensajes", ['text' => 'Apoyo de otro comprador', 'clientId' => (string) Str::uuid()])->assertCreated();
+        $this->postJson("/api/mensajeria/{$quote->id}/seguimiento", ['action' => 'check', 'key' => 'stock', 'checked' => true])->assertForbidden();
         $this->getJson('/api/mensajeria')->assertOk()->assertJsonPath('total', 1)
-            ->assertJsonPath('data.0.canChat', false)->assertJsonPath('data.0.unreadCount', 0);
+            ->assertJsonPath('data.0.canChat', true);
         $this->assertSame($buyer->id, $quote->fresh()->purchase_assigned_to);
     }
 
@@ -99,7 +165,7 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function messages_are_persistent_idempotent_and_private_to_the_participants(): void
+    public function messages_are_persistent_idempotent_and_shared_without_changing_the_responsible_user(): void
     {
         $quote = $this->quote(); $this->claim($quote);
         $this->actingAsDemoUser('ventas');
@@ -113,8 +179,10 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         $this->getJson("/api/mensajeria/{$quote->id}")->assertOk()->assertJsonPath('quote.unreadCount', 1);
         $other = User::factory()->create(['role_id' => $this->demoUser('ventas')->role_id, 'active' => true]);
         $this->actingAs($other);
-        $this->getJson("/api/mensajeria/{$quote->id}")->assertForbidden();
-        $this->postJson("/api/mensajeria/{$quote->id}/mensajes", ['text' => 'No autorizado', 'clientId' => (string) Str::uuid()])->assertForbidden();
+        $this->getJson("/api/mensajeria/{$quote->id}")->assertOk()->assertJsonPath('quote.canManageWorkflow', false);
+        $this->postJson("/api/mensajeria/{$quote->id}/mensajes", ['text' => 'Apoyo del equipo de Ventas', 'clientId' => (string) Str::uuid()])->assertCreated();
+        $this->postJson("/api/mensajeria/{$quote->id}/seguimiento", ['action' => 'close', 'text' => 'Cerrar'])->assertForbidden();
+        $this->assertSame($this->demoUser('ventas')->id, $quote->fresh()->created_by);
     }
 
     #[Test]
@@ -204,9 +272,9 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         $this->assertContains($assigned->id, $ids);
         $this->getJson('/api/mensajeria?section=ready_to_send')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $ready->id);
         $this->postJson('/api/mensajeria/'.$own->id.'/abrir')->assertOk()->assertJsonPath('quote.canView', true)
-            ->assertJsonPath('quote.canChat', false)->assertJsonCount(0, 'messages');
-        $this->postJson('/api/mensajeria/'.$own->id.'/mensajes', ['text' => 'Antes de tener comprador', 'clientId' => (string) Str::uuid()])->assertConflict();
-        $this->assertDatabaseCount('quote_conversations', 0);
+            ->assertJsonPath('quote.canChat', true)->assertJsonCount(0, 'messages');
+        $this->postJson('/api/mensajeria/'.$own->id.'/mensajes', ['text' => 'Antes de tener comprador', 'clientId' => (string) Str::uuid()])->assertCreated();
+        $this->assertDatabaseCount('quote_conversations', 1);
         $this->claim($own);
         $this->actingAs($sales);
         $this->postJson('/api/mensajeria/'.$own->id.'/mensajes', ['text' => 'Ya tenemos responsable.', 'clientId' => (string) Str::uuid()])->assertCreated();
@@ -258,7 +326,7 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         $this->postJson('/api/mensajeria/'.$quote->id.'/abrir')->assertOk()->assertJsonCount(1, 'notices');
         $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 1);
         $this->postJson('/api/mensajeria/'.$quote->id.'/leer', ['noticeIds' => [$notice->id]])->assertOk()->assertJsonPath('unreadCount', 0);
-        $this->assertDatabaseCount('quote_conversations', 0);
+        $this->assertDatabaseCount('quote_conversations', 1);
     }
 
     #[Test]
@@ -301,7 +369,7 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
     }
 
     #[Test]
-    public function pending_counter_counts_all_pages_and_only_the_participants_unread_messages(): void
+    public function pending_counter_counts_all_pages_and_preserves_shared_chat_notices(): void
     {
         $buyer = $this->demoUser('gerente_compras');
         $seller = $this->demoUser('ventas');
@@ -318,7 +386,8 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         $this->getJson('/api/mensajeria?filter=unread&page=2')->assertOk()->assertJsonPath('total', 31)->assertJsonCount(1, 'data');
         $other = User::factory()->create(['role_id' => $buyer->role_id, 'active' => true]);
         $this->actingAs($other);
-        $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 31)->assertJsonPath('unreadMessageCount', 0);
+        // Shared conversations include the 31 opening events and 31 messages this buyer has not read.
+        $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 93)->assertJsonPath('unreadMessageCount', 62);
         $this->actingAs($buyer);
         $lastId = DB::table('quote_chat_messages')->where('quote_id', $quote->id)->max('id');
         $this->postJson("/api/mensajeria/{$quote->id}/leer", ['lastId' => $lastId])->assertOk();
@@ -332,7 +401,7 @@ class QuoteMessagingTest extends AuthenticatedFeatureTestCase
         $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 31);
         $otherSeller = User::factory()->create(['role_id' => $seller->role_id, 'active' => true]);
         $quote->update(['follow_up_assigned_to' => $otherSeller->id]);
-        $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 30);
+        $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 31);
         $quote->update(['follow_up_assigned_to' => $other->id]);
         $this->getJson('/api/mensajeria/pendientes')->assertOk()->assertJsonPath('unreadCount', 31);
     }

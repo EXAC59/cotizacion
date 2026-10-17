@@ -14,6 +14,7 @@ class PurchaseRequestWorkflowService
 {
     public function __construct(
         private readonly QuoteActivityService $activity,
+        private readonly QuoteLockService $locks,
     ) {}
 
     public function claim(Quote $quote, User $actor): Quote
@@ -32,16 +33,13 @@ class PurchaseRequestWorkflowService
                 ]);
             }
 
-            if ($locked->purchase_assigned_to !== null) {
-                if ((int) $locked->purchase_assigned_to === (int) $actor->id) {
-                    if (config('messaging.enabled')) app(QuoteMessagingService::class)->open($locked, $actor);
-                    return $locked;
-                }
-
-                throw ValidationException::withMessages([
-                    'quoteId' => 'Esta solicitud ya está siendo atendida por '.
-                        ($locked->purchaseAssignee?->name ?? 'otro comprador').'.',
-                ]);
+            $previous = $locked->purchaseAssignee?->name;
+            // A different buyer may resume attention once there is no active editor.
+            $this->locks->lockPayload($locked, $actor);
+            $locked = $this->locks->acquire($locked, $actor);
+            if ((int) $locked->purchase_assigned_to === (int) $actor->id) {
+                if (config('messaging.enabled')) app(QuoteMessagingService::class)->open($locked, $actor);
+                return $locked;
             }
 
             $now = now();
@@ -54,7 +52,8 @@ class PurchaseRequestWorkflowService
             QuoteInternalNote::query()->create([
                 'quote_id' => $locked->id,
                 'user_id' => $actor->id,
-                'body' => "Solicitud tomada por Compras: {$actor->name} inició la atención.",
+                'body' => "Solicitud tomada por Compras: {$actor->name} inició la atención."
+                    .($previous ? " Responsable anterior: {$previous}." : ''),
                 'created_at' => $now,
             ]);
 
@@ -97,6 +96,7 @@ class PurchaseRequestWorkflowService
             }
 
             $previous = $locked->purchaseAssignee?->name ?? 'Compras';
+            $this->locks->release($locked, $actor);
             $locked->forceFill([
                 'purchase_assigned_to' => null,
                 'purchase_assigned_by' => null,

@@ -29,6 +29,7 @@ import { ClientsPage } from '@/pages/clients/ClientsPage'
 import { DashboardPage } from '@/pages/dashboard/DashboardPage'
 import { QuoteFormPage } from '@/pages/quotes/QuoteFormPage'
 import { QuotesPage } from '@/pages/quotes/QuotesPage'
+import { ClosingQuotesPage } from '@/pages/closing/ClosingQuotesPage'
 import { RecordatoriosPage } from '@/pages/recordatorios/RecordatoriosPage'
 import { MessagingEntryPage, MessagingReminderRedirect } from '@/pages/messaging/MessagingEntryPage'
 import { ReportsPage } from '@/pages/reports/ReportsPage'
@@ -105,6 +106,10 @@ const router = createBrowserRouter(
                 <QuotesPage />
               </ModuleRoute>
             }
+          />
+          <Route
+            path="cierre-cotizaciones"
+            element={<ModuleRoute module="cotizaciones"><ClosingQuotesPage /></ModuleRoute>}
           />
           <Route
             path="cotizaciones/nueva"

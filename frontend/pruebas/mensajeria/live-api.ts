@@ -13,11 +13,12 @@ export type LiveQuote = {
   section: LiveSection; daysIdle: number
   requestId?: string | null; sections?: LiveSection[]; notices?: LiveNotice[]
   alertType: 'notification' | 'reminder' | null; alertDetail: string | null
-  hasChat: boolean; canChat: boolean; canView?: boolean; canTake: boolean
+  hasChat: boolean; canChat: boolean; canView?: boolean; canManageWorkflow?: boolean; canTake: boolean
   hasNotifications: boolean; notificationCount: number; lastNotification: string | null; lastNotificationAt: string | null
   checks: { stock: boolean; price: boolean; delivery: boolean }
   reminder: string | null; unreadCount: number; lastMessage: string; lastMessageAt: string | null
   products: { description: string; quantity: number }[]
+  nextAction?: string
 }
 export type LiveMessage = { id: string; text: string; mine: boolean; system: boolean; authorName: string; createdAt: string; read: boolean }
 export type LiveChatNotice = { id: string; label: string; detail: string; persistent: boolean; read: boolean; createdAt: string | null }
@@ -25,10 +26,10 @@ export type LiveDetail = { quote: LiveQuote; messages: LiveMessage[]; notices: L
 export type LiveIndex = { data: LiveQuote[]; page: number; lastPage: number; total: number
   sections: Record<LiveSection, number>; unreadQuoteCount: number; reminderCount: number; unreadCount: number }
 
-export async function chatApi<T>(path = '', payload?: object): Promise<T> {
+export async function chatApi<T>(path = '', payload?: object, signal?: AbortSignal): Promise<T> {
   const response = await apiFetch(`${getApiBase()}/mensajeria${path}`, payload ? {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  } : undefined)
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal,
+  } : { signal })
   const data = await response.json()
   if (!response.ok) {
     if (response.status === 401) throw new Error('Tu sesión terminó. Vuelve a iniciar sesión en el sistema.')

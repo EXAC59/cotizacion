@@ -7,6 +7,25 @@ use Illuminate\Validation\ValidationException;
 
 class QuoteStatusGuard
 {
+    public function assertPricedLines(array $lines): void
+    {
+        if ($lines === []) {
+            throw ValidationException::withMessages(['lines' => 'Agrega al menos una partida antes de terminar o enviar la cotización.']);
+        }
+
+        $errors = [];
+        foreach ($lines as $index => $line) {
+            $price = (float) ($line['salePrice'] ?? 0);
+            $amount = (float) ($line['amount'] ?? 0);
+            if (! is_finite($price) || ! is_finite($amount) || $price <= 0 || $amount <= 0) {
+                $errors["lines.$index.salePrice"] = 'Partida '.($index + 1).' ('.($line['product'] ?? '').'): captura un precio unitario mayor que cero antes de terminar o enviar la cotización.';
+            }
+        }
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
+
     /**
      * Valida que el estatus solicitado sea conocido.
      * Se permite avanzar o regresar en el flujo comercial (p. ej. Enviada → En elaboración).

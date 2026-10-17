@@ -55,16 +55,80 @@ class QuoteMessagingService
         abort_unless((int) $this->purchasing($quote)?->id === (int) $actor->id, 403, 'El chat pertenece al comprador responsable.');
     }
 
+    /** Conversations are shared; commercial actions still require the responsible user. */
+    public function assertConversationAccess(Quote $quote, User $actor): void
+    {
+        abort_unless($actor->active, 403);
+        if (in_array($actor->role_slug, ['ventas', 'gerente_compras', 'administrador'], true)) return;
+        $this->assertAccess($quote, $actor);
+    }
+
+    public function isMessageRecipient(Quote $quote, User $actor): bool
+    {
+        return $quote->salesNotifications()->whereIn('reason_code', ['mensaje_chat', 'cierre_cotizacion'])
+            ->where('recipient_id', $actor->id)->exists();
+    }
+
+    public function notifyClosing(Quote $quote, User $actor, string $body): void
+    {
+        $this->notify($quote, $actor, $body, 'cierre_cotizacion');
+    }
+
+    public function notify(Quote $quote, User $actor, string $body, string $reason = 'mensaje_chat'): void
+    {
+        $participants = DB::table('quote_chat_messages')->where('quote_id', $quote->id)->whereNotNull('sender_id')->pluck('sender_id')
+            ->merge(DB::table('quote_chat_reads')->where('quote_id', $quote->id)->pluck('user_id'))->unique();
+        // Presence is irrelevant: these notices persist for recipients who are offline.
+        $recipients = User::query()->where('active', true)->where('id', '<>', $actor->id)
+            ->where(fn ($users) => $users->whereHas('role', fn ($role) => $role->whereIn('slug', ['ventas', 'gerente_compras']))
+                ->orWhereIn('id', $participants))->get();
+        foreach ($recipients as $recipient) {
+            $notice = SalesNotification::query()->updateOrCreate([
+                'quote_id' => $quote->id, 'recipient_id' => $recipient->id, 'reason_code' => $reason, 'read_at' => null,
+            ], ['sender_id' => $actor->id, 'audience' => $recipient->role_slug === 'ventas' ? 'ventas' : 'compras',
+                'message' => mb_substr($body, 0, 1000)]);
+            if ($reason === 'cierre_cotizacion') $notice->forceFill(['created_at' => now()])->save();
+        }
+    }
+
+    public function initialize(Quote $quote, ?User $actor = null): void
+    {
+        $purchaser = $this->purchasing($quote);
+        $inserted = DB::table('quote_conversations')->insertOrIgnore([
+            'quote_id' => $quote->id, 'purchasing_user_id' => $purchaser?->id,
+            'stage' => $this->stage($quote, null),
+            'checks' => json_encode(['stock' => false, 'price' => false, 'delivery' => false]),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        if ($inserted && $actor && $purchaser && $this->sales($quote)) {
+            $this->event($quote, $actor, 'Se abrió el chat de seguimiento. Compras responsable: '.$purchaser->name.'.');
+        }
+        if ($inserted && $actor && trim((string) $quote->customer_observations) !== '') {
+            $this->event($quote, $actor, 'Requerimiento: '.$quote->customer_observations);
+        }
+    }
+
+    public function conversationQuotes(User $actor): Builder
+    {
+        abort_unless($actor->active && in_array($actor->role_slug, ['ventas', 'gerente_compras', 'administrador'], true), 403);
+        return Quote::query();
+    }
+
     /** Called within the existing purchase claim transaction. */
     public function open(Quote $quote, User $actor): void
     {
         $this->assertAccess($quote, $actor);
         $purchaser = $this->purchasing($quote);
-        if ($purchaser === null || $this->sales($quote) === null) {
+        if ($purchaser === null) {
             return;
         }
-        if (DB::table('quote_conversations')->where('quote_id', $quote->id)->exists()) {
+        $conversation = DB::table('quote_conversations')->where('quote_id', $quote->id)->first();
+        if ($conversation) {
             DB::table('quote_conversations')->where('quote_id', $quote->id)->update(['purchasing_user_id' => $purchaser->id]);
+            if ((int) $conversation->purchasing_user_id !== (int) $purchaser->id) {
+                $this->event($quote, $actor, 'Compras responsable: '.$purchaser->name.'.');
+                $this->notify($quote, $actor, 'Compras tomó la solicitud. El chat de seguimiento está disponible.');
+            }
             return;
         }
         DB::table('quote_conversations')->insert([
@@ -85,24 +149,6 @@ class QuoteMessagingService
             'quote_id' => $quote->id, 'sender_id' => $actor->id, 'kind' => 'system',
             'body' => $body, 'created_at' => now(),
         ]);
-    }
-
-    public function notify(Quote $quote, User $actor, string $body): void
-    {
-        $recipient = $actor->role_slug === 'ventas' ? $this->purchasing($quote) : $this->sales($quote);
-        if (! $recipient?->active || (int) $recipient->id === (int) $actor->id) {
-            return;
-        }
-        // The quote row serializes sends; one unread chat notice per recipient.
-        $existing = SalesNotification::query()->where('quote_id', $quote->id)
-            ->where('recipient_id', $recipient->id)->where('reason_code', 'mensaje_chat')->whereNull('read_at')->first();
-        $payload = ['sender_id' => $actor->id, 'message' => mb_substr($body, 0, 1000)];
-        if ($existing) {
-            $existing->update($payload);
-        } else {
-            SalesNotification::create([...$payload, 'quote_id' => $quote->id, 'recipient_id' => $recipient->id,
-                'audience' => $recipient->role_slug === 'ventas' ? 'ventas' : 'compras', 'reason_code' => 'mensaje_chat']);
-        }
     }
 
     public function stage(Quote $quote, ?object $conversation): string
@@ -136,14 +182,18 @@ class QuoteMessagingService
                                 ->join('users', 'users.id', '=', 'sales_notifications.recipient_id')
                                 ->join('roles', 'roles.id', '=', 'users.role_id')
                                 ->whereColumn('sales_notifications.quote_id', 'quotes.id')->where('sales_notifications.audience', 'ventas')
+                                ->whereNotIn('sales_notifications.reason_code', ['mensaje_chat', 'cierre_cotizacion'])
                                 ->whereNotNull('sales_notifications.sender_id')->where('users.active', true)->where('roles.slug', 'ventas')
                                 ->orderByDesc('sales_notifications.created_at')->orderByDesc('sales_notifications.id')->limit(1);
                         }, $actor->id);
-                });
+                })->orWhereHas('salesNotifications', fn ($notice) => $notice->whereIn('reason_code', ['mensaje_chat', 'cierre_cotizacion'])->where('recipient_id', $actor->id));
             });
         } elseif ($actor->role_slug === 'gerente_compras') {
             $quotes->where(function ($query) use ($actor) {
-                $query->where('purchase_assigned_to', $actor->id)->orWhere(function ($completed) use ($actor) {
+                $query->where('purchase_assigned_to', $actor->id)->orWhere('created_by', $actor->id)
+                    ->orWhereHas('salesNotifications', fn ($notice) => $notice->where('reason_code', 'cierre_cotizacion')->where('recipient_id', $actor->id))
+                    ->orWhereIn('quotes.id', DB::table('quote_chat_reads')->select('quote_id')->where('user_id', $actor->id))
+                    ->orWhere(function ($completed) use ($actor) {
                     $completed->whereNull('purchase_assigned_to')->where('status', '<>', 'solicitud_cotizaciones')
                         ->whereIn('quotes.id', DB::table('quote_conversations')->select('quote_id')->where('purchasing_user_id', $actor->id));
                 });
@@ -166,7 +216,7 @@ class QuoteMessagingService
             ->leftJoin('quote_chat_reads as reads', function ($join) use ($actor) {
                 $join->on('reads.quote_id', '=', 'messages.quote_id')->where('reads.user_id', '=', $actor->id);
             })
-            ->whereIn('messages.quote_id', $this->participantQuotes($actor)->select('quotes.id'))
+            ->whereIn('messages.quote_id', $this->conversationQuotes($actor)->select('quotes.id'))
             ->whereRaw('messages.id > COALESCE(reads.last_message_id, 0)')
             ->where(fn ($query) => $query->where('messages.sender_id', '<>', $actor->id)->orWhereNull('messages.sender_id'))
             ->select('messages.quote_id')->selectRaw('COUNT(*) as unread_total')->groupBy('messages.quote_id')
@@ -179,8 +229,9 @@ class QuoteMessagingService
         $lastRead = (int) DB::table('quote_chat_reads')->where('quote_id', $quote->id)->where('user_id', $actor->id)->value('last_message_id');
         $sales = $this->sales($quote);
         $purchasing = $this->purchasing($quote);
-        $canChat = $sales !== null && $purchasing !== null && ($actor->isAdministrator()
-            || ($actor->role_slug === 'ventas' ? (int) $sales->id === (int) $actor->id : (int) $purchasing->id === (int) $actor->id));
+        $canChat = $actor->active && in_array($actor->role_slug, ['ventas', 'gerente_compras', 'administrador'], true);
+        $canManageWorkflow = $actor->isAdministrator() || ($actor->role_slug === 'ventas'
+            ? (int) $sales?->id === (int) $actor->id : (int) $purchasing?->id === (int) $actor->id);
         $last = $canChat ? DB::table('quote_chat_messages')->where('quote_id', $quote->id)->orderByDesc('id')->first() : null;
         $unread = $canChat ? DB::table('quote_chat_messages')->where('quote_id', $quote->id)->where('id', '>', $lastRead)
             ->where(fn ($query) => $query->where('sender_id', '<>', $actor->id)->orWhereNull('sender_id'))->count() : 0;
@@ -194,14 +245,24 @@ class QuoteMessagingService
             'section' => 'history', 'alertType' => null, 'alertDetail' => null,
             'daysIdle' => $this->notifications->daysIdle($quote),
             'stage' => $this->stage($quote, $conversation), 'hasChat' => $conversation !== null,
+            'nextAction' => in_array($quote->follow_up_status, ['ganada', 'perdida'], true) ? 'Seguimiento finalizado.' : match ($this->stage($quote, $conversation)) {
+                'por_tomar' => 'Compras debe tomar la solicitud.',
+                'en_proceso' => 'Compras debe revisar productos, precios y entrega.',
+                'espera_ventas' => 'Ventas debe responder la consulta de Compras.',
+                'lista' => 'Ventas debe revisar y enviar la cotización al cliente.',
+                'enviada' => 'Ventas debe dar seguimiento a la respuesta del cliente.',
+                'cerrada' => 'Seguimiento cerrado. El historial está disponible.',
+                default => 'Revisa el estado de la cotización con el equipo.',
+            },
             'canTake' => in_array($actor->role_slug, ['gerente_compras', 'administrador'], true) && $quote->status === 'solicitud_cotizaciones' && $quote->purchase_assigned_to === null && $sales !== null,
             'canChat' => $canChat,
-            'canView' => $canChat || $actor->isAdministrator() || ($actor->role_slug === 'ventas' && (int) $sales?->id === (int) $actor->id),
+            'canView' => $canChat, 'canManageWorkflow' => $canManageWorkflow,
             'checks' => $conversation?->checks ? json_decode($conversation->checks, true) : ['stock' => false, 'price' => false, 'delivery' => false],
-            'reminder' => $quote->follow_up_remind_at?->toIso8601String(), 'unreadCount' => $unread,
+            'reminder' => $quote->follow_up_status === 'negociacion' && $quote->status === 'pendiente_envio' && $quote->sent_at === null
+                ? $quote->follow_up_remind_at?->toIso8601String() : null, 'unreadCount' => $unread,
             'hasNotifications' => (clone $notifications)->exists(), 'notificationCount' => $notificationCount,
             'lastNotification' => $lastNotification?->message, 'lastNotificationAt' => $lastNotification?->created_at?->toIso8601String(),
-            'lastMessage' => $last?->body ?? ($quote->purchase_assigned_to ? 'Abre el chat para iniciar el seguimiento.' : 'Solicitud pendiente de Compras.'),
+            'lastMessage' => $last?->body ?? 'Chat de seguimiento de la cotización.',
             'lastMessageAt' => $last?->created_at,
             'products' => $quote->lines->map(fn ($line) => ['description' => $line->product, 'quantity' => (float) $line->quantity])->all(),
         ];
@@ -209,8 +270,8 @@ class QuoteMessagingService
 
     public function send(Quote $quote, User $actor, array $data): int
     {
-        $this->assertAccess($quote, $actor);
-        $this->open($quote, $actor);
+        $this->assertConversationAccess($quote, $actor);
+        $this->initialize($quote, $actor);
         $conversation = DB::table('quote_conversations')->where('quote_id', $quote->id)->first();
         abort_unless($conversation, 409, 'Compras debe tomar la solicitud antes de abrir el chat.');
         $existing = DB::table('quote_chat_messages')->where('quote_id', $quote->id)->where('sender_id', $actor->id)->where('client_id', $data['clientId'])->first();

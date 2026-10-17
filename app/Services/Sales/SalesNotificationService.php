@@ -8,6 +8,7 @@ use App\Models\QuoteRequest;
 use App\Models\SalesNotification;
 use App\Models\User;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SalesNotificationService
@@ -147,6 +148,8 @@ class SalesNotificationService
             self::REASON_SOLICITUD_COMPRAS_URGENTE => 'Solicitud urgente sin atender',
             self::REASON_COMENTARIO => 'Comentario de compras',
             'mensaje_chat' => 'Mensaje de cotización',
+            'cierre_cotizacion' => 'Cierre de cotización',
+            'recordatorio_vencido' => 'Seguimiento pendiente',
             default => 'Aviso',
         };
     }
@@ -549,43 +552,56 @@ class SalesNotificationService
         ]);
     }
 
-    public function notifyComprasFollowUp(Quote $quote, User $actor, string $statusLabel): SalesNotification
+    public function notifyComprasFollowUp(Quote $quote, User $actor, string $statusLabel): ?SalesNotification
     {
         // Marcar leídos avisos a ventas de esta cotización
         SalesNotification::query()
             ->where('quote_id', $quote->id)
             ->where('audience', self::AUDIENCE_VENTAS)
+            ->where('recipient_id', $actor->id)
+            ->whereIn('reason_code', [self::REASON_LISTA, 'recordatorio_vencido'])
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
-        // Evitar spam: si ya hay unread de seguimiento para esta quote, actualizar mensaje
-        $existing = SalesNotification::query()
-            ->where('quote_id', $quote->id)
-            ->where('audience', self::AUDIENCE_COMPRAS)
-            ->where('reason_code', self::REASON_SEGUIMIENTO)
-            ->whereNull('read_at')
-            ->first();
-
         $message = "{$actor->name} marcó {$statusLabel} en {$quote->folio}.";
-
-        if ($existing) {
-            $existing->update([
-                'sender_id' => $actor->id,
-                'message' => $message,
-            ]);
-
-            return $existing->fresh();
+        $first = null;
+        foreach (User::query()->where('active', true)->where('id', '<>', $actor->id)
+            ->whereHas('role', fn ($role) => $role->whereIn('slug', ['gerente_compras', 'administrador']))->get() as $recipient) {
+            $notice = SalesNotification::query()->updateOrCreate([
+                'quote_id' => $quote->id, 'recipient_id' => $recipient->id,
+                'audience' => self::AUDIENCE_COMPRAS, 'reason_code' => self::REASON_SEGUIMIENTO, 'read_at' => null,
+            ], ['sender_id' => $actor->id, 'message' => $message]);
+            $first ??= $notice;
         }
+        return $first;
+    }
 
-        return SalesNotification::query()->create([
-            'quote_id' => $quote->id,
-            'sender_id' => $actor->id,
-            'recipient_id' => null,
-            'audience' => self::AUDIENCE_COMPRAS,
-            'reason_code' => self::REASON_SEGUIMIENTO,
-            'message' => $message,
-            'read_at' => null,
-        ]);
+    /** One notice per scheduled date, including after it has been read. */
+    public function notifyDueFollowUps(): int
+    {
+        $created = 0;
+        Quote::query()->where('follow_up_status', 'negociacion')->where('status', 'pendiente_envio')->whereNull('sent_at')
+            ->whereNotIn('id', DB::table('quote_conversations')->select('quote_id')->where('stage', 'cerrada'))
+            ->where('follow_up_remind_at', '<=', now())->orderBy('id')->chunkById(100, function ($quotes) use (&$created) {
+                foreach ($quotes as $quote) {
+                    $created += DB::transaction(function () use ($quote) {
+                        $quote = Quote::query()->lockForUpdate()->find($quote->id);
+                        if (! $quote || $quote->follow_up_status !== 'negociacion' || $quote->status !== 'pendiente_envio'
+                            || $quote->sent_at !== null || ! $quote->follow_up_remind_at || $quote->follow_up_remind_at->isFuture()
+                            || DB::table('quote_conversations')->where('quote_id', $quote->id)->where('stage', 'cerrada')->exists()) return 0;
+                        $recipient = $this->resolveVentasRecipient($quote);
+                        if (! $recipient) return 0;
+                        $date = $quote->follow_up_remind_at->format('d/m/Y');
+                        $notice = SalesNotification::query()->firstOrCreate([
+                            'quote_id' => $quote->id, 'recipient_id' => $recipient->id, 'audience' => self::AUDIENCE_VENTAS,
+                            'reason_code' => 'recordatorio_vencido',
+                            'message' => "Seguimiento pendiente de {$quote->folio}, programado para el {$date}. Contacta al cliente y actualiza el seguimiento.",
+                        ], ['sender_id' => null, 'read_at' => null]);
+                        return (int) $notice->wasRecentlyCreated;
+                    });
+                }
+            });
+        return $created;
     }
 
     /** Shared recipient visibility; chat history also retains past ready/request notices. */
@@ -603,20 +619,13 @@ class SalesNotificationService
                     $visibility->where(function ($ready) use ($currentOnly) {
                         $ready->where('reason_code', self::REASON_LISTA)
                             ->when($currentOnly, fn ($current) => $current->whereHas('quote', fn ($quote) => $quote->where('status', 'pendiente_envio')));
-                    })->orWhere(function ($chat) use ($user) {
-                        $chat->where('reason_code', 'mensaje_chat')
-                            ->whereHas('quote', function ($quote) use ($user) {
-                                $quote->where('follow_up_assigned_to', $user->id)->orWhere(function ($fallback) use ($user) {
-                                    $fallback->where('created_by', $user->id)->whereDoesntHave('followUpAssignee', function ($assignee) {
-                                        $assignee->where('active', true)->whereHas('role', fn ($role) => $role->where('slug', 'ventas'));
-                                    });
-                                });
-                            });
+                    })->orWhere(function ($chat) {
+                        $chat->where('reason_code', 'mensaje_chat');
                     })->orWhere(function ($direct) {
                         // A direct comment belongs to its recipient, regardless of the creator's role.
-                        $direct->where('reason_code', self::REASON_COMENTARIO);
+                        $direct->whereIn('reason_code', [self::REASON_COMENTARIO, 'cierre_cotizacion']);
                     })->orWhere(function ($regular) use ($user) {
-                        $regular->whereNotIn('reason_code', [self::REASON_LISTA, 'mensaje_chat', self::REASON_COMENTARIO])
+                        $regular->whereNotIn('reason_code', [self::REASON_LISTA, 'mensaje_chat', self::REASON_COMENTARIO, 'cierre_cotizacion'])
                             ->whereHas('quote', function ($quoteQuery) use ($user) {
                                 $quoteQuery->where('follow_up_assigned_to', $user->id)
                                     ->orWhere(function ($unassigned) {
@@ -925,6 +934,7 @@ class SalesNotificationService
 
         // Legacy quotes may have been explicitly routed to Sales by a purchasing notice.
         return $quote->salesNotifications()->where('audience', self::AUDIENCE_VENTAS)->whereNotNull('sender_id')
+            ->whereNotIn('reason_code', ['mensaje_chat', 'cierre_cotizacion'])
             ->whereHas('recipient', fn ($recipient) => $recipient->where('active', true)
                 ->whereHas('role', fn ($role) => $role->where('slug', 'ventas')))
             ->orderByDesc('id')->first()?->recipient;

@@ -191,6 +191,10 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class]
         ->middleware('permission:cotizaciones,edit');
     Route::patch('/cotizaciones/{id}/seguimiento', [NotificacionController::class, 'seguimiento'])
         ->middleware('permission:cotizaciones,edit');
+    Route::get('/cotizaciones/{id}/cierre', [\App\Http\Controllers\Api\QuoteClosingResultController::class, 'show'])
+        ->whereUuid('id')->middleware('permission:cotizaciones,view');
+    Route::patch('/cotizaciones/{id}/cierre', [\App\Http\Controllers\Api\QuoteClosingResultController::class, 'update'])
+        ->whereUuid('id')->middleware('permission:cotizaciones,edit');
     Route::post('/cotizaciones/{id}/seguimiento/tomar', [NotificacionController::class, 'claim'])
         ->middleware('permission:cotizaciones,edit');
     Route::delete('/cotizaciones/{id}/seguimiento/responsable', [NotificacionController::class, 'release'])

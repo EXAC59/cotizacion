@@ -26,10 +26,12 @@ class MensajeriaController extends Controller
     public function index(Request $request, \App\Services\Sales\NotificationInboxService $inbox): JsonResponse
     {
         $data = $request->validate(['search' => ['nullable', 'string', 'max:120'], 'page' => ['nullable', 'integer', 'min:1'],
+            'mode' => ['nullable', 'in:conversations'],
             'section' => ['nullable', 'in:all,new_requests,own_requests,own_quotes,ready_to_send,quote_notices,pending,history'],
-            'filter' => ['nullable', 'in:all,unread,reminders']]);
+            'filter' => ['nullable', 'in:all,unread,reminders,mine']]);
         $user = $request->user();
         abort_unless($user->active && in_array($user->role_slug, ['ventas', 'gerente_compras', 'administrador'], true), 403);
+        if (($data['mode'] ?? null) === 'conversations') return $this->conversations($request, $data);
         $groups = $inbox->messagingGroupsForUser($user, $this->chat);
         $sections = array_map(fn ($items) => $user->role_slug === 'ventas'
             ? collect($items)->pluck('quoteId')->unique()->count() : count($items), $groups);
@@ -115,6 +117,55 @@ class MensajeriaController extends Controller
             'unreadCount' => $this->chat->unreadCount($user)]);
     }
 
+    private function conversations(Request $request, array $data): JsonResponse
+    {
+        $user = $request->user();
+        $query = $this->chat->conversationQuotes($user)->with(['client', 'creator.role', 'followUpAssignee.role', 'purchaseAssignee', 'lines']);
+        $search = trim($data['search'] ?? '');
+        if ($search !== '') {
+            $term = '%'.addcslashes($search, '%_\\').'%';
+            $query->where(fn ($quotes) => $quotes->where('folio', 'like', $term)
+                ->orWhereHas('client', fn ($client) => $client->where('company', 'like', $term)));
+        }
+        $unreadIds = DB::table('quote_chat_messages as messages')->leftJoin('quote_chat_reads as reads', function ($join) use ($user) {
+            $join->on('reads.quote_id', '=', 'messages.quote_id')->where('reads.user_id', '=', $user->id);
+        })->whereIn('messages.quote_id', $this->chat->conversationQuotes($user)->select('quotes.id'))
+            ->whereRaw('messages.id > COALESCE(reads.last_message_id, 0)')
+            ->where(fn ($sender) => $sender->where('messages.sender_id', '<>', $user->id)->orWhereNull('messages.sender_id'))
+            ->distinct()->pluck('messages.quote_id');
+        $notifications = app(\App\Services\Sales\SalesNotificationService::class)->visibleForUser($user);
+        $unreadIds = $unreadIds->merge((clone $notifications)->whereNull('read_at')->pluck('quote_id'))->unique();
+        $total = (clone $query)->count();
+        $unreadCount = (clone $query)->whereIn('quotes.id', $unreadIds)->count();
+        $reminderIds = (clone $notifications)->whereNull('read_at')->whereIn('reason_code',
+            ['sin_avance', 'en_elaboracion', 'seguimiento_actualizado', 'recordatorio_vencido', 'solicitud_compras_urgente'])->pluck('quote_id');
+        $reminders = fn ($quotes) => $quotes->where(fn ($due) => $due->where(fn ($scheduled) => $scheduled
+            ->where('follow_up_status', 'negociacion')->whereNotNull('follow_up_remind_at')
+            ->where('status', 'pendiente_envio')->whereNull('sent_at'))->orWhereIn('quotes.id', $reminderIds));
+        $reminderCount = $reminders(clone $query)->count();
+        if (($data['filter'] ?? 'all') === 'unread') $query->whereIn('quotes.id', $unreadIds);
+        if (($data['filter'] ?? 'all') === 'reminders') $reminders($query);
+        if (($data['filter'] ?? 'all') === 'mine') {
+            $query->where(fn ($open) => $open->whereNull('follow_up_status')->orWhereNotIn('follow_up_status', ['ganada', 'perdida']))
+                ->whereNotIn('quotes.id', DB::table('quote_conversations')->select('quote_id')->where('stage', 'cerrada'));
+            if ($user->role_slug === 'ventas') {
+                $query->where(fn ($owner) => $owner->where('follow_up_assigned_to', $user->id)
+                    ->orWhere(fn ($creator) => $creator->where('created_by', $user->id)
+                        ->whereDoesntHave('followUpAssignee', fn ($assignee) => $assignee->where('active', true)
+                            ->whereHas('role', fn ($role) => $role->where('slug', 'ventas')))));
+            } elseif ($user->role_slug === 'gerente_compras') {
+                $query->where(fn ($owner) => $owner->where('purchase_assigned_to', $user->id)
+                    ->orWhere(fn ($unclaimed) => $unclaimed->where('status', 'solicitud_cotizaciones')->whereNull('purchase_assigned_to')));
+            }
+        }
+        $page = $query->orderByDesc('updated_at')->orderBy('id')->paginate(30, ['*'], 'page', $data['page'] ?? 1);
+        $rows = $page->getCollection()->map(fn ($quote) => [...$this->chat->summary($quote, $user),
+            'sections' => ['history'], 'section' => 'history', 'notices' => []]);
+        return response()->json(['data' => $rows, 'page' => $page->currentPage(), 'lastPage' => $page->lastPage(), 'total' => $page->total(),
+            'sections' => ['new_requests' => 0, 'own_requests' => 0, 'own_quotes' => 0, 'ready_to_send' => 0, 'quote_notices' => 0, 'pending' => 0, 'history' => $total],
+            'unreadQuoteCount' => $unreadCount, 'reminderCount' => $reminderCount, 'unreadCount' => $this->chat->unreadCount($user)]);
+    }
+
     public function claim(Request $request, string $id, PurchaseRequestWorkflowService $purchases): JsonResponse
     {
         DB::transaction(function () use ($request, $id, $purchases) {
@@ -131,8 +182,8 @@ class MensajeriaController extends Controller
     {
         DB::transaction(function () use ($request, $id) {
             $quote = Quote::query()->lockForUpdate()->findOrFail($id);
-            $this->chat->assertAccess($quote, $request->user());
-            if ($this->chat->purchasing($quote) && $this->chat->sales($quote)) $this->chat->open($quote, $request->user());
+            $this->chat->assertConversationAccess($quote, $request->user());
+            $this->chat->initialize($quote, $request->user());
         });
 
         return $this->show($request, $id);
@@ -143,7 +194,7 @@ class MensajeriaController extends Controller
         $data = $request->validate(['before' => ['nullable', 'integer', 'min:1']]);
         $quote = Quote::query()->with(['client', 'creator.role', 'followUpAssignee.role', 'purchaseAssignee', 'lines'])->findOrFail($id);
         $actor = $request->user();
-        $this->chat->assertAccess($quote, $actor);
+        $this->chat->assertConversationAccess($quote, $actor);
         $query = DB::table('quote_chat_messages')->where('quote_id', $id);
         if (isset($data['before'])) $query->where('id', '<', $data['before']);
         $messages = $query->orderByDesc('id')->limit(101)->get();
@@ -189,7 +240,7 @@ class MensajeriaController extends Controller
             'noticeIds' => ['required_without:lastId', 'array', 'min:1', 'max:100'], 'noticeIds.*' => ['required', 'uuid', 'distinct']]);
         DB::transaction(function () use ($request, $id, $data) {
             $quote = Quote::query()->lockForUpdate()->findOrFail($id);
-            $this->chat->assertAccess($quote, $request->user());
+            $this->chat->assertConversationAccess($quote, $request->user());
             if (! empty($data['noticeIds'])) {
                 $notices = app(\App\Services\Sales\SalesNotificationService::class)->visibleForUser($request->user(), false)
                     ->where('quote_id', $id)->where('reason_code', '<>', 'mensaje_chat')->whereIn('id', $data['noticeIds']);

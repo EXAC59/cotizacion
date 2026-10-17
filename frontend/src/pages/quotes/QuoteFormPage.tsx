@@ -8,6 +8,7 @@ import {
   Lock,
   Mail,
   MessageCircle,
+  MessageSquareText,
   Save,
   UserCheck,
   X,
@@ -29,6 +30,7 @@ import { QuoteStatusBadge, QUOTE_STATUS_STEP_TONE } from '@/components/ui/QuoteS
 import { QuoteLinesEditor } from '@/components/quotes/QuoteLinesEditor'
 import { WhatsAppQuoteModal } from '@/components/quotes/WhatsAppQuoteModal'
 import { QuoteTotalsPanel } from '@/components/quotes/QuoteTotals'
+import { QuoteConversationPanel } from '@/components/messaging/QuoteConversationPanel'
 import { useData } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
 import { usePermission } from '@/hooks/usePermission'
@@ -582,6 +584,15 @@ function QuoteFormEditor({
     navigateAfter = false,
     navigationState?: { showSendReady?: boolean },
   ): Promise<string | null> => {
+    if (['pendiente_envio', 'enviada', 'aceptada', 'facturada'].includes(draft.status)) {
+      const invalidPriceIndex = draft.lines.findIndex((line) =>
+        !Number.isFinite(line.salePrice) || !Number.isFinite(line.amount) || line.salePrice <= 0 || line.amount <= 0,
+      )
+      if (invalidPriceIndex >= 0) {
+        setSaveError(`Partida ${invalidPriceIndex + 1} (${draft.lines[invalidPriceIndex].product}): captura un precio unitario mayor que cero antes de terminar o enviar la cotización.`)
+        return null
+      }
+    }
     beginModalBusy(setSaving)
     await waitModalBusyPaint()
     const busyStarted = performance.now()
@@ -755,7 +766,6 @@ function QuoteFormEditor({
     if (!draft) return
 
     // Mantener el modal abierto para mostrar la animación de guardado.
-    setStatus(targetStatus)
     const payload = {
       ...draft,
       status: targetStatus,
@@ -919,6 +929,9 @@ function QuoteFormEditor({
   }
 
   const fromPricing = Boolean(request?.pricingLines?.length)
+  const conversationQuoteId = serverQuoteId ?? quoteId ?? ''
+  const showConversation = import.meta.env.VITE_MENSAJERIA_LIVE === 'true' && isPersistedQuoteId(conversationQuoteId)
+    && Boolean(user && (['gerente_compras', 'administrador'].includes(user.role) || (user.role === 'ventas' && !viewingOthers)))
 
   if (needsEditLock && lockState === 'pending') {
     return (
@@ -930,7 +943,7 @@ function QuoteFormEditor({
 
   if (needsEditLock && lockState === 'blocked') {
     return (
-      <div className="mx-auto max-w-lg py-16">
+      <div className="mx-auto max-w-4xl space-y-6 py-8">
         <Card>
           <CardBody className="space-y-4 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
@@ -957,6 +970,7 @@ function QuoteFormEditor({
             </div>
           </CardBody>
         </Card>
+        {showConversation && <QuoteConversationPanel key={conversationQuoteId} quoteId={conversationQuoteId} canEdit={canEdit} />}
       </div>
     )
   }
@@ -992,6 +1006,7 @@ function QuoteFormEditor({
         }
         actions={
           <>
+            {showConversation && <Button variant="secondary" size="sm" onClick={() => document.getElementById('quote-conversation')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><MessageSquareText className="h-4 w-4" aria-hidden />Seguimiento</Button>}
             <Link to="/cotizaciones">
               <Button variant="secondary" size="sm">
                 <ArrowLeft className="h-4 w-4" />
@@ -1099,7 +1114,7 @@ function QuoteFormEditor({
                   {purchaseActionLoading ? <InlineBusy size="sm" /> : null}
                   Liberar solicitud
                 </Button>
-              ) : purchaseAttention.status === 'disponible' ? (
+              ) : (
                 <Button
                   type="button"
                   size="sm"
@@ -1107,9 +1122,9 @@ function QuoteFormEditor({
                   onClick={() => void handleClaimPurchaseRequest()}
                 >
                   {purchaseActionLoading ? <InlineBusy size="sm" /> : <UserCheck className="h-4 w-4" />}
-                  Tomar solicitud
+                  Tomar atención
                 </Button>
-              ) : null}
+              )}
             </div>
           </div>
           {purchaseActionError && <p className="mt-2 text-sm text-red-700">{purchaseActionError}</p>}
@@ -1704,6 +1719,7 @@ function QuoteFormEditor({
 
         </div>
       </div>
+      {showConversation && <div id="quote-conversation" className="mt-6 scroll-mt-6"><QuoteConversationPanel key={conversationQuoteId} quoteId={conversationQuoteId} canEdit={canEdit} /></div>}
     </div>
   )
 }

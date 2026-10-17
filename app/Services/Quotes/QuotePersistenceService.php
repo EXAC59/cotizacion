@@ -45,6 +45,7 @@ class QuotePersistenceService
             $quoteId = $this->resolveQuoteId($payload);
             /** @var Quote|null $existingQuote */
             $existingQuote = Quote::find($quoteId, ['*']);
+            $previousContent = $existingQuote ? $this->conversationContent($existingQuote) : null;
             $lines = $payload['lines'] ?? [];
 
             $requestedStatus = $payload['status'] ?? null;
@@ -78,6 +79,10 @@ class QuotePersistenceService
             if ($existingQuote !== null) {
                 $this->purchaseWorkflow->assertCanEdit($existingQuote, Auth::user());
                 $this->quoteLockService->assertHeldByCurrentUser($existingQuote);
+            }
+
+            if (in_array($requestedStatus, ['pendiente_envio', 'enviada', 'aceptada', 'facturada'], true)) {
+                $this->statusGuard->assertPricedLines($lines);
             }
 
             $subtotal = (float) ($payload['subtotal'] ?? 0);
@@ -199,8 +204,31 @@ class QuotePersistenceService
                     ->update(['read_at' => now()]);
             }
 
+            if (config('messaging.enabled')) {
+                $chat = app(QuoteMessagingService::class);
+                $chat->initialize($savedQuote, Auth::user());
+                if ($existingQuote && $previousStatus === $requestedStatus && $previousContent !== $this->conversationContent($savedQuote) && ($actor = Auth::user())) {
+                    $body = $actor->name.' guardó cambios en los productos, precios o datos de la cotización. Revisa la versión actual.';
+                    $chat->event($savedQuote, $actor, $body);
+                    $chat->notify($savedQuote, $actor, $body);
+                }
+            }
+
             return $savedQuote;
         });
+    }
+
+    private function conversationContent(Quote $quote): array
+    {
+        return [
+            $quote->client_id, trim((string) $quote->customer_observations),
+            (float) $quote->total, (float) $quote->tax_percent, (int) $quote->validity_days,
+            $quote->lines()->orderBy('line_order')->get()->map(fn ($line) => [
+                $line->product, $line->part_number, (float) $line->quantity, (float) $line->cost,
+                (float) $line->sale_price, (float) $line->margin_percent,
+                $line->warehouse, $line->selected_wholesaler_id,
+            ])->all(),
+        ];
     }
 
     /**

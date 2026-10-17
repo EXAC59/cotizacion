@@ -18,6 +18,7 @@ use App\Services\Quotes\QuoteProfitCalculator;
 use App\Services\Quotes\PurchaseRequestWorkflowService;
 use App\Services\Quotes\QuoteSearchScope;
 use App\Services\Quotes\QuoteStatusHistoryService;
+use App\Services\Quotes\QuoteStatusGuard;
 use App\Services\Sales\AssignToSalesService;
 use App\Services\Sales\QuoteFollowUpService;
 use App\Services\Sales\SalesNotificationService;
@@ -60,7 +61,7 @@ class CotizacionController extends Controller
         ]);
 
         $query = Quote::query()
-            ->with(['client', 'creator', 'lockedByUser', 'followUpAssignee', 'purchaseAssignee'])
+            ->with(['client', 'creator', 'lockedByUser', 'followUpAssignee', 'purchaseAssignee', 'closingResult'])
             ->withCount('lines')
             ->orderBy('created_at', ($validated['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
             ->orderBy('id');
@@ -322,6 +323,10 @@ class CotizacionController extends Controller
         $this->ensureVentasCanMutateQuote($request, $quote);
         $this->ensureSalesClaimedReadyQuote($request, $quote);
 
+        app(QuoteStatusGuard::class)->assertPricedLines($quote->lines->map(fn ($line) => [
+            'product' => $line->product, 'salePrice' => $line->sale_price, 'amount' => $line->amount,
+        ])->all());
+
         $toEmail = trim($validated['to'] ?? $quote->client?->email ?? '');
 
         if ($toEmail === '') {
@@ -387,6 +392,9 @@ class CotizacionController extends Controller
         if ($quote->lines->isEmpty() || ! in_array($quote->status, ['pendiente_envio', 'enviada', 'modificacion'], true)) {
             throw ValidationException::withMessages(['quote' => 'Guarda la cotización como Lista / Terminada antes de enviarla.']);
         }
+        app(QuoteStatusGuard::class)->assertPricedLines($quote->lines->map(fn ($line) => [
+            'product' => $line->product, 'salePrice' => $line->sale_price, 'amount' => $line->amount,
+        ])->all());
         $to = $whatsapp->normalizePhone((string) $quote->client?->whatsapp);
         $lock = Cache::lock('quote-whatsapp:'.$id, 180);
         if (! $lock->get()) {
@@ -544,6 +552,7 @@ class CotizacionController extends Controller
             'assignedToCompras' => $this->assignToSales->isAssignedToCompras($quote->creator),
             'involucrado' => $quote->involucrado,
             'followUp' => $this->followUps->followUpPayload($quote),
+            'closingStatus' => $quote->closingResult?->status,
             'eligibility' => $this->salesNotifications->eligibility($quote),
             'editLock' => $this->quoteLockService->lockPayload($quote),
         ];

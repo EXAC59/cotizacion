@@ -273,6 +273,7 @@ export interface Quote {
   assignedToCompras?: boolean
   statusHistory?: QuoteStatusHistoryEntry[]
   followUp?: QuoteFollowUp | null
+  closingStatus?: QuoteClosingStatus | null
   followUpHistory?: QuoteFollowUpHistoryEntry[]
   eligibility?: QuoteNotifyEligibility
   /** Usuarios involucrados en la cotización (1., 2., …) */
@@ -287,6 +288,8 @@ export interface Quote {
   purchaseEscalatedAt?: string | null
   purchaseAssignedToViewer?: boolean
 }
+
+export type QuoteClosingStatus = 'perdida' | 'negociacion' | 'ganada_parcialmente' | 'ganada'
 
 export interface QuoteInternalNote {
   id: string

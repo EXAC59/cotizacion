@@ -8,7 +8,7 @@ import { ROLE_LABELS } from '@/types'
 export function Sidebar({ onNavigate, className = '', messagingUnreadCount = 0 }: { onNavigate?: () => void; className?: string; messagingUnreadCount?: number }) {
   const { user, canModule } = usePermission()
   const { branding } = useBranding()
-  const menuOrder = ['/dashboard', '/cotizaciones', '/recordatorios', '/mensajeria', '/solicitudes']
+  const menuOrder = ['/dashboard', '/cotizaciones', '/recordatorios', '/mensajeria', '/cierre-cotizaciones', '/solicitudes']
   const visibleNav = [...MODULE_ROUTES].sort((a, b) => {
     const rank = (path: string) => { const index = menuOrder.indexOf(path); return index < 0 ? menuOrder.length : index }
     return rank(a.path) - rank(b.path)
